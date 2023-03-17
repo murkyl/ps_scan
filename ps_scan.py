@@ -256,12 +256,12 @@ onefs: Works on OneFS based file systems.
         default=False,
         help="Add additional file information on OneFS systems",
     )
-    #parser.add_option(
+    # parser.add_option(
     #    "--tagging",
     #    action="store",
     #    default=None,
     #    help="Turn on custom tagging based on tagging rules specified in the file. See documentation for file format",
-    #)
+    # )
     parser.add_option(
         "--user-attr",
         action="store_true",
@@ -484,7 +484,10 @@ def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_inte
                     work_items[i] = None
                 bulk_str = "\n".join(bulk_data)
                 resp = es_client.bulk(bulk_str, index_name=index_name)
-                # DEBUG: Need to add error handling here in case the bulk update request fails
+                if resp["errors"]:
+                    for item in resp["items"]:
+                        if item["index"]["status"] != 200:
+                            LOG.error(json.dumps(item["index"]["error"]))
                 del bulk_str
                 del bulk_data
                 del cmd_item
@@ -505,7 +508,10 @@ def es_init_index(url, username, password, index):
     es_client.password = password
     es_client.endpoint = url
     resp = es_client.create_index(index, mapping=PS_SCAN_MAPPING)
-    # DEBUG: Need to add error handling here in case create fails
+    if resp["errors"]:
+        for item in resp["items"]:
+            if item["index"]["status"] != 200:
+                LOG.error(json.dumps(item["index"]["error"]))
     LOG.debug("Create index response: %s" % resp)
 
 
@@ -610,10 +616,6 @@ def file_handler_pscale(root, filename_list, stats, args={}):
         try:
             fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
             fstats = attr.get_dinode(fd)
-            if fstats["di_mode"] & 0o040000:
-                # Save directories to re-queue
-                dir_list.append(filename)
-                continue
             # atime call can return empty if the file does not have an atime or atime tracking is disabled
             atime = attr.get_access_time(fd)
             if atime:
@@ -728,6 +730,15 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 # file_info["tags"] = custom_tagging(file_info)
                 pass
             result_list.append(file_info)
+            if fstats["di_mode"] & 0o040000:
+                # Fix size issues with dirs
+                file_info["size_logical"] = 0
+                # Save directories to re-queue
+                dir_list.append(filename)
+                continue
+            elif fstats["di_mode"] & 0o120000:
+                # Fix size issues with symlinks
+                file_info["size_logical"] = 0
             stats["file_size_total"] += fstats["di_size"]
             processed += 1
         except Exception as e:
@@ -908,7 +919,7 @@ def main():
             es_thread_instance.start()
             es_send_thread_handles.append(es_thread_instance)
     try:
-        print("Statistics interval (s): {si}".format(si=stats_output_interval))
+        print("Statistics interval: {si} seconds".format(si=stats_output_interval))
         # For a very simple run until completion, just do a join like below
         # scanner.join()
         # If you want to get status updates then use the while loop below
@@ -918,7 +929,7 @@ def main():
                 temp_stats = scanner.get_stats()
                 print(
                     "{ts}: ({pc}) - FPS:{fps:.2f} - {stats}".format(
-                        ts=datetime.datetime.now().strftime("%Y%m%d-%H%M%S"),
+                        ts=datetime.datetime.now().strftime("%Y%m%d %H:%M:%S"),
                         pc=scanner.is_processing(),
                         fps=temp_stats["files_processed"] / (time.time() - start_wall),
                         stats=temp_stats,
