@@ -27,6 +27,7 @@ import time
 try:
     import isi.fs.attr as attr
     import isi.fs.diskpool as dp
+    import isi.fs.userattr as uattr
 
     OS_TYPE = 2
 except:
@@ -34,8 +35,10 @@ except:
 
 USAGE = "usage: %prog [OPTION...] PATH... [PATH..]"
 EPILOG = """
-The --es-url and either the --es-cred-file or both --es-user and --es-pass need to be
-present for the script to send output to an Elasticsearch endpoint.
+Quickstart
+====================
+The --es-cred-file or the --es-url and optionally both --es-user and --es-pass need to
+be present for the script to send output to an Elasticsearch endpoint.
 
 The --es-cred-file is a credentials file that contains up to 4 lines of data.
 The first line is the user name
@@ -45,6 +48,17 @@ The fourth, optional line is the URL
 
 If you specify the URL you must specify the index as well.
 This es-cred-file is sensitive and should be properly secured.
+
+Command line options
+Some options can significantly reduce scan speed. The following options may cause scan
+speeds to be reduced by more than half:
+  * extra
+  * tagging
+  * user-attr
+
+Custom tagging file format
+====================
+TBD
 """
 CMD_EXIT = 0
 CMD_SEND = 1
@@ -52,9 +66,8 @@ DEFAULT_ES_THREADS = 4
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(module)s|%(funcName)s - %(levelname)s [%(lineno)d] %(message)s"
 DEFAULT_MAX_Q_SIZE = 1000
 DEFAULT_MAX_Q_WAIT_LOOPS = 100
-DEFAULT_POLL_INTERVAL = 0.1
 DEFAULT_SEND_Q_SLEEP = 0.5
-DEFAULT_STATS_OUTPUT_INTERVAL = 10
+DEFAULT_STATS_OUTPUT_INTERVAL = 30
 DEFAULT_THREAD_COUNT = 6
 FORMAT = "%(asctime)s %(message)s"
 LOG = logging.getLogger(__name__)
@@ -136,6 +149,9 @@ PS_SCAN_MAPPING = {
         "manual_access": {"type": "boolean"},
         "manual_packing": {"type": "boolean"},
         "manual_protection": {"type": "boolean"},
+        # ========== User attributes ==========
+        "tags": {"type": "keyword"},
+        "user_attributes": {"type": "object"},
     }
 }
 SSD_STRATEGY = [
@@ -232,35 +248,52 @@ def add_parser_options(parser):
         help="""Scan type to use.                                     
 basic: Works on all file systems.                     
 onefs: Works on OneFS based file systems.             
-        """,
-    )
-    parser.add_option(
-        "--threads",
-        action="store",
-        type="int",
-        default=DEFAULT_THREAD_COUNT,
-        help="Number of file scanning threads. Default: %default",
+""",
     )
     parser.add_option(
         "--extra",
         action="store_true",
         default=False,
-        help="When this flag is set and the scan type is onefs, additional fields are added to the output",
+        help="Add additional file information on OneFS systems",
+    )
+    #parser.add_option(
+    #    "--tagging",
+    #    action="store",
+    #    default=None,
+    #    help="Turn on custom tagging based on tagging rules specified in the file. See documentation for file format",
+    #)
+    parser.add_option(
+        "--user-attr",
+        action="store_true",
+        default=False,
+        help="Retrieve user defined extended attributes from each file",
     )
     parser.add_option(
         "--stats-interval",
         action="store",
         type="int",
         default=DEFAULT_STATS_OUTPUT_INTERVAL,
-        help="Stats update interval in seconds. Default: %default",
+        help="""Stats update interval in seconds.                     
+Default: %default
+""",
     )
-    parser.add_option(
-        "--q-poll-interval",
+    group = optparse.OptionGroup(parser, "Performance options")
+    group.add_option(
+        "--threads",
         action="store",
         type="int",
-        default=DEFAULT_POLL_INTERVAL,
-        help=optparse.SUPPRESS_HELP,
+        default=DEFAULT_THREAD_COUNT,
+        help="""Number of file scanning threads.                      
+Default: %default
+""",
     )
+    group.add_option(
+        "--advanced",
+        action="store_true",
+        default=False,
+        help="Flag to enable advanced options",
+    )
+    parser.add_option_group(group)
     group = optparse.OptionGroup(parser, "Elasticsearch options")
     group.add_option(
         "--es-url",
@@ -303,21 +336,29 @@ onefs: Works on OneFS based file systems.
         action="store",
         type="int",
         default=DEFAULT_ES_THREADS,
-        help="Number of threads to send data to Elasticsearch. Default: %default",
+        help="""Number of threads to send data to Elasticsearch.      
+Default: %default
+""",
     )
     group.add_option(
         "--es-max-send-q-size",
         action="store",
         type="int",
         default=DEFAULT_MAX_Q_SIZE,
-        help="Number of unsent entries in the Elasticsearch send queue before throttling file scanning. Default: %default",
+        help="""Number of unsent entries in the Elasticsearch send    
+queue before throttling file scanning.                
+Default: %default
+""",
     )
     group.add_option(
         "--es-send-q-sleep",
         action="store",
         type="int",
         default=DEFAULT_SEND_Q_SLEEP,
-        help="When max send queue size is reached, sleep each file scanner by this value in seconds to slow scanning. Default: %default",
+        help="""When max send queue size is reached, sleep each file  
+scanner by this value in seconds to slow scanning.    
+Default: %default
+""",
     )
     parser.add_option_group(group)
     group = optparse.OptionGroup(parser, "Logging and debug options")
@@ -347,7 +388,70 @@ onefs: Works on OneFS based file systems.
     parser.add_option_group(group)
 
 
-def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_interval=DEFAULT_POLL_INTERVAL):
+def add_parser_options_advanced(parser):
+    group = optparse.OptionGroup(parser, "ADVANCED options")
+    group.add_option(
+        "--dirq-chunk",
+        action="store",
+        type="int",
+        default=scanit.DEFAULT_QUEUE_DIR_CHUNK_SIZE,
+        help="""Number of directories to put into each work chunk.    
+Default: %default
+""",
+    )
+    group.add_option(
+        "--dirq-priority",
+        action="store",
+        type="int",
+        default=scanit.DEFAULT_DIR_PRIORITY_COUNT,
+        help="""Number of threads that are biased to process          
+directories.                                          
+Default: %default
+""",
+    )
+    group.add_option(
+        "--fileq-chunk",
+        action="store",
+        type="int",
+        default=scanit.DEFAULT_QUEUE_FILE_CHUNK_SIZE,
+        help="""Number of files to put into each work chunk.          
+Default: %default
+""",
+    )
+    group.add_option(
+        "--fileq-cutoff",
+        action="store",
+        type="int",
+        default=scanit.DEFAULT_FILE_QUEUE_CUTOFF,
+        help="""When the number of files in the file queue is less    
+than this value, bias threads to process directories. 
+Default: %default
+""",
+    )
+    group.add_option(
+        "--fileq-min-cutoff",
+        action="store",
+        type="int",
+        default=scanit.DEFAULT_FILE_QUEUE_MIN_CUTOFF,
+        help="""When the number of files in the file queue is less    
+than this value, only process directories if possible.
+Default: %default
+""",
+    )
+    group.add_option(
+        "--q-poll-interval",
+        action="store",
+        type="int",
+        default=scanit.DEFAULT_POLL_INTERVAL,
+        help="""Number of seconds to wait in between polling events   
+for the statistics and ES send loop.                  
+Default: %default
+""",
+    )
+    parser.add_option_group(group)
+
+
+def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_interval=scanit.DEFAULT_POLL_INTERVAL):
     es_client = elasticsearchlite.ElasticsearchLite()
     es_client.username = username
     es_client.password = password
@@ -483,23 +587,28 @@ def file_handler_pscale(root, filename_list, stats, args={}):
       "q_dirs": [<str>]                 # List of directory names that need processing
     }
     """
+    custom_state = args.get("custom_state", {})
     start_time = args.get("start_time", time.time())
     thread_state = args.get("thread_state", {})
-    custom_state = args.get("custom_state", {})
-    pool_translate = custom_state.get("node_pool_translation", {})
-    phys_block_size = custom_state.get("phys_block_size", IFS_BLOCK_SIZE)
-    max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_MAX_Q_SIZE)
-    send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_SEND_Q_SLEEP)
+
+    custom_tagging = custom_state.get("custom_tagging", None)
     extra_stats = custom_state.get("extra_stats", False)
+    get_user_attr = custom_state.get("get_user_attr", False)
+    max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_MAX_Q_SIZE)
+    phys_block_size = custom_state.get("phys_block_size", IFS_BLOCK_SIZE)
+    pool_translate = custom_state.get("node_pool_translation", {})
+    send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_SEND_Q_SLEEP)
+
     processed = 0
     skipped = 0
     dir_list = []
     result_list = []
+
     for filename in filename_list:
         full_path = os.path.join(root, filename)
         fd = None
         try:
-            fd = os.open(full_path, os.O_RDONLY)
+            fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
             fstats = attr.get_dinode(fd)
             if fstats["di_mode"] & 0o040000:
                 # Save directories to re-queue
@@ -530,7 +639,7 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 # ========== File and path strings ==========
                 "root": root,
                 "filename": filename,
-                "extension": os.path.splitext(filename),
+                "extension": os.path.splitext(filename)[1],
                 # ========== File attributes ==========
                 "access_pattern": ACCESS_PATTERN[fstats["di_la_pattern"]],
                 "file_compressed": (comp_blocks > fstats["di_data_blocks"]) if compressed_file else False,
@@ -607,6 +716,17 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 file_info["manual_access"] = not not estats["ge_manually_manage_access"]
                 file_info["manual_packing"] = not not estats["ge_manually_manage_packing"]
                 file_info["manual_protection"] = not not estats["ge_manually_manage_protection"]
+            if get_user_attr:
+                extended_attr = {}
+                keys = uattr.userattr_list(fd)
+                for key in keys:
+                    extended_attr[key] = uattr.userattr_get(fd, key)
+                file_info["user_attributes"] = extended_attr
+            if custom_tagging:
+                # DEBUG: Add custom user tags
+                # file_info["tags"] = ["tag1", "othertag"]
+                # file_info["tags"] = custom_tagging(file_info)
+                pass
             result_list.append(file_info)
             stats["file_size_total"] += fstats["di_size"]
             processed += 1
@@ -635,6 +755,9 @@ def init_custom_state(custom_state, options):
     custom_state["phys_block_size"] = IFS_BLOCK_SIZE
     custom_state["send_q"] = queue.Queue()
     custom_state["send_q_sleep"] = options.es_send_q_sleep
+    custom_state["get_user_attr"] = options.user_attr
+    # TODO: Parse the custom tag input file and produce a parser
+    custom_state["custom_tagging"] = None
     if OS_TYPE == 2:
         # Query the cluster for node pool name information
         dpdb = dp.DiskPoolDB()
@@ -645,16 +768,16 @@ def init_custom_state(custom_state, options):
                 custom_state["node_pool_translation"][int(child.entryid)] = g.name
 
 
-def print_statistics(sstats, num_threads, wall_time):
-    print("Wall time: {tm:.2f}".format(tm=wall_time))
-    print("Average Q wait time (seconds): {dt:.2f}".format(dt=sstats["q_wait_time"] / num_threads))
+def print_statistics(sstats, num_threads, wall_time, es_time):
+    print("Wall time (s): {tm:.2f}".format(tm=wall_time))
+    print("Time to send remaining data to Elasticsearch (s): {t:.2f}".format(t=es_time))
+    print("Average Q wait time (s): {dt:.2f}".format(dt=sstats["q_wait_time"] / num_threads))
     print(
-        "Total time spent in dir/file handler routines across all threads (seconds): {dht:.2f}/{fht:.2f}".format(
+        "Total time spent in dir/file handler routines across all threads (s): {dht:.2f}/{fht:.2f}".format(
             dht=sstats["dir_handler_time"],
             fht=sstats["file_handler_time"],
         )
     )
-    print("Wall time (seconds): {wall}".format(wall=wall_time))
     print(
         "Processed/Queued/Skipped dirs: {p_dirs}/{q_dirs}/{s_dirs}".format(
             p_dirs=sstats["dirs_processed"],
@@ -670,9 +793,7 @@ def print_statistics(sstats, num_threads, wall_time):
         )
     )
     print("Total file size: {fsize}".format(fsize=sstats["file_size_total"]))
-    print(
-        "Average files/second: {a_fps}".format(a_fps=(sstats["files_processed"] + sstats["files_skipped"]) / wall_time)
-    )
+    print("Avg files/second: {a_fps}".format(a_fps=(sstats["files_processed"] + sstats["files_skipped"]) / wall_time))
 
 
 def main():
@@ -684,6 +805,8 @@ def main():
         epilog=EPILOG,
     )
     add_parser_options(parser)
+    if "--advanced" in sys.argv:
+        add_parser_options_advanced(parser)
     (options, args) = parser.parse_args(sys.argv[1:])
 
     # Setup logging
@@ -745,7 +868,7 @@ def main():
     es_send_thread_handles = []
     stats_output_count = 0
     stats_output_interval = options.stats_interval
-    poll_interval = options.q_poll_interval
+    poll_interval = scanit.DEFAULT_POLL_INTERVAL
     # Initialize and start the scanner
     scanner = scanit.ScanIt()
     cstates = scanner.get_custom_state()
@@ -754,6 +877,13 @@ def main():
     scanner.num_threads = options.threads
     scanner.processing_type = scanit.PROCESS_TYPE_ADVANCED
     scanner.exit_on_idle = True
+    if options.advanced:
+        poll_interval = options.q_poll_interval
+        scanner.dir_chunk = options.dirq_chunk
+        scanner.dir_priority_count = options.dirq_priority
+        scanner.file_chunk = options.fileq_chunk
+        scanner.file_q_cutoff = options.fileq_cutoff
+        scanner.file_q_min_cutoff = options.fileq_min_cutoff
     scanner.add_scan_path(scan_paths)
     scanner.start()
     # Start Elasticsearch send thread
@@ -778,6 +908,7 @@ def main():
             es_thread_instance.start()
             es_send_thread_handles.append(es_thread_instance)
     try:
+        print("Statistics interval (s): {si}".format(si=stats_output_interval))
         # For a very simple run until completion, just do a join like below
         # scanner.join()
         # If you want to get status updates then use the while loop below
@@ -787,7 +918,7 @@ def main():
                 temp_stats = scanner.get_stats()
                 print(
                     "{ts}: ({pc}) - FPS:{fps:.2f} - {stats}".format(
-                        ts=datetime.datetime.now().strftime("%c"),
+                        ts=datetime.datetime.now().strftime("%Y%m%d-%H%M%S"),
                         pc=scanner.is_processing(),
                         fps=temp_stats["files_processed"] / (time.time() - start_wall),
                         stats=temp_stats,
@@ -803,7 +934,7 @@ def main():
             send_start = time.time()
             while not send_q.empty():
                 time.sleep(poll_interval)
-            print("Seconds required to send remaining data to Elasticsearch: {t}".format(t=time.time() - send_start))
+            es_send_q_time = time.time() - send_start
             LOG.debug("Sending exit command to send queue")
             for thread_handle in es_send_thread_handles:
                 es_send_cmd_q.put([CMD_EXIT, None])
@@ -817,9 +948,11 @@ def main():
             es_send_cmd_q.put([CMD_EXIT, None])
         scanner.terminate(True)
     total_wall_time = time.time() - start_wall
+    if not send_data_to_es:
+        es_send_q_time = 0
     # =========== Output results ============
     sstats = scanner.get_stats()
-    print_statistics(sstats, scanner.num_threads, total_wall_time)
+    print_statistics(sstats, scanner.num_threads, total_wall_time, es_send_q_time)
 
 
 if __name__ == "__main__" or __file__ == None:
