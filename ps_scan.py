@@ -508,10 +508,9 @@ def es_init_index(url, username, password, index):
     es_client.password = password
     es_client.endpoint = url
     resp = es_client.create_index(index, mapping=PS_SCAN_MAPPING)
-    if resp["errors"]:
-        for item in resp["items"]:
-            if item["index"]["status"] != 200:
-                LOG.error(json.dumps(item["index"]["error"]))
+    if resp["status"] != 200:
+        if resp["error"]["type"] != "resource_already_exists_exception":
+            LOG.error(json.dumps(resp["error"]))
     LOG.debug("Create index response: %s" % resp)
 
 
@@ -928,14 +927,13 @@ def main():
             if cur_stats_count > stats_output_count:
                 temp_stats = scanner.get_stats()
                 print(
-                    "{ts}: ({pc}) - FPS:{fps:.2f} - {stats}".format(
+                    "{ts}: ({pc}) - FPS:{fps:0.0f} - {stats}".format(
                         ts=datetime.datetime.now().strftime("%Y%m%d %H:%M:%S"),
                         pc=scanner.is_processing(),
                         fps=temp_stats["files_processed"] / (time.time() - start_wall),
                         stats=temp_stats,
                     )
                 )
-                sys.stdout.flush()
                 stats_output_count = cur_stats_count
             time.sleep(poll_interval)
         LOG.debug("Scanner finished file scan")
