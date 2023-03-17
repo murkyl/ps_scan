@@ -47,7 +47,7 @@ class ElasticsearchLite:
             body_str += "\n"
         self.conn.request("POST", url, body_str, self.headers)
         resp = self.conn.getresponse()
-        return resp.read()
+        return json.loads(resp.read())
 
     def create_index(self, index_name, query=None, settings=None, aliases=None, mapping=None):
         if not self.conn:
@@ -65,14 +65,14 @@ class ElasticsearchLite:
             str_body = None
         self.conn.request("PUT", index_name, str_body, self.headers)
         resp = self.conn.getresponse()
-        return resp.read()
+        return json.loads(resp.read())
 
     def info(self):
         if not self.conn:
             self.connect()
         self.conn.request("GET", "_xpack", headers=self.headers)
         resp = self.conn.getresponse()
-        return resp.read()
+        return json.loads(resp.read())
 
     def search(self, body_str, index_name=None):
         if not self.conn:
@@ -82,7 +82,7 @@ class ElasticsearchLite:
             url = "{idx}/".format(idx=index_name) + url
         self.conn.request("GET", url, body_str, headers=self.headers)
         resp = self.conn.getresponse()
-        return resp.read()
+        return json.loads(resp.read())
 
     def validate_options(self):
         if not self.endpoint:
