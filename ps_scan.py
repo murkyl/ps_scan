@@ -416,7 +416,7 @@ def print_statistics(sstats, num_threads, wall_time, es_time):
 
 
 def main():
-    (options, args) = parse_cli(sys.argv, __version__, __date__)
+    (parser, options, args) = parse_cli(sys.argv, __version__, __date__)
 
     # Setup logging
     debug_count = options.debug

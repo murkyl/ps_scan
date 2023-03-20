@@ -265,4 +265,5 @@ def parse_cli(argv, prog_ver, prog_date):
     add_parser_options(parser)
     if "--advanced" in argv:
         add_parser_options_advanced(parser)
-    return parser.parse_args(argv[1:])
+    (options, args) = parser.parse_args(argv[1:])
+    return (parser, options, args)
