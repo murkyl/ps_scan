@@ -14,7 +14,6 @@ import datetime
 import elasticsearchlite
 import json
 import logging
-import optparse
 import os
 import queue
 import socket
@@ -23,6 +22,8 @@ import sys
 import scanit
 import threading
 import time
+from helpers.cli_parser import *
+from helpers.constants import *
 
 try:
     import isi.fs.attr as attr
@@ -33,422 +34,8 @@ try:
 except:
     OS_TYPE = 1
 
-USAGE = "usage: %prog [OPTION...] PATH... [PATH..]"
-EPILOG = """
-Quickstart
-====================
-The --es-cred-file or the --es-url and optionally both --es-user and --es-pass need to
-be present for the script to send output to an Elasticsearch endpoint.
-
-The --es-cred-file is a credentials file that contains up to 4 lines of data.
-The first line is the user name
-The second is the password
-The third, optional line is the index
-The fourth, optional line is the URL
-
-If you specify the URL you must specify the index as well.
-This es-cred-file is sensitive and should be properly secured.
-
-Command line options
-Some options can significantly reduce scan speed. The following options may cause scan
-speeds to be reduced by more than half:
-  * extra
-  * tagging
-  * user-attr
-
-Custom tagging file format
-====================
-TBD
-"""
-CMD_EXIT = 0
-CMD_SEND = 1
-DEFAULT_ES_THREADS = 4
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(module)s|%(funcName)s - %(levelname)s [%(lineno)d] %(message)s"
-DEFAULT_MAX_Q_SIZE = 1000
-DEFAULT_MAX_Q_WAIT_LOOPS = 100
-DEFAULT_SEND_Q_SLEEP = 0.5
-DEFAULT_STATS_OUTPUT_INTERVAL = 30
-DEFAULT_THREAD_COUNT = 6
-FORMAT = "%(asctime)s %(message)s"
 LOG = logging.getLogger(__name__)
-
-ACCESS_PATTERN = [
-    "concurrency",
-    "streaming",
-    "random",
-    "disabled",
-    "invalid",
-]
-FILE_TYPE = {
-    0o010000: "fifo",
-    0o020000: "char",
-    0o040000: "dir",
-    0o060000: "block",
-    0o100000: "file",
-    0o120000: "symlink",
-    0o140000: "socket",
-}
-FILE_TYPE_MASK = 0o170000
-IFS_BLOCK_SIZE = 8192
-PS_SCAN_MAPPING = {
-    "properties": {
-        # ========== Timestamps ==========
-        "atime": {"type": "long"},
-        "atime_date": {"type": "date", "format": "yyyy-MM-dd"},
-        "btime": {"type": "long"},
-        "btime_date": {"type": "date", "format": "yyyy-MM-dd"},
-        "ctime": {"type": "long"},
-        "ctime_date": {"type": "date", "format": "yyyy-MM-dd"},
-        "mtime": {"type": "long"},
-        "mtime_date": {"type": "date", "format": "yyyy-MM-dd"},
-        # ========== File and path strings ==========
-        "root": {"type": "keyword"},
-        "filename": {"type": "keyword"},
-        "extension": {"type": "keyword"},
-        # ========== File attributes ==========
-        "access_pattern": {"type": "keyword"},
-        "file_compressed": {"type": "boolean"},
-        "file_compression_ratio": {"type": "float"},
-        "file_dedupe_disabled": {"type": "boolean"},
-        "file_deduped": {"type": "boolean"},
-        "file_has_ads": {"type": "boolean"},
-        "file_inlined": {"type": "boolean"},
-        "file_packed": {"type": "boolean"},
-        "file_smartlinked": {"type": "boolean"},
-        "file_sparse": {"type": "boolean"},
-        "file_type": {"type": "keyword"},
-        "hard_links": {"type": "short"},
-        "inode": {"type": "long"},
-        "inode_mirror_count": {"type": "byte"},
-        "inode_parent": {"type": "long"},
-        "inode_revision": {"type": "long"},
-        # ========== Storage pool targets ==========
-        "pool_target_data": {"type": "keyword"},
-        "pool_target_data_name": {"type": "keyword"},
-        "pool_target_metadata": {"type": "keyword"},
-        "pool_target_metadata_name": {"type": "keyword"},
-        # ========== Permissions ==========
-        "perms_gid": {"type": "long"},
-        "perms_uid": {"type": "long"},
-        "perms_unix": {"type": "short"},
-        # ========== File protection level ==========
-        "protection_current": {"type": "keyword"},
-        "protection_target": {"type": "keyword"},
-        # ========== File allocation size and blocks ==========
-        "size": {"type": "long"},
-        "size_logical": {"type": "long"},
-        "size_physical": {"type": "long"},
-        "size_physical_data": {"type": "long"},
-        "size_protection": {"type": "long"},
-        # ========== SSD usage ==========
-        "ssd_strategy": {"type": "short"},
-        "ssd_strategy_name": {"type": "keyword"},
-        "ssd_status": {"type": "short"},
-        "ssd_status_name": {"type": "keyword"},
-        "size_metadata": {"type": "integer"},
-        "manual_access": {"type": "boolean"},
-        "manual_packing": {"type": "boolean"},
-        "manual_protection": {"type": "boolean"},
-        # ========== User attributes ==========
-        "tags": {"type": "keyword"},
-        "user_attributes": {"type": "object"},
-    }
-}
-SSD_STRATEGY = [
-    "metadata read",
-    "avoid ssd",
-    "data on ssd",
-    "metadata write",
-    "invalid",
-]
-SSD_STATUS = [
-    "metadata restripe",
-    "data restripe",
-    "restriping",
-    "complete",
-    "invalid",
-]
-# Inode flag bit fields
-# fmt: off
-IFLAGS_UF_NODUMP        = 0x00000001 # do not dump file
-IFLAGS_UF_IMMUTABLE     = 0x00000002 # file may not be changed
-IFLAGS_UF_APPEND        = 0x00000004 # writes to file may only append
-IFLAGS_UF_OPAQUE        = 0x00000008 # directory is opaque wrt. union
-IFLAGS_UF_NOUNLINK      = 0x00000010 # file may not be removed or renamed
-IFLAGS_UF_INHERIT       = 0x00000020 # unused but set on all files
-IFLAGS_UF_WRITECACHE    = 0x00000040 # writes are cached (Is this reverse bit? 0 is enable 1 is disable?)
-IFLAGS_UF_WC_INHERIT    = 0x00000080 # unused but set on all new files
-IFLAGS_UF_DOS_NOINDEX   = 0x00000100
-IFLAGS_UF_ADS           = 0x00000200 # file is ADS directory or stream
-IFLAGS_UF_HASADS        = 0x00000400 # file has ADS dir
-IFLAGS_UF_WC_ENDURANT   = 0x00000800 # write cache is endurant  (Is this reverse bit? 0 is enable 1 is disable?)
-IFLAGS_UF_SPARSE        = 0x00001000
-IFLAGS_UF_REPARSE       = 0x00002000
-IFLAGS_UF_ISI_UNUSED1   = 0x00004000
-IFLAGS_UF_DOS_OFFLINE   = 0x00008000
-IFLAGS_UF_DOS_ARCHIVE   = 0x10000000
-IFLAGS_UF_DOS_HIDDEN    = 0x20000000
-IFLAGS_UF_DOS_RO        = 0x40000000
-IFLAGS_UF_DOS_SYSTEM    = 0x80000000
-# Super user changeable flags
-IFLAGS_SF_ARCHIVED      = 0x00010000
-IFLAGS_SF_IMMUTABLE     = 0x00020000
-IFLAGS_SF_APPEND_ONLY   = 0x00040000
-IFLAGS_SF_STUBBED       = 0x00080000
-IFLAGS_SF_NO_UNLINK     = 0x00100000
-IFLAGS_SF_SNAP_INODE    = 0x00200000
-IFLAGS_SF_NO_SNAP_INODE = 0x00400000
-IFLAGS_SF_STUBBED_CACHE = 0x00800000
-IFLAGS_SF_HAS_NTFS_ACL  = 0x01000000
-IFLAGS_SF_HAS_NTFS_OG   = 0x02000000
-IFLAGS_SF_PARENT_UPGD   = 0x04000000
-IFLAGS_SF_BACKUP_SPARSE = 0x08000000
-# Combination flags
-IFLAG_COMBO_UF_DOS_ATTR = IFLAGS_UF_DOS_OFFLINE | IFLAGS_UF_DOS_ARCHIVE | IFLAGS_UF_DOS_HIDDEN | IFLAGS_UF_DOS_RO | IFLAGS_UF_DOS_SYSTEM
-IFLAG_COMBO_STUBBED     = IFLAGS_SF_STUBBED | IFLAGS_SF_STUBBED_CACHE
-# fmt: on
-"""
-Unused dinode fields:
-  di_at_r_repair
-  di_at_r_repairing
-  di_attr_bytes
-  di_bad_sin
-  di_bug_124996
-  di_create_timensec
-  di_ctimensec
-  di_data_bytes
-  di_data_depth
-  di_data_fmt
-  di_dir_version
-  di_in_cstat
-  di_inode_version
-  di_istrashdir
-  di_la_drivecount
-  di_magic
-  di_max_pg_n
-  di_mtimensec
-  di_packing_incomplete
-  di_packing_target
-  di_parent_hash
-  di_recovered_flag
-  di_restripe_state
-  di_stream # Normal is 0, 2 is usually for CloudPools targeting the writes to local cache
-  di_upgrade_async
-  di_upgrading
-"""
-
-
-def add_parser_options(parser):
-    parser.add_option(
-        "-t",
-        "--type",
-        type="choice",
-        choices=("basic", "onefs"),
-        default=None,
-        help="""Scan type to use.                                     
-basic: Works on all file systems.                     
-onefs: Works on OneFS based file systems.             
-""",
-    )
-    parser.add_option(
-        "--extra",
-        action="store_true",
-        default=False,
-        help="Add additional file information on OneFS systems",
-    )
-    # parser.add_option(
-    #    "--tagging",
-    #    action="store",
-    #    default=None,
-    #    help="Turn on custom tagging based on tagging rules specified in the file. See documentation for file format",
-    # )
-    parser.add_option(
-        "--user-attr",
-        action="store_true",
-        default=False,
-        help="Retrieve user defined extended attributes from each file",
-    )
-    parser.add_option(
-        "--stats-interval",
-        action="store",
-        type="int",
-        default=DEFAULT_STATS_OUTPUT_INTERVAL,
-        help="""Stats update interval in seconds.                     
-Default: %default
-""",
-    )
-    group = optparse.OptionGroup(parser, "Performance options")
-    group.add_option(
-        "--threads",
-        action="store",
-        type="int",
-        default=DEFAULT_THREAD_COUNT,
-        help="""Number of file scanning threads.                      
-Default: %default
-""",
-    )
-    group.add_option(
-        "--advanced",
-        action="store_true",
-        default=False,
-        help="Flag to enable advanced options",
-    )
-    parser.add_option_group(group)
-    group = optparse.OptionGroup(parser, "Elasticsearch options")
-    group.add_option(
-        "--es-url",
-        action="store",
-        default=None,
-        help="Full URL to Elasticsearch endpoint",
-    )
-    group.add_option(
-        "--es-index",
-        action="store",
-        default=None,
-        help="Index to insert data into",
-    )
-    group.add_option(
-        "--es-init-index",
-        action="store_true",
-        default=False,
-        help="When set, the script will initialize the index before uploading data",
-    )
-    group.add_option(
-        "--es-user",
-        action="store",
-        default=None,
-        help="Elasticsearch user",
-    )
-    group.add_option(
-        "--es-pass",
-        action="store",
-        default=None,
-        help="Elasticsearch password",
-    )
-    group.add_option(
-        "--es-cred-file",
-        action="store",
-        default=None,
-        help="File holding the user name and password, on individual lines, for Elasticsearch",
-    )
-    group.add_option(
-        "--es-threads",
-        action="store",
-        type="int",
-        default=DEFAULT_ES_THREADS,
-        help="""Number of threads to send data to Elasticsearch.      
-Default: %default
-""",
-    )
-    group.add_option(
-        "--es-max-send-q-size",
-        action="store",
-        type="int",
-        default=DEFAULT_MAX_Q_SIZE,
-        help="""Number of unsent entries in the Elasticsearch send    
-queue before throttling file scanning.                
-Default: %default
-""",
-    )
-    group.add_option(
-        "--es-send-q-sleep",
-        action="store",
-        type="int",
-        default=DEFAULT_SEND_Q_SLEEP,
-        help="""When max send queue size is reached, sleep each file  
-scanner by this value in seconds to slow scanning.    
-Default: %default
-""",
-    )
-    parser.add_option_group(group)
-    group = optparse.OptionGroup(parser, "Logging and debug options")
-    group.add_option(
-        "--log",
-        default=None,
-        help="Full path and file name for log output.  If not set, no log output to file will be generated",
-    )
-    group.add_option(
-        "--console-log",
-        action="store_true",
-        default=False,
-        help="When this flag is set, log output to console",
-    )
-    group.add_option(
-        "--quiet",
-        action="store_true",
-        default=False,
-        help="When this flag is set, do not log output to console",
-    )
-    group.add_option(
-        "--debug",
-        default=0,
-        action="count",
-        help="Add multiple debug flags to increase debug",
-    )
-    parser.add_option_group(group)
-
-
-def add_parser_options_advanced(parser):
-    group = optparse.OptionGroup(parser, "ADVANCED options")
-    group.add_option(
-        "--dirq-chunk",
-        action="store",
-        type="int",
-        default=scanit.DEFAULT_QUEUE_DIR_CHUNK_SIZE,
-        help="""Number of directories to put into each work chunk.    
-Default: %default
-""",
-    )
-    group.add_option(
-        "--dirq-priority",
-        action="store",
-        type="int",
-        default=scanit.DEFAULT_DIR_PRIORITY_COUNT,
-        help="""Number of threads that are biased to process          
-directories.                                          
-Default: %default
-""",
-    )
-    group.add_option(
-        "--fileq-chunk",
-        action="store",
-        type="int",
-        default=scanit.DEFAULT_QUEUE_FILE_CHUNK_SIZE,
-        help="""Number of files to put into each work chunk.          
-Default: %default
-""",
-    )
-    group.add_option(
-        "--fileq-cutoff",
-        action="store",
-        type="int",
-        default=scanit.DEFAULT_FILE_QUEUE_CUTOFF,
-        help="""When the number of files in the file queue is less    
-than this value, bias threads to process directories. 
-Default: %default
-""",
-    )
-    group.add_option(
-        "--fileq-min-cutoff",
-        action="store",
-        type="int",
-        default=scanit.DEFAULT_FILE_QUEUE_MIN_CUTOFF,
-        help="""When the number of files in the file queue is less    
-than this value, only process directories if possible.
-Default: %default
-""",
-    )
-    group.add_option(
-        "--q-poll-interval",
-        action="store",
-        type="int",
-        default=scanit.DEFAULT_POLL_INTERVAL,
-        help="""Number of seconds to wait in between polling events   
-for the statistics and ES send loop.                  
-Default: %default
-""",
-    )
-    parser.add_option_group(group)
 
 
 def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_interval=scanit.DEFAULT_POLL_INTERVAL):
@@ -456,6 +43,8 @@ def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_inte
     es_client.username = username
     es_client.password = password
     es_client.endpoint = url
+    file_idx = index_name + "_file"
+    dir_idx = index_name + "_dir"
 
     while True:
         # Process our command queue
@@ -474,7 +63,7 @@ def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_inte
             cmd = cmd_item[0]
             if cmd == CMD_EXIT:
                 break
-            elif cmd == CMD_SEND:
+            elif cmd & (CMD_SEND | CMD_SEND_DIR):
                 # TODO: Optimize this section by using a byte buffer and writing directly into the buffer?
                 bulk_data = []
                 work_items = cmd_item[1]
@@ -483,7 +72,7 @@ def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_inte
                     bulk_data.append(json.dumps(work_items[i]))
                     work_items[i] = None
                 bulk_str = "\n".join(bulk_data)
-                resp = es_client.bulk(bulk_str, index_name=index_name)
+                resp = es_client.bulk(bulk_str, index_name=file_idx if cmd == CMD_SEND else dir_idx)
                 if resp["errors"]:
                     for item in resp["items"]:
                         if item["index"]["status"] != 200:
@@ -502,16 +91,21 @@ def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_inte
 
 
 def es_init_index(url, username, password, index):
-    LOG.debug("Creating new index with mapping: %s" % index)
+    if index[-1] == "_":
+        index = index[0:-1]
+    LOG.debug("Creating new indices with mapping: {idx}_file and {idx}_dir".format(idx=index))
     es_client = elasticsearchlite.ElasticsearchLite()
     es_client.username = username
     es_client.password = password
     es_client.endpoint = url
-    resp = es_client.create_index(index, mapping=PS_SCAN_MAPPING)
-    if resp["status"] != 200:
-        if resp["error"]["type"] != "resource_already_exists_exception":
-            LOG.error(json.dumps(resp["error"]))
-    LOG.debug("Create index response: %s" % resp)
+    for i in [index + "_file", index + "_dir"]:
+        resp = es_client.create_index(i, mapping=PS_SCAN_MAPPING)
+        LOG.debug("Create index response: %s" % resp)
+        if resp.get("status", 200) != 200:
+            if resp["error"]["type"] == "resource_already_exists_exception":
+                LOG.debug("Index {idx} already exists".format(idx=i))
+            else:
+                LOG.error(json.dumps(resp["error"]))
 
 
 def file_handler_basic(root, filename_list, stats, args={}):
@@ -580,6 +174,13 @@ def file_handler_basic(root, filename_list, stats, args={}):
                 time.sleep(send_q_sleep)
             else:
                 break
+    if result_dir_list:
+        custom_state["send_q"].put([CMD_SEND_DIR, result_dir_list])
+        for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
+            if custom_state["send_q"].qsize() > max_send_q_size:
+                time.sleep(send_q_sleep)
+            else:
+                break
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
@@ -603,11 +204,13 @@ def file_handler_pscale(root, filename_list, stats, args={}):
     phys_block_size = custom_state.get("phys_block_size", IFS_BLOCK_SIZE)
     pool_translate = custom_state.get("node_pool_translation", {})
     send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_SEND_Q_SLEEP)
+    sent_to_es = custom_state.get("send_to_es", False)
 
     processed = 0
     skipped = 0
     dir_list = []
     result_list = []
+    result_dir_list = []
 
     for filename in filename_list:
         full_path = os.path.join(root, filename)
@@ -728,16 +331,18 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 # file_info["tags"] = ["tag1", "othertag"]
                 # file_info["tags"] = custom_tagging(file_info)
                 pass
-            result_list.append(file_info)
             if fstats["di_mode"] & 0o040000:
+                result_dir_list.append(file_info)
                 # Fix size issues with dirs
                 file_info["size_logical"] = 0
                 # Save directories to re-queue
                 dir_list.append(filename)
                 continue
-            elif fstats["di_mode"] & 0o120000:
-                # Fix size issues with symlinks
-                file_info["size_logical"] = 0
+            else:
+                result_list.append(file_info)
+                if fstats["di_mode"] & 0o120000:
+                    # Fix size issues with symlinks
+                    file_info["size_logical"] = 0
             stats["file_size_total"] += fstats["di_size"]
             processed += 1
         except Exception as e:
@@ -748,8 +353,11 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 os.close(fd)
             except:
                 pass
-    if result_list:
-        custom_state["send_q"].put([CMD_SEND, result_list])
+    if (result_list or result_dir_list) and sent_to_es:
+        if result_list:
+            custom_state["send_q"].put([CMD_SEND, result_list])
+        if result_dir_list:
+            custom_state["send_q"].put([CMD_SEND_DIR, result_dir_list])
         for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
             if custom_state["send_q"].qsize() > max_send_q_size:
                 time.sleep(send_q_sleep)
@@ -759,15 +367,16 @@ def file_handler_pscale(root, filename_list, stats, args={}):
 
 
 def init_custom_state(custom_state, options):
+    # TODO: Parse the custom tag input file and produce a parser
+    custom_state["custom_tagging"] = None
     custom_state["extra_stats"] = options.extra
+    custom_state["get_user_attr"] = options.user_attr
     custom_state["max_send_q_size"] = options.es_max_send_q_size
     custom_state["node_pool_translation"] = {}
     custom_state["phys_block_size"] = IFS_BLOCK_SIZE
     custom_state["send_q"] = queue.Queue()
     custom_state["send_q_sleep"] = options.es_send_q_sleep
-    custom_state["get_user_attr"] = options.user_attr
-    # TODO: Parse the custom tag input file and produce a parser
-    custom_state["custom_tagging"] = None
+    custom_state["send_to_es"] = options.es_user and options.es_pass and options.es_url and options.es_index
     if OS_TYPE == 2:
         # Query the cluster for node pool name information
         dpdb = dp.DiskPoolDB()
@@ -807,17 +416,7 @@ def print_statistics(sstats, num_threads, wall_time, es_time):
 
 
 def main():
-    # Create our command line parser. We use the older optparse library for compatibility on OneFS
-    optparse.OptionParser.format_epilog = lambda self, formatter: self.epilog
-    parser = optparse.OptionParser(
-        usage=USAGE,
-        version="%prog v" + __version__ + " (" + __date__ + ")",
-        epilog=EPILOG,
-    )
-    add_parser_options(parser)
-    if "--advanced" in sys.argv:
-        add_parser_options_advanced(parser)
-    (options, args) = parser.parse_args(sys.argv[1:])
+    (options, args) = parse_cli(sys.argv, __version__, __date__)
 
     # Setup logging
     debug_count = options.debug
