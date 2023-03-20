@@ -114,17 +114,24 @@ def file_handler_basic(root, filename_list, stats, args={}):
     {
       "processed": <int>                # Number of files actually processed
       "skipped": <int>                  # Number of files skipped
+      "q_dirs": [<str>]                 # List of directory names that need processing
     }
     """
+    custom_state = args.get("custom_state", {})
     start_time = args.get("start_time", time.time())
     thread_state = args.get("thread_state", {})
-    custom_state = args.get("custom_state", {})
+
+    custom_tagging = custom_state.get("custom_tagging", None)
     max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_MAX_Q_SIZE)
     send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_SEND_Q_SLEEP)
+    send_to_es = custom_state.get("send_to_es", False)
+
     processed = 0
     skipped = 0
     dir_list = []
     result_list = []
+    result_dir_list = []
+
     for filename in filename_list:
         full_path = os.path.join(root, filename)
         try:
@@ -135,10 +142,6 @@ def file_handler_basic(root, filename_list, stats, args={}):
             btime_date = ""
         try:
             fstats = os.lstat(full_path)
-            if stat.S_ISDIR(fstats.st_mode):
-                # Save directories to re-queue
-                dir_list.append(filename)
-                continue
             file_info = {
                 "atime": fstats.st_atime,
                 "atime_date": datetime.date.fromtimestamp(fstats.st_atime).isoformat(),
@@ -161,21 +164,27 @@ def file_handler_basic(root, filename_list, stats, args={}):
                 "uid": fstats.st_uid,
                 "perms_unix": stat.S_IMODE(fstats.st_mode),
             }
+            if custom_tagging:
+                # DEBUG: Add custom user tags
+                # file_info["tags"] = ["tag1", "othertag"]
+                # file_info["tags"] = custom_tagging(file_info)
+                pass
+            if stat.S_ISDIR(fstats.st_mode):
+                result_dir_list.append(file_info)
+                # Save directories to re-queue
+                dir_list.append(filename)
+                continue
             stats["file_size_total"] += fstats.st_size
             processed += 1
             result_list.append(file_info)
         except Exception as e:
             skipped += 1
             LOG.exception(e)
-    if result_list:
-        custom_state["send_q"].put([CMD_SEND, result_list])
-        for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
-            if custom_state["send_q"].qsize() > max_send_q_size:
-                time.sleep(send_q_sleep)
-            else:
-                break
-    if result_dir_list:
-        custom_state["send_q"].put([CMD_SEND_DIR, result_dir_list])
+    if (result_list or result_dir_list) and send_to_es:
+        if result_list:
+            custom_state["send_q"].put([CMD_SEND, result_list])
+        if result_dir_list:
+            custom_state["send_q"].put([CMD_SEND_DIR, result_dir_list])
         for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
             if custom_state["send_q"].qsize() > max_send_q_size:
                 time.sleep(send_q_sleep)
