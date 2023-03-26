@@ -1,18 +1,23 @@
 #!/usr/bin/env python
-# coding: utf-8
+# -*- coding: utf8 -*-
 """
 Module description here
 """
-__title__ = "scanit"
-__version__ = "1.0.0"
+# fmt: off
+__title__         = "scanit"
+__version__       = "1.0.0"
+__date__          = "16 March 2023"
+__license__       = "MIT"
+__author__        = "Andrew Chung <andrew.chung@dell.com>"
+__maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
+__email__         = "andrew.chung@dell.com"
 __all__ = [
+    "default_adv_file_handler",
     "default_file_handler",
     "ScanIt",
     "TerminateThread",
 ]
-__author__ = "Andrew Chung <acchung@gmail.com>"
-__license__ = "MIT"
-
+# fmt: on
 import copy
 import logging
 import multiprocessing
@@ -124,27 +129,6 @@ class TerminateThread(Exception):
     pass
 
 
-def default_file_handler(root, filename_list, stats, extra_args={}):
-    """
-    The file handler returns a dictionary:
-    {
-      "processed": <int>                # Number of files actually processed
-      "skipped": <int>                  # Number of files skipped
-    }
-    """
-    processed = 0
-    skipped = 0
-    for filename in filename_list:
-        full_path = os.path.join(root, filename)
-        try:
-            file_stats = os.lstat(full_path)
-            stats["file_size_total"] += file_stats.st_size
-            processed += 1
-        except:
-            skipped += 1
-    return {"processed": processed, "skipped": skipped}
-
-
 def default_adv_file_handler(root, filename_list, stats, extra_args={}):
     """
     The file handler returns a dictionary:
@@ -170,6 +154,27 @@ def default_adv_file_handler(root, filename_list, stats, extra_args={}):
         except:
             skipped += 1
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
+
+
+def default_file_handler(root, filename_list, stats, extra_args={}):
+    """
+    The file handler returns a dictionary:
+    {
+      "processed": <int>                # Number of files actually processed
+      "skipped": <int>                  # Number of files skipped
+    }
+    """
+    processed = 0
+    skipped = 0
+    for filename in filename_list:
+        full_path = os.path.join(root, filename)
+        try:
+            file_stats = os.lstat(full_path)
+            stats["file_size_total"] += file_stats.st_size
+            processed += 1
+        except:
+            skipped += 1
+    return {"processed": processed, "skipped": skipped}
 
 
 class ScanIt(threading.Thread):

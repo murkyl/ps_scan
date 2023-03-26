@@ -8,8 +8,15 @@ __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
-
+__all__ = [
+    "add_parser_options",
+    "add_parser_options_advanced",
+    "parse_cli",
+]
+# fmt: on
 import optparse
+
+import scanit
 from helpers.constants import *
 
 USAGE = "usage: %prog [OPTION...] PATH... [PATH..]"
@@ -39,6 +46,7 @@ Custom tagging file format
 ====================
 TBD
 """
+
 
 def add_parser_options(parser):
     parser.add_option(
@@ -253,6 +261,7 @@ Default: %default
 """,
     )
     parser.add_option_group(group)
+
 
 def parse_cli(argv, prog_ver, prog_date):
     # Create our command line parser. We use the older optparse library for compatibility on OneFS

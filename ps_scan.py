@@ -1,5 +1,8 @@
 #!/usr/bin/env python
 # -*- coding: utf8 -*-
+"""
+Module description here
+"""
 # fmt: off
 __title__         = "ps_scan"
 __version__       = "1.0.0"
@@ -9,9 +12,7 @@ __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 # fmt: on
-
 import datetime
-import elasticsearchlite
 import json
 import logging
 import os
@@ -19,9 +20,11 @@ import queue
 import socket
 import stat
 import sys
-import scanit
 import threading
 import time
+
+import elasticsearchlite
+import scanit
 from helpers.cli_parser import *
 from helpers.constants import *
 
