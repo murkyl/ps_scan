@@ -3,16 +3,21 @@
 """
 Module description here
 """
-__title__ = "scanit"
-__version__ = "1.0.0"
+# fmt: off
+__title__         = "scanit"
+__version__       = "1.0.0"
+__date__          = "16 March 2023"
+__license__       = "MIT"
+__author__        = "Andrew Chung <andrew.chung@dell.com>"
+__maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
+__email__         = "andrew.chung@dell.com"
 __all__ = [
+    "default_adv_file_handler",
     "default_file_handler",
     "ScanIt",
     "TerminateThread",
 ]
-__author__ = "Andrew Chung <acchung@gmail.com>"
-__license__ = "MIT"
-
+# fmt: on
 import copy
 import logging
 import multiprocessing
@@ -225,7 +230,7 @@ class ScanIt(threading.Thread):
         #
         self.work_q_short_timeout = DEFAULT_QUEUE_WAIT_TIMEOUT
 
-    def _add_stats_state(self, base, modify=False):
+    def _add_common_stats(self, base, modify=False):
         if not modify:
             base = copy.deepcopy(base)
         for state in self.threads_state:
@@ -303,7 +308,24 @@ class ScanIt(threading.Thread):
         self.dir_q_threads_count += 1
         self.dir_q_lock.release()
 
-    def _process_new_dir(self, path):
+    def _process_list_dir(self, path):
+        start = time.time()
+        dirs_skipped = 0
+        try:
+            dir_file_list = os.listdir(path)
+        except PermissionError:
+            dir_file_list = []
+            dirs_skipped = 1
+        self._enqueue_chunks(path, dir_file_list, self.file_chunk, self.file_q, CMD_PROC_FILE)
+        # files_queued includes all potential directories. Adjust the count when we actually know how many dirs
+        return {
+            "files_queued": len(dir_file_list),
+            "dir_scan_time": (time.time() - start),
+            "dirs_queued": 0,
+            "dirs_skipped": dirs_skipped,
+        }
+
+    def _process_walk_dir(self, path):
         start = time.time()
         num_dirs = 0
         num_files = 0
@@ -319,17 +341,6 @@ class ScanIt(threading.Thread):
             "dir_scan_time": (time.time() - start),
             "dirs_queued": num_dirs,
             "files_queued": num_files,
-        }
-
-    def _process_ps_new_dir(self, path):
-        start = time.time()
-        dir_file_list = os.listdir(path)
-        self._enqueue_chunks(path, dir_file_list, self.file_chunk, self.file_q, CMD_PROC_FILE)
-        # files_queued includes all potential directories. Adjust the count when we actually know how many dirs
-        return {
-            "dir_scan_time": (time.time() - start),
-            "dirs_queued": 0,
-            "files_queued": len(dir_file_list),
         }
 
     def _process_adv_queues(self, state):
@@ -373,7 +384,7 @@ class ScanIt(threading.Thread):
                             continue
                         stats["dirs_processed"] += 1
                         try:
-                            handler_stats = self._process_ps_new_dir(os.path.join(work_item[1], dirname))
+                            handler_stats = self._process_list_dir(os.path.join(work_item[1], dirname))
                         except MemoryError:
                             LOG.exception(TXT_STR[T_OOM_PROCESS_NEW_DIR].format(tid=name, r=work_item[1], d=dirname))
                             raise TerminateThread
@@ -403,7 +414,7 @@ class ScanIt(threading.Thread):
                         if dirs_to_queue:
                             self._enqueue_chunks(work_item[1], dirs_to_queue, self.dir_chunk, self.dir_q, CMD_PROC_DIR)
                             stats["dirs_queued"] += len(dirs_to_queue)
-                            # Fix the files queued count to adjust for the incorrect number of directories queued
+                            # Fix the files queued count to adjust for the directories queued as files
                             stats["files_queued"] -= len(dirs_to_queue)
                     except MemoryError:
                         LOG.exception(TXT_STR[T_OOM_PROCESS_FILE].format(tid=name, r=work_item[1]))
@@ -476,7 +487,7 @@ class ScanIt(threading.Thread):
                             continue
                         stats["dirs_processed"] += 1
                         try:
-                            handler_stats = self._process_new_dir(os.path.join(work_item[1], dirname))
+                            handler_stats = self._process_walk_dir(os.path.join(work_item[1], dirname))
                         except MemoryError:
                             LOG.exception(TXT_STR[T_OOM_PROCESS_NEW_DIR].format(tid=name, r=work_item[1], d=dirname))
                             raise TerminateThread
@@ -531,13 +542,48 @@ class ScanIt(threading.Thread):
                 break
         state["run_state"] = S_IDLE
         LOG.debug(TXT_STR[T_EXIT].format(tid=name))
+    
+    def _start_worker_threads(self):
+        if self.threads_state:
+            return
+        for thread_id in range(self.num_threads):
+            thread_instance = self._create_thread_instance_state()
+            self.threads_state.append(thread_instance)
+            if self.processing_type == PROCESS_TYPE_ADVANCED:
+                thandle = threading.Thread(target=self._process_adv_queues, kwargs={"state": thread_instance})
+            else:
+                thandle = threading.Thread(target=self._process_queues, kwargs={"state": thread_instance})
+            thread_instance["handle"] = thandle
+            if self.handler_init_thread:
+                self.handler_init_thread(self.custom_state, thread_instance["custom"])
+            LOG.debug(TXT_STR[T_START_THREAD].format(tid=thandle.name))
+            thandle.start()
 
     def add_scan_path(self, paths):
+        """
+        This method supports 3 types of input for the paths
+        1) A simple single string that specifies a full path
+           e.g. /ifs/some/path
+        2) A list of simple strings that each specify a full path
+           e.g. ["/ifs/some/path", "/ifs/other/path", ...]
+        3) A list of tuples where the first element of the tuple is a root and the second element is a list of
+           directory names that start at that root
+           that root.
+           e.g. [["/ifs/root1", ["dir1", "dir2", "dir3", ...]], ["/ifs/root2", ["dirA", ...]]]
+
+        """
         if not paths:
             return
         if not isinstance(paths, list):
+            # We have a simple string path
             paths = [paths]
-        self.file_q.put([CMD_PROC_DIR, "", paths])
+        elif isinstance(paths[0], list):
+            # We have case 3 with a list of tuples/lists
+            for path_set in paths:
+                self._enqueue_chunks(path_set[0], path_set[1], self.dir_chunk, self.dir_q, CMD_PROC_DIR)
+                self.common_stats["dirs_queued"] += len(path_set[1])
+            return
+        self._enqueue_chunks("", paths, self.dir_chunk, self.dir_q, CMD_PROC_DIR)
         self.common_stats["dirs_queued"] += len(paths)
 
     def is_processing(self):
@@ -559,8 +605,26 @@ class ScanIt(threading.Thread):
         custom_threads_state = [x["custom"] for x in self.threads_state]
         return (self.custom_state, custom_threads_state)
 
+    def get_dir_queue_items(self, num_items=0, percentage=0):
+        cur_q_size = self.dir_q.qsize()
+        p_items = int(cur_q_size * percentage)
+        num_to_return = p_items if p_items > num_items else num_items
+        dir_items = []
+        for i in range(num_to_return):
+            try:
+                work_item = self.dir_q.get(block=False)
+                dir_items.append([work_item[1], work_item[2]])
+                # Decrease our directory queued count by the number of directories we return
+                self.common_stats["dirs_queued"] -= len(work_item[2])
+            except queue.Empty:
+                break
+        return dir_items
+
+    def get_dir_queue_size(self):
+        return self.dir_q.qsize()
+
     def get_stats(self):
-        stats = self._add_stats_state(self.common_stats, False)
+        stats = self._add_common_stats(self.common_stats)
         if self.handler_custom_stats:
             custom_threads_state = [x["custom"] for x in self.threads_state]
             stats["custom"] = self.handler_custom_stats(
@@ -583,21 +647,8 @@ class ScanIt(threading.Thread):
                 self.handler_init(self.custom_state)
             # Validate state variables are sane
             self.validate_state_variables()
-
-            for thread_id in range(self.num_threads):
-                instance_state = self._create_thread_instance_state()
-                self.threads_state.append(instance_state)
-                if self.processing_type == PROCESS_TYPE_ADVANCED:
-                    thread_instance = threading.Thread(
-                        target=self._process_adv_queues, kwargs={"state": instance_state}
-                    )
-                else:
-                    thread_instance = threading.Thread(target=self._process_queues, kwargs={"state": instance_state})
-                instance_state["handle"] = thread_instance
-                if self.handler_init_thread:
-                    self.handler_init_thread(self.custom_state, instance_state["custom"])
-                LOG.debug(TXT_STR[T_START_THREAD].format(tid=thread_instance.name))
-                thread_instance.start()
+            # Start up worker threads
+            self._start_worker_threads()
             # Wait for threads to finish or we get additional commands from the calling process
             self.process_alive = True
             while self.process_alive:

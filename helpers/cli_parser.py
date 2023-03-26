@@ -8,8 +8,15 @@ __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
-
+__all__ = [
+    "add_parser_options",
+    "add_parser_options_advanced",
+    "parse_cli",
+]
+# fmt: on
 import optparse
+
+import scanit
 from helpers.constants import *
 
 USAGE = "usage: %prog [OPTION...] PATH... [PATH..]"
@@ -86,6 +93,16 @@ Default: %default
         type="int",
         default=DEFAULT_THREAD_COUNT,
         help="""Number of file scanning threads.                      
+Default: %default
+""",
+    )
+    group.add_option(
+        "--threads-per-proc",
+        action="store",
+        type="int",
+        default=DEFAULT_THREADS_PER_PROC_COUNT,
+        help="""File scan threads per process.                        
+Number of processes = Threads / ThreadsPerProc        
 Default: %default
 """,
     )
@@ -265,4 +282,5 @@ def parse_cli(argv, prog_ver, prog_date):
     add_parser_options(parser)
     if "--advanced" in argv:
         add_parser_options_advanced(parser)
-    return parser.parse_args(argv[1:])
+    (options, args) = parser.parse_args(argv[1:])
+    return (parser, options, args)
