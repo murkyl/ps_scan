@@ -154,8 +154,8 @@ def file_handler_basic(root, filename_list, stats, args={}):
                 "btime_date": btime_date,
                 "ctime": fstats.st_ctime,
                 "ctime_date": datetime.date.fromtimestamp(fstats.st_ctime).isoformat(),
-                "extension": os.path.splitext(filename),
-                "filename": filename,
+                "file_ext": os.path.splitext(filename),
+                "file_name": filename,
                 "gid": fstats.st_gid,
                 "hard_links": fstats.st_nlink,
                 "inode": fstats.st_ino,
@@ -164,7 +164,7 @@ def file_handler_basic(root, filename_list, stats, args={}):
                 "mtime_date": datetime.date.fromtimestamp(fstats.st_mtime).isoformat(),
                 # Physical size without metadata
                 "physical_size": fstats.st_blocks * IFS_BLOCK_SIZE,
-                "root": root,
+                "file_path": root,
                 "type": FILE_TYPE[stat.S_IFMT(fstats.st_mode) & FILE_TYPE_MASK],
                 "uid": fstats.st_uid,
                 "perms_unix": stat.S_IMODE(fstats.st_mode),
@@ -255,32 +255,29 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 "mtime": fstats["di_mtime"],
                 "mtime_date": datetime.date.fromtimestamp(fstats["di_mtime"]).isoformat(),
                 # ========== File and path strings ==========
-                "root": root,
-                "filename": filename,
-                "extension": os.path.splitext(filename)[1],
+                "file_path": root,
+                "file_name": filename,
+                "file_ext": os.path.splitext(filename)[1],
                 # ========== File attributes ==========
-                "access_pattern": ACCESS_PATTERN[fstats["di_la_pattern"]],
-                "file_compressed": (comp_blocks > fstats["di_data_blocks"]) if compressed_file else False,
+                "file_access_pattern": ACCESS_PATTERN[fstats["di_la_pattern"]],
                 "file_compression_ratio": comp_blocks / fstats["di_data_blocks"] if compressed_file else 1,
-                # File dedupe disabled - (0: can dedupe, 1: do not dedupe)
-                "file_dedupe_disabled": not not fstats["di_no_dedupe"],
-                # Assume the file is fully/partially deduped if it has shadow store references
-                "file_deduped": (fstats["di_shadow_refs"] > 0),
-                "file_has_ads": ((fstats["di_flags"] & IFLAGS_UF_HASADS) != 0),
-                "file_inlined": (
+                "file_hard_links": fstats["di_nlink"],
+                "file_is_ads": ((fstats["di_flags"] & IFLAGS_UF_HASADS) != 0),
+                "file_is_compressed": (comp_blocks > fstats["di_data_blocks"]) if compressed_file else False,
+                "file_is_dedupe_disabled": not not fstats["di_no_dedupe"],
+                "file_is_deduped": (fstats["di_shadow_refs"] > 0),
+                "file_is_inlined": (
                     (fstats["di_physical_blocks"] == 0)
                     and (fstats["di_shadow_refs"] == 0)
                     and (fstats["di_logical_size"] > 0)
                 ),
-                "file_packed": not not fstats["di_packing_policy"],
-                "file_smartlinked": stubbed_file,
-                "file_sparse": ((fstats["di_logical_size"] < fstats["di_size"]) and not stubbed_file),
+                "file_is_packed": not not fstats["di_packing_policy"],
+                "file_is_smartlinked": stubbed_file,
+                "file_is_sparse": ((fstats["di_logical_size"] < fstats["di_size"]) and not stubbed_file),
                 "file_type": FILE_TYPE[fstats["di_mode"] & FILE_TYPE_MASK],
-                "hard_links": fstats["di_nlink"],
                 "inode": fstats["di_lin"],
                 "inode_mirror_count": fstats["di_inode_mc"],
                 "inode_parent": fstats["di_parent_lin"],
-                # Number of times the inode has been modified. An indicator of file change rate. Starts at 2
                 "inode_revision": fstats["di_rev"],
                 # ========== Storage pool targets ==========
                 "pool_target_data": fstats["di_data_pool_target"],
@@ -331,9 +328,9 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                     metadata_size += inode[3]
                 # Sum of the size of all the inodes. This includes inodes that mix both 512 byte and 8192 byte inodes
                 file_info["size_metadata"] = metadata_size
-                file_info["manual_access"] = not not estats["ge_manually_manage_access"]
-                file_info["manual_packing"] = not not estats["ge_manually_manage_packing"]
-                file_info["manual_protection"] = not not estats["ge_manually_manage_protection"]
+                file_info["file_is_manual_access"] = not not estats["ge_manually_manage_access"]
+                file_info["file_is_manual_packing"] = not not estats["ge_manually_manage_packing"]
+                file_info["file_is_manual_protection"] = not not estats["ge_manually_manage_protection"]
             if user_attr:
                 extended_attr = {}
                 keys = uattr.userattr_list(fd)
@@ -342,8 +339,8 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 file_info["user_attributes"] = extended_attr
             if custom_tagging:
                 # DEBUG: Add custom user tags
-                # file_info["tags"] = ["tag1", "othertag"]
-                # file_info["tags"] = custom_tagging(file_info)
+                # file_info["user_tags"] = ["tag1", "othertag"]
+                # file_info["user_tags"] = custom_tagging(file_info)
                 pass
             if fstats["di_mode"] & 0o040000:
                 result_dir_list.append(file_info)
