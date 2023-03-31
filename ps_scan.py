@@ -38,9 +38,25 @@ try:
     OS_TYPE = 2
 except:
     OS_TYPE = 1
+try:
+    dir(PermissionError)
+except:
+    PermissionError = Exception
 
+DEFAULT_LOG_BARE_FORMAT = "%(message)s"
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(module)s|%(funcName)s - %(levelname)s (%(processName)s)[%(lineno)d] %(message)s"
+DEFAULT_LOG_STATS_FORMAT = "%(asctime)s %(message)s"
 LOG = logging.getLogger(__name__)
+STATSLOG = logging.getLogger("statistics")
+STATS_CONLOG = logging.getLogger("statistics_console")
+
+
+def chunk_path_list(list_data, chunks):
+    chunk_list = [[] for x in range(chunks)]
+    chunk_size = (len(list_data) // chunks) + 1 * (len(list_data) % chunks != 0)
+    for i in range(0, len(list_data), chunk_size):
+        chunk_list[i] = list_data[i : i + chunk_size]
+    return chunk_list
 
 
 def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_interval=scanit.DEFAULT_POLL_INTERVAL):
@@ -227,9 +243,9 @@ def file_handler_pscale(root, filename_list, stats, args={}):
     result_dir_list = []
 
     for filename in filename_list:
-        full_path = os.path.join(root, filename)
-        fd = None
         try:
+            full_path = os.path.join(root, filename)
+            fd = None
             fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
             fstats = attr.get_dinode(fd)
             # atime call can return empty if the file does not have an atime or atime tracking is disabled
@@ -237,7 +253,7 @@ def file_handler_pscale(root, filename_list, stats, args={}):
             if atime:
                 atime = atime[0]
             else:
-                # If atime does not exist, use the last metadata change time as this capture the last time someone
+                # If atime does not exist, use the last metadata change time as this captures the last time someone
                 # modified either the data or the inode of the file
                 atime = fstats["di_ctime"]
             logical_blocks = fstats["di_logical_size"] // phys_block_size
@@ -348,6 +364,7 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 file_info["size_logical"] = 0
                 # Save directories to re-queue
                 dir_list.append(filename)
+                LOG.critical("DIR QUEUED: %s" % filename)
                 continue
             else:
                 result_list.append(file_info)
@@ -356,6 +373,15 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                     file_info["size_logical"] = 0
             stats["file_size_total"] += fstats["di_size"]
             processed += 1
+        except IOError as ioe:
+            skipped += 1
+            if ioe.errno == 13:
+                LOG.info("Permission error scanning: {file}".format(file=full_path))
+            else:
+                LOG.exception(ioe)
+        except PermissionError:
+            skipped += 1
+            LOG.info("Permission error scanning: {file}".format(file=full_path))
         except Exception as e:
             skipped += 1
             LOG.exception(e)
@@ -377,6 +403,21 @@ def file_handler_pscale(root, filename_list, stats, args={}):
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
+def merge_process_stats(process_states):
+    temp_stats = None
+    for state in process_states:
+        if not state["stats"]:
+            # No stats for this process yet
+            continue
+        if temp_stats is None and state["stats"]:
+            temp_stats = copy.deepcopy(state["stats"])
+            continue
+        for key in temp_stats.keys():
+            if key in state["stats"]:
+                temp_stats[key] += state["stats"][key]
+    return temp_stats
+
+
 def init_custom_state(custom_state, options):
     # TODO: Parse the custom tag input file and produce a parser
     custom_state["custom_tagging"] = None
@@ -390,44 +431,108 @@ def init_custom_state(custom_state, options):
     custom_state["user_attr"] = options.user_attr
     if OS_TYPE == 2:
         # Query the cluster for node pool name information
-        dpdb = dp.DiskPoolDB()
-        groups = dpdb.get_groups()
-        for g in groups:
-            children = g.get_children()
-            for child in children:
-                custom_state["node_pool_translation"][int(child.entryid)] = g.name
+        try:
+            dpdb = dp.DiskPoolDB()
+            groups = dpdb.get_groups()
+            for g in groups:
+                children = g.get_children()
+                for child in children:
+                    custom_state["node_pool_translation"][int(child.entryid)] = g.name
+        except:
+            LOG.critical("Unable to get the ID to name translation for node pools")
 
 
-def print_statistics(stats, num_threads, wall_time, es_time):
-    print("Wall time (s): {tm:.2f}".format(tm=wall_time))
-    print("Time to send remaining data to Elasticsearch (s): {t:.2f}".format(t=es_time))
-    print("Average Q wait time (s): {dt:.2f}".format(dt=stats["q_wait_time"] / num_threads))
-    print(
+def print_interim_statistics(stats, now, start):
+    STATSLOG.info(
+        """Statistics:
+    FPS: {fps:0.1f}
+    Total file bytes processed: {f_bytes}
+    Files (Processed/Queued/Skipped): {f_proc}/{f_queued}/{f_skip}
+    File Q Size/Handler time: {f_q_size}/{f_h_time:0.1f}
+    Dir scan time: {d_scan:0.1f}
+    Dirs (Processed/Queued/Skipped): {d_proc}/{d_queued}/{d_skip}
+    Dir Q Size/Handler time: {d_q_size}/{d_h_time:0.1f}
+    """.format(
+            d_proc=stats.get("dirs_processed", 0),
+            d_h_time=stats.get("dir_handler_time", 0),
+            d_q_size=stats.get("dir_q_size", 0),
+            d_queued=stats.get("dirs_queued", 0),
+            d_scan=stats.get("dir_scan_time", 0),
+            d_skip=stats.get("dirs_skipped", 0),
+            f_bytes=stats.get("file_size_total", 0),
+            f_h_time=stats.get("file_handler_time", 0),
+            f_proc=stats.get("files_processed", 0),
+            f_q_size=stats.get("file_q_size", 0),
+            f_queued=stats.get("files_queued", 0),
+            f_skip=stats.get("files_skipped", 0),
+            fps=stats.get("files_processed", 0) / (now - start),
+        )
+    )
+
+
+def print_final_statistics(stats, num_threads, wall_time, es_time):
+    STATS_CONLOG.info("Wall time (s): {tm:.2f}".format(tm=wall_time))
+    STATS_CONLOG.info("Time to send remaining data to Elasticsearch (s): {t:.2f}".format(t=es_time))
+    STATS_CONLOG.info("Average Q wait time (s): {dt:.2f}".format(dt=stats["q_wait_time"] / num_threads))
+    STATS_CONLOG.info(
         "Total time spent in dir/file handler routines across all threads (s): {dht:.2f}/{fht:.2f}".format(
             dht=stats.get("dir_handler_time", 0),
             fht=stats.get("file_handler_time", 0),
-        )
+        ),
     )
-    print(
+    STATS_CONLOG.info(
         "Processed/Queued/Skipped dirs: {p_dirs}/{q_dirs}/{s_dirs}".format(
             p_dirs=stats.get("dirs_processed", 0),
             q_dirs=stats.get("dirs_queued", 0),
             s_dirs=stats.get("dirs_skipped", 0),
-        )
+        ),
     )
-    print(
+    STATS_CONLOG.info(
         "Processed/Queued/Skipped files: {p_files}/{q_files}/{s_files}".format(
             p_files=stats.get("files_processed", 0),
             q_files=stats.get("files_queued", 0),
             s_files=stats.get("files_skipped", 0),
-        )
+        ),
     )
-    print("Total file size: {fsize}".format(fsize=stats.get("file_size_total", 0)))
-    print(
+    STATS_CONLOG.info("Total file size: {fsize}".format(fsize=stats.get("file_size_total", 0)))
+    STATS_CONLOG.info(
         "Avg files/second: {a_fps}".format(
             a_fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / wall_time
-        )
+        ),
     )
+
+
+def setup_logger(log_obj, options, statslog_obj=None, stats_conlog_obj=None):
+    debug_count = options.debug
+    if (options.log is None) and (not options.quiet):
+        options.console_log = True
+    if debug_count > 0:
+        log_obj.setLevel(logging.DEBUG)
+    else:
+        log_obj.setLevel(logging.INFO)
+    if options.console_log:
+        log_handler = logging.StreamHandler()
+        log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
+        log_obj.addHandler(log_handler)
+    if options.log:
+        log_handler = logging.FileHandler(options.log)
+        log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
+        log_obj.addHandler(log_handler)
+    if (options.log is None) and (options.console_log is False):
+        log_obj.addHandler(logging.NullHandler())
+    if statslog_obj and not options.quiet:
+        # Set the highest level to 1 to capture everything. Filter on individual handlers below.
+        statslog_obj.setLevel(logging.INFO)
+        log_handler = logging.StreamHandler()
+        # log_handler.setLevel(logging.INFO)
+        log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_STATS_FORMAT, "%H:%M:%S"))
+        statslog_obj.addHandler(log_handler)
+    if stats_conlog_obj and not options.quiet:
+        stats_conlog_obj.setLevel(logging.INFO)
+        log_handler = logging.StreamHandler()
+        log_handler.setLevel(logging.INFO)
+        log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_BARE_FORMAT))
+        stats_conlog_obj.addHandler(log_handler)
 
 
 def subprocess(process_state, scan_paths, file_handler, options):
@@ -438,13 +543,12 @@ def subprocess(process_state, scan_paths, file_handler, options):
 
     # Setup process local variables
     start_wall = time.time()
-    # DEBUG: Need to get options values for cmd_poll_interval, dir_output_interval, dir_request_interval
-    cmd_poll_interval = 0.01
+    cmd_poll_interval = options.cmd_poll_interval
     dir_output_count = 0
-    dir_output_interval = 2
-    dir_request_interval = 2
+    dir_output_interval = options.dir_output_interval
+    dir_request_interval = options.dir_request_interval
     es_send_thread_handles = []
-    poll_interval = scanit.DEFAULT_POLL_INTERVAL
+    poll_interval = options.q_poll_interval
     stats_output_count = 0
     stats_output_interval = options.stats_interval
     send_data_to_es = options.es_user and options.es_pass and options.es_url and options.es_index
@@ -453,18 +557,16 @@ def subprocess(process_state, scan_paths, file_handler, options):
     scanner = scanit.ScanIt()
     cstates = scanner.get_custom_state()
     init_custom_state(cstates[0], options)
+    scanner.dir_chunk = options.dirq_chunk
+    scanner.dir_priority_count = options.dirq_priority
+    scanner.file_chunk = options.fileq_chunk
+    scanner.file_q_cutoff = options.fileq_cutoff
+    scanner.file_q_min_cutoff = options.fileq_min_cutoff
     scanner.handler_file = file_handler
-    scanner.num_threads = process_state.get("num_threads", DEFAULT_THREAD_COUNT)
+    scanner.num_threads = process_state.get("threads", DEFAULT_THREAD_COUNT)
     scanner.processing_type = scanit.PROCESS_TYPE_ADVANCED
     # DEBUG: scanner.exit_on_idle = True
     scanner.exit_on_idle = False
-    if options.advanced:
-        poll_interval = options.q_poll_interval
-        scanner.dir_chunk = options.dirq_chunk
-        scanner.dir_priority_count = options.dirq_priority
-        scanner.file_chunk = options.fileq_chunk
-        scanner.file_q_cutoff = options.fileq_cutoff
-        scanner.file_q_min_cutoff = options.fileq_min_cutoff
     scanner.add_scan_path(scan_paths)
     scanner.start()
 
@@ -511,6 +613,9 @@ def subprocess(process_state, scan_paths, file_handler, options):
                 elif cmd == CMD_SEND_DIR:
                     # Parent process has sent directories to process
                     LOG.critical("SEND_DIR - Got %s dirs to process" % (len(work_item[1])))
+                    # DEBUG:
+                    if process_state["status"] != "running":
+                        LOG.critical("DEBUG: PROC IS NOW RUNNING")
                     process_state["status"] = "running"
                     process_state["want_data"] = 0
                     scanner.add_scan_path(work_item[1])
@@ -539,16 +644,23 @@ def subprocess(process_state, scan_paths, file_handler, options):
                 dir_output_count = cur_dir_count
                 conn_pipe.send([CMD_SEND_DIR_COUNT, cur_dir_q_size])
             # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
-            if (cur_dir_q_size < DEFAULT_LOW_DIR_Q_THRESHOLD) and (now -  process_state["want_data"] > dir_request_interval):
+            if (cur_dir_q_size < DEFAULT_LOW_DIR_Q_THRESHOLD) and (
+                now - process_state["want_data"] > dir_request_interval
+            ):
                 process_state["want_data"] = now
                 conn_pipe.send([CMD_REQ_DIR, 0])
             # Check if the scanner is idle
             if not cur_dir_q_size and (process_state["status"] == "running") and not scanner.is_processing():
+                LOG.critical("DEBUG: PROC IS NOW IDLE")
                 process_state["status"] = "idle"
                 conn_pipe.send([CMD_STATUS_IDLE, 0])
             # Small sleep to throttle polling
             time.sleep(poll_interval)
         LOG.debug("Scanner finished file scan")
+        # DEBUG:
+        LOG.critical("DEBUG: SCANNER PROCESSING: %s" % scanner.is_processing())
+        LOG.critical("DEBUG: DIR_Q_SIZE: %s/%s" % (cur_dir_q_size, scanner.get_dir_queue_size()))
+        LOG.critical("DEBUG: PROC STATE: %s" % process_state)
         # Scanner is done processing. Wait for all the data to be sent to Elasticsearch
         if send_data_to_es:
             LOG.debug("Waiting for send queue to empty")
@@ -570,56 +682,14 @@ def subprocess(process_state, scan_paths, file_handler, options):
         scanner.terminate(True)
 
     # Send statistics back to parent and end process
-    # DEBUG: Need to add these values to the stats being sent back
     total_wall_time = time.time() - start_wall
     if not send_data_to_es:
         es_send_q_time = 0
+    # DEBUG:
+    LOG.critical("DEBUG: SENDING STATS BACK AT END: %s" % scanner.get_stats())
     conn_pipe.send([CMD_SEND_STATS, scanner.get_stats()])
     conn_pipe.send([CMD_EXIT, None])
     LOG.debug("Process loop ending: {pid}".format(pid=mp.current_process()))
-
-
-def merge_process_stats(process_states):
-    temp_stats = None
-    for state in process_states:
-        if not state["stats"]:
-            # No stats for this process yet
-            continue
-        if temp_stats is None and state["stats"]:
-            temp_stats = copy.deepcopy(state["stats"])
-            continue
-        for key in temp_stats.keys():
-            if key in state["stats"]:
-                temp_stats[key] += state["stats"][key]
-    return temp_stats
-
-
-def setup_logger(log_obj, options):
-    debug_count = options.debug
-    if (options.log is None) and (not options.quiet):
-        options.console_log = True
-    if debug_count > 0:
-        LOG.setLevel(logging.DEBUG)
-    else:
-        LOG.setLevel(logging.INFO)
-    if options.console_log:
-        log_handler = logging.StreamHandler()
-        log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
-        LOG.addHandler(log_handler)
-    if options.log:
-        log_handler = logging.FileHandler(options.log)
-        log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
-        LOG.addHandler(log_handler)
-    if (options.log is None) and (options.console_log is False):
-        LOG.addHandler(logging.NullHandler())
-
-
-def chunk_path_list(list_data, chunks):
-    chunk_list = [[] for x in range(chunks)]
-    chunk_size = (len(list_data) // chunks) + 1 * (len(list_data) % chunks != 0)
-    for i in range(0, len(list_data), chunk_size):
-        chunk_list[i] = list_data[i : i + chunk_size]
-    return chunk_list
 
 
 def main():
@@ -627,7 +697,7 @@ def main():
     (parser, options, args) = parse_cli(sys.argv, __version__, __date__)
 
     # Setup logging
-    setup_logger(LOG, options)
+    setup_logger(LOG, options, STATSLOG, STATS_CONLOG)
 
     # Validate command line options
     cmd_line_errors = []
@@ -664,14 +734,15 @@ def main():
 
     # Start scanning processes
     start_wall = time.time()
-    process_states = []
-    stats_output_count = 0
-    stats_output_interval = options.stats_interval
-    request_work_interval = 2
-    request_work_dirq_percentage = 0.5
     num_procs = options.threads // options.threads_per_proc + 1 * (options.threads % options.threads_per_proc != 0)
     base_threads = options.threads // num_procs
+    poll_interval = options.q_poll_interval
+    request_work_dirq_percentage = options.dirq_request_percentage
+    request_work_interval = options.request_work_interval
+    stats_output_count = 0
+    stats_output_interval = options.stats_interval
     thread_count = options.threads
+    process_states = []
     scan_path_chunks = chunk_path_list(args, num_procs)
     LOG.debug(
         "Starting {count} processes with {threads} threads across all processes".format(
@@ -680,6 +751,7 @@ def main():
     )
     for i in range(num_procs):
         parent_conn, child_conn = mp.Pipe()
+        threads_for_process = base_threads if thread_count > base_threads else thread_count
         process_state = {
             "dir_count": 0,
             "id": i + 1,
@@ -688,7 +760,7 @@ def main():
             "status": "starting",
             "parent_conn": parent_conn,
             "child_conn": child_conn,
-            "threads": base_threads if thread_count > base_threads else thread_count,
+            "threads": threads_for_process,
             "want_data": time.time(),
             "data_requested": 0,
         }
@@ -704,11 +776,11 @@ def main():
         thread_count -= base_threads
         process_state["handle"] = proc_handle
         process_states.append(process_state)
-        LOG.debug("Starting process: {num}".format(num=i))
+        LOG.debug("Starting process: {id} with {tcount} threads".format(id=i + 1, tcount=threads_for_process))
         proc_handle.start()
     LOG.debug("All processes started")
 
-    print("Statistics interval: {si} seconds".format(si=options.stats_interval))
+    STATSLOG.info("Statistics interval: {si} seconds".format(si=options.stats_interval))
     # Main loop
     #   * Check for any commands from the sub processes
     #   * Output statistics
@@ -758,13 +830,7 @@ def main():
             cur_stats_count = (now - start_wall - 1) // stats_output_interval
             if cur_stats_count > stats_output_count:
                 temp_stats = merge_process_stats(process_states) or {}
-                print(
-                    "{ts}: FPS:{fps:0.0f} - {stats}".format(
-                        ts=datetime.datetime.now().strftime("%Y%m%d %H:%M:%S"),
-                        fps=temp_stats.get("files_processed", 0) / (now - start_wall),
-                        stats=temp_stats,
-                    )
-                )
+                print_interim_statistics(temp_stats, now, start_wall)
                 stats_output_count = cur_stats_count
             # Check if we should exit
             continue_running = False
@@ -819,13 +885,17 @@ def main():
     total_wall_time = time.time() - start_wall
     temp_stats = merge_process_stats(process_states)
     # DEBUG: Need to add ES Send Q Time back in
-    print_statistics(temp_stats, options.threads, total_wall_time, 0)
+    print_final_statistics(temp_stats, options.threads, total_wall_time, 0)
 
 
 if __name__ == "__main__" or __file__ == None:
     # Support scripts built into executable on Windows
-    mp.freeze_support()
-    if hasattr(mp, "set_start_method"):
-        # Force all OS to behave the same when spawning new process
-        mp.set_start_method("spawn")
+    try:
+        mp.freeze_support()
+        if hasattr(mp, "set_start_method"):
+            # Force all OS to behave the same when spawning new process
+            mp.set_start_method("spawn")
+    except:
+        # Ignore these errors as they are either already set or do not apply to this system
+        pass
     main()
