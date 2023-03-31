@@ -35,6 +35,10 @@ try:
     OS_TYPE = "PowerScale"
 except:
     OS_TYPE = "Other"
+try:
+    dir(PermissionError)
+except:
+    PermissionError = Exception
 
 
 def next_int(reset=False):
@@ -313,9 +317,20 @@ class ScanIt(threading.Thread):
         dirs_skipped = 0
         try:
             dir_file_list = os.listdir(path)
+        except IOError as ioe:
+            dir_file_list = []
+            dirs_skipped = 1
+            if ioe.errno == 13:
+                LOG.info("Permission error listing directory: {file}".format(file=path))
+            else:
+                LOG.exception(ioe)
         except PermissionError:
             dir_file_list = []
             dirs_skipped = 1
+            LOG.info("Permission error listing directory: {file}".format(file=path))
+        except Exception as e:
+            dirs_skipped = 1
+            LOG.exception(e)
         self._enqueue_chunks(path, dir_file_list, self.file_chunk, self.file_q, CMD_PROC_FILE)
         # files_queued includes all potential directories. Adjust the count when we actually know how many dirs
         return {
@@ -372,6 +387,7 @@ class ScanIt(threading.Thread):
                     reset_idle_required = False
                     state["run_state"] = S_RUNNING
                 cmd = work_item[0]
+                start = time.time()
                 if cmd == CMD_PROC_DIR:
                     for dirname in work_item[2]:
                         # If the directory name is in our skip directory list, skip this directory
@@ -430,8 +446,10 @@ class ScanIt(threading.Thread):
                 self.terminate()
                 break
             except queue.Empty:
+                if q_to_read == self.dir_q:
+                    continue
                 wait_timeout_countdown -= 1
-                if wait_timeout_countdown <= 0:
+                if wait_timeout_countdown <= 0 and self.dir_q.empty() and self.file_q.empty():
                     state["run_state"] = S_IDLE
                     wait_timeout_countdown = state["wait_timeout_countdown"]
                     reset_idle_required = True
@@ -475,6 +493,7 @@ class ScanIt(threading.Thread):
                     reset_idle_required = False
                     state["run_state"] = S_RUNNING
                 cmd = work_item[0]
+                start = time.time()
                 if cmd == CMD_PROC_DIR:
                     for dirname in work_item[2]:
                         # If the directory name is in our skip directory list, skip this directory
@@ -528,7 +547,7 @@ class ScanIt(threading.Thread):
                 break
             except queue.Empty:
                 wait_timeout_countdown -= 1
-                if wait_timeout_countdown <= 0:
+                if wait_timeout_countdown <= 0 and state["run_state"] != S_IDLE:
                     state["run_state"] = S_IDLE
                     wait_timeout_countdown = state["wait_timeout_countdown"]
                     reset_idle_required = True
@@ -542,7 +561,7 @@ class ScanIt(threading.Thread):
                 break
         state["run_state"] = S_IDLE
         LOG.debug(TXT_STR[T_EXIT].format(tid=name))
-    
+
     def _start_worker_threads(self):
         if self.threads_state:
             return
