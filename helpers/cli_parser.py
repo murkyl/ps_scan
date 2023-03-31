@@ -212,6 +212,36 @@ Default: %default
 def add_parser_options_advanced(parser):
     group = optparse.OptionGroup(parser, "ADVANCED options")
     group.add_option(
+        "--cmd-poll-interval",
+        action="store",
+        type="float",
+        default=DEFAULT_DIR_OUTPUT_INTERVAL,
+        help="""Number of fractional seconds to wait for commands in  
+the subprocess command loop.                          
+Default: %default
+""",
+    )
+    group.add_option(
+        "--dir-output-interval",
+        action="store",
+        type="int",
+        default=DEFAULT_DIR_OUTPUT_INTERVAL,
+        help="""Number of whole seconds between directory queue size  
+updates from a subprocess to the coordinator.         
+Default: %default
+""",
+    )
+    group.add_option(
+        "--dir-request-interval",
+        action="store",
+        type="int",
+        default=DEFAULT_DIR_REQUEST_INTERVAL,
+        help="""Number of whole seconds between requests for          
+additional work directories by a subprocess.          
+Default: %default
+""",
+    )
+    group.add_option(
         "--dirq-chunk",
         action="store",
         type="int",
@@ -227,6 +257,16 @@ Default: %default
         default=scanit.DEFAULT_DIR_PRIORITY_COUNT,
         help="""Number of threads that are biased to process          
 directories.                                          
+Default: %default
+""",
+    )
+    group.add_option(
+        "--dirq-request-percentage",
+        action="store",
+        type="float",
+        default=DEFAULT_DIRQ_REQUEST_PERCENTAGE,
+        help="""Percentage of the number of unprocessed directory     
+chunks to return each time a process requests work.   
 Default: %default
 """,
     )
@@ -269,6 +309,16 @@ for the statistics and ES send loop.
 Default: %default
 """,
     )
+    group.add_option(
+        "--request-work-interval",
+        action="store",
+        type="int",
+        default=DEFAULT_REQUEST_WORK_INTERVAL,
+        help="""Minimum number of second between process work requests
+before more work can be sent to a process.            
+Default: %default
+""",
+    )
     parser.add_option_group(group)
 
 def parse_cli(argv, prog_ver, prog_date):
@@ -283,4 +333,16 @@ def parse_cli(argv, prog_ver, prog_date):
     if "--advanced" in argv:
         add_parser_options_advanced(parser)
     (options, args) = parser.parse_args(argv[1:])
+    if not options.advanced:
+        options.cmd_poll_interval = DEFAULT_CMD_POLL_INTERVAL
+        options.dir_output_interval = DEFAULT_DIR_OUTPUT_INTERVAL
+        options.dir_request_interval = DEFAULT_DIR_REQUEST_INTERVAL
+        options.dirq_chunk = scanit.DEFAULT_QUEUE_DIR_CHUNK_SIZE
+        options.dirq_priority = scanit.DEFAULT_DIR_PRIORITY_COUNT
+        options.dirq_request_percentage = DEFAULT_DIRQ_REQUEST_PERCENTAGE
+        options.fileq_chunk = scanit.DEFAULT_QUEUE_FILE_CHUNK_SIZE
+        options.fileq_cutoff = scanit.DEFAULT_FILE_QUEUE_CUTOFF
+        options.fileq_min_cutoff = scanit.DEFAULT_FILE_QUEUE_MIN_CUTOFF
+        options.request_work_interval = DEFAULT_REQUEST_WORK_INTERVAL
+        options.q_poll_interval = scanit.DEFAULT_POLL_INTERVAL
     return (parser, options, args)
