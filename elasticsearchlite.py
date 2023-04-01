@@ -1,10 +1,24 @@
+#!/usr/bin/env python
+# -*- coding: utf8 -*-
+# fmt: off
+__title__         = "elasticsearchlite"
+__version__       = "1.0.0"
+__date__          = "01 April 2023"
+__license__       = "MIT"
+__author__        = "Andrew Chung <andrew.chung@dell.com>"
+__maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
+__email__         = "andrew.chung@dell.com"
+__all__ = [
+    "ElasticsearchLite",
+]
+# fmt: on
 import base64
+import json
 
 try:
     import http.client as http_conn
 except:
     import httplib as http_conn
-import json
 
 
 def get_basic_auth_header(user, password):
