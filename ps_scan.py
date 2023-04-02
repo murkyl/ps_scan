@@ -44,7 +44,7 @@ except:
     PermissionError = Exception
 
 DEFAULT_LOG_BARE_FORMAT = "%(message)s"
-DEFAULT_LOG_FORMAT = "%(asctime)s - %(module)s|%(funcName)s - %(levelname)s (%(processName)s)[%(lineno)d] %(message)s"
+DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - %(module)s (%(processName)s|%(thread)d)[%(lineno)d] %(message)s"
 DEFAULT_LOG_STATS_FORMAT = "%(asctime)s %(message)s"
 LOG = logging.getLogger(__name__)
 STATSLOG = logging.getLogger("statistics")
@@ -598,6 +598,8 @@ def subprocess(process_state, scan_paths, file_handler, options):
             es_send_thread_handles.append(es_thread_instance)
 
     # Main processing loop
+    # TODO: DEBUG: Add some code to detect when processes have died/never coming back
+    # Maybe due to a memory error??
     try:
         while True:
             now = time.time()
@@ -612,10 +614,7 @@ def subprocess(process_state, scan_paths, file_handler, options):
                     break
                 elif cmd == CMD_SEND_DIR:
                     # Parent process has sent directories to process
-                    LOG.critical("SEND_DIR - Got %s dirs to process" % (len(work_item[1])))
-                    # DEBUG:
-                    if process_state["status"] != "running":
-                        LOG.critical("DEBUG: PROC IS NOW RUNNING")
+                    LOG.critical("DEBUG: SEND_DIR - Got %s dirs to process" % (len(work_item[1])))
                     process_state["status"] = "running"
                     process_state["want_data"] = 0
                     scanner.add_scan_path(work_item[1])
@@ -629,8 +628,10 @@ def subprocess(process_state, scan_paths, file_handler, options):
                         conn_pipe.send([CMD_SEND_DIR, dir_list, now])
                 elif cmd == CMD_REQ_DIR_COUNT:
                     # Return the number of directory chunks we have queued for processing
-                    dir_count = cur_dir_q_size
-                    conn_pipe.send([CMD_SEND_DIR_COUNT, dir_count])
+                    conn_pipe.send([CMD_SEND_DIR_COUNT, cur_dir_q_size])
+                elif cmd == CMD_REQ_FILE_COUNT:
+                    # Return the number of directory chunks we have queued for processing
+                    conn_pipe.send([CMD_SEND_FILE_COUNT, scanner.get_file_queue_size()])
                 else:
                     LOG.error("Unknown command received in process: {s}".format(s=cmd))
             # Determine if we should send a statistics update
@@ -648,19 +649,19 @@ def subprocess(process_state, scan_paths, file_handler, options):
                 now - process_state["want_data"] > dir_request_interval
             ):
                 process_state["want_data"] = now
-                conn_pipe.send([CMD_REQ_DIR, 0])
+                conn_pipe.send([CMD_REQ_DIR, cur_dir_q_size, scanner.get_file_queue_size()])
             # Check if the scanner is idle
-            if not cur_dir_q_size and (process_state["status"] == "running") and not scanner.is_processing():
-                LOG.critical("DEBUG: PROC IS NOW IDLE")
+            if (
+                not cur_dir_q_size
+                and not scanner.get_file_queue_size()
+                and not scanner.is_processing()
+                and process_state["status"] != "idle"
+            ):
                 process_state["status"] = "idle"
-                conn_pipe.send([CMD_STATUS_IDLE, 0])
+                conn_pipe.send([CMD_STATUS_IDLE, cur_dir_q_size, scanner.get_file_queue_size()])
             # Small sleep to throttle polling
             time.sleep(poll_interval)
         LOG.debug("Scanner finished file scan")
-        # DEBUG:
-        LOG.critical("DEBUG: SCANNER PROCESSING: %s" % scanner.is_processing())
-        LOG.critical("DEBUG: DIR_Q_SIZE: %s/%s" % (cur_dir_q_size, scanner.get_dir_queue_size()))
-        LOG.critical("DEBUG: PROC STATE: %s" % process_state)
         # Scanner is done processing. Wait for all the data to be sent to Elasticsearch
         if send_data_to_es:
             LOG.debug("Waiting for send queue to empty")
@@ -676,6 +677,8 @@ def subprocess(process_state, scan_paths, file_handler, options):
     except KeyboardInterrupt as kbe:
         LOG.debug("Enumerate threads: %s" % threading.enumerate())
         print("Termination signal received. Shutting down scanner.")
+    except:
+        LOG.exception("Unhandled exception in subprocess")
     finally:
         for thread_handle in es_send_thread_handles:
             es_send_cmd_q.put([CMD_EXIT, None])
@@ -685,8 +688,6 @@ def subprocess(process_state, scan_paths, file_handler, options):
     total_wall_time = time.time() - start_wall
     if not send_data_to_es:
         es_send_q_time = 0
-    # DEBUG:
-    LOG.critical("DEBUG: SENDING STATS BACK AT END: %s" % scanner.get_stats())
     conn_pipe.send([CMD_SEND_STATS, scanner.get_stats()])
     conn_pipe.send([CMD_EXIT, None])
     LOG.debug("Process loop ending: {pid}".format(pid=mp.current_process()))
@@ -810,7 +811,10 @@ def main():
                     elif cmd == CMD_REQ_DIR:
                         # A child process is requesting directories to process
                         proc["want_data"] = now
-                        LOG.critical("ROOT - PROCESS (%s) wants directories" % proc["id"])
+                        LOG.critical(
+                            "DEBUG: ROOT - PROCESS (%s) wants directories. Has %d dir chunks queued and %d file chunks queued"
+                            % (proc["id"], work_item[1], work_item[2])
+                        )
                     elif cmd == CMD_SEND_DIR:
                         dir_list.extend(work_item[1])
                         proc["data_requested"] = 0
@@ -822,6 +826,7 @@ def main():
                         proc["want_data"] = now
                     elif cmd == CMD_STATUS_RUN:
                         proc["status"] = "running"
+                        proc["want_data"] = 0
                 if proc["status"] == "idle":
                     idle_proc += 1
 
@@ -853,7 +858,9 @@ def main():
             for proc in process_states:
                 if proc["want_data"]:
                     want_work_procs.append(proc)
-                if proc["dir_count"]:
+                # Any processes that have directories and did not request work in the last second
+                # work will be put on a queue to ask for directories to process
+                if proc["dir_count"] and (not proc["want_data"] or proc["want_data"] > (now + 1)):
                     have_dirs_procs.append(proc)
             if want_work_procs and dir_list:
                 # Send out our directories to all processes that want work evenly
@@ -868,7 +875,6 @@ def main():
                     proc["want_data"] = 0
                     index += increment
                     want_work_procs.remove(proc)
-                    del dir_list
                     dir_list = []
             if want_work_procs and have_dirs_procs:
                 for proc in have_dirs_procs:

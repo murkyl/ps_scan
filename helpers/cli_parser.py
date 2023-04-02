@@ -47,6 +47,7 @@ Custom tagging file format
 TBD
 """
 
+
 def add_parser_options(parser):
     parser.add_option(
         "-t",
@@ -320,6 +321,7 @@ Default: %default
 """,
     )
     parser.add_option_group(group)
+
 
 def parse_cli(argv, prog_ver, prog_date):
     # Create our command line parser. We use the older optparse library for compatibility on OneFS

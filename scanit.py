@@ -167,8 +167,8 @@ def default_adv_file_handler(root, filename_list, stats, extra_args={}):
     skipped = 0
     dir_list = []
     for filename in filename_list:
-        full_path = os.path.join(root, filename)
         try:
+            full_path = os.path.join(root, filename)
             file_stats = os.lstat(full_path)
             if stat.S_ISDIR(file_stats.st_mode):
                 # Save directories to re-queue
@@ -547,7 +547,7 @@ class ScanIt(threading.Thread):
                 break
             except queue.Empty:
                 wait_timeout_countdown -= 1
-                if wait_timeout_countdown <= 0 and state["run_state"] != S_IDLE:
+                if wait_timeout_countdown <= 0 and self.dir_q.empty() and self.file_q.empty():
                     state["run_state"] = S_IDLE
                     wait_timeout_countdown = state["wait_timeout_countdown"]
                     reset_idle_required = True
@@ -609,13 +609,13 @@ class ScanIt(threading.Thread):
         processing_count = 0
         if self.process_alive == -1:
             return 1
-        for s in self.threads_state:
-            alive = s["handle"].is_alive()
-            run_state = s["run_state"]
+        for thread_state in self.threads_state:
+            alive = thread_state["handle"].is_alive()
+            run_state = thread_state["run_state"]
             if not alive:
                 if run_state > S_STARTING:
-                    LOG.critical(TXT_STR[T_INCONSISTENT_THREAD_STATE].format(tid=s["handle"].name))
-                    s["run_state"] = S_IDLE
+                    LOG.critical(TXT_STR[T_INCONSISTENT_THREAD_STATE].format(tid=thread_state["handle"].name))
+                    thread_state["run_state"] = S_IDLE
             elif run_state != S_IDLE:
                 processing_count += 1
         return processing_count
@@ -641,6 +641,9 @@ class ScanIt(threading.Thread):
 
     def get_dir_queue_size(self):
         return self.dir_q.qsize()
+
+    def get_file_queue_size(self):
+        return self.file_q.qsize()
 
     def get_stats(self):
         stats = self._add_common_stats(self.common_stats)
@@ -674,7 +677,6 @@ class ScanIt(threading.Thread):
                 time.sleep(DEFAULT_POLL_INTERVAL)
                 if self.exit_on_idle and not self.is_processing():
                     break
-                # TODO: Setup command loop to listen for external requests
             self.terminate()
             LOG.debug(TXT_STR[T_JOIN_THREADS])
             for thread_instance in self.threads_state:
