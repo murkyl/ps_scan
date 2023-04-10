@@ -39,6 +39,7 @@ permissions for any user that should not have access to this file.
 Command line options
 Some options can significantly reduce scan speed. The following options may cause scan
 speeds to be reduced by more than half:
+  * --acl
   * --extra
   * --tagging
   * --user-attr
