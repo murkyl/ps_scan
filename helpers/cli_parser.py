@@ -3,7 +3,7 @@
 # fmt: off
 __title__         = "ps_scan_cli_parser"
 __version__       = "1.0.0"
-__date__          = "20 March 2023"
+__date__          = "10 April 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -23,7 +23,7 @@ USAGE = "usage: %prog [OPTION...] PATH... [PATH..]"
 EPILOG = """
 Quickstart
 ====================
-The --es-cred-file or the --es-url and optionally both --es-user and --es-pass need to
+The --es-cred-file or the --es-url, the --es-index, --es-user and --es-pass need to
 be present for the script to send output to an Elasticsearch endpoint.
 
 The --es-cred-file is a credentials file that contains up to 4 lines of data.
@@ -33,18 +33,26 @@ The third, optional line is the index
 The fourth, optional line is the URL
 
 If you specify the URL you must specify the index as well.
-This es-cred-file is sensitive and should be properly secured.
+This es-cred-file is sensitive information and should be properly secured. Remove read
+permissions for any user that should not have access to this file.
 
 Command line options
 Some options can significantly reduce scan speed. The following options may cause scan
 speeds to be reduced by more than half:
-  * extra
-  * tagging
-  * user-attr
+  * --extra
+  * --tagging
+  * --user-attr
 
 Custom tagging file format
 ====================
 TBD
+
+Return values
+====================
+0   No errors
+1   Error parsing the command line
+2   Parse type set to OneFS but script is not run on a OneFS operating systems
+3   Error opening or parsing the Elasticsearch credential file
 """
 
 
@@ -61,10 +69,16 @@ onefs: Works on OneFS based file systems.
 """,
     )
     parser.add_option(
+        "--acl",
+        action="store_true",
+        default=False,
+        help="Parse ACL file permissions",
+    )
+    parser.add_option(
         "--extra",
         action="store_true",
         default=False,
-        help="Add additional file information on OneFS systems",
+        help="Parse additional file information on OneFS systems",
     )
     # parser.add_option(
     #    "--tagging",
@@ -76,7 +90,7 @@ onefs: Works on OneFS based file systems.
         "--user-attr",
         action="store_true",
         default=False,
-        help="Retrieve user defined extended attributes from each file",
+        help="Parse user defined extended attributes from each file",
     )
     parser.add_option(
         "--stats-interval",
@@ -151,7 +165,9 @@ Prefix of Elasticsearch index. The suffixes _file and _dir will automatically be
         "--es-cred-file",
         action="store",
         default=None,
-        help="File holding the user name and password, on individual lines, for Elasticsearch",
+        help="""File holding at a minimum the user name and password, on individual lines, for Elasticsearch.
+Additionally you can specify the index name and the URL for the Elasticsearch on the following 2 lines.
+""",
     )
     group.add_option(
         "--es-threads",

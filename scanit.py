@@ -6,7 +6,7 @@ Module description here
 # fmt: off
 __title__         = "scanit"
 __version__       = "1.0.0"
-__date__          = "16 March 2023"
+__date__          = "10 April 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -29,12 +29,6 @@ import threading
 import time
 import zlib
 
-try:
-    import isi.fs.attr as isi_attr
-
-    OS_TYPE = "PowerScale"
-except:
-    OS_TYPE = "Other"
 try:
     dir(PermissionError)
 except:
@@ -66,7 +60,7 @@ PROCESS_TYPE_ADVANCED = next_int()
 DEFAULT_DIR_PRIORITY_COUNT = 2
 #   When there are more than FILE_QUEUE_CUTOFF files chunks in the file_q, only process files
 #   The number of total file names in the queue is DEFAULT_FILE_QUEUE_CUTOFF*DEFAULT_QUEUE_FILE_CHUNK_SIZE
-DEFAULT_FILE_QUEUE_CUTOFF = 5000
+DEFAULT_FILE_QUEUE_CUTOFF = 2000
 #   When there are less than FILE_QUEUE_MIN_CUTOFF files in the file_q, just process directories
 DEFAULT_FILE_QUEUE_MIN_CUTOFF = DEFAULT_FILE_QUEUE_CUTOFF // 10
 DEFAULT_POLL_INTERVAL = 0.1
@@ -358,10 +352,13 @@ class ScanIt(threading.Thread):
             "files_queued": num_files,
         }
 
-    def _process_adv_queues(self, state):
-        state["run_state"] = S_RUNNING
+    def _process_queues(self, state, ptype=PROCESS_TYPE_SIMPLE):
+        handler = self._process_walk_dir
+        if ptype == PROCESS_TYPE_ADVANCED:
+            handler = self._process_list_dir
         name = state["handle"].name
         reset_idle_required = False
+        state["run_state"] = S_RUNNING
         stats = state["stats"]
         wait_timeout_countdown = state["wait_timeout_countdown"]
         while True:
@@ -400,7 +397,7 @@ class ScanIt(threading.Thread):
                             continue
                         stats["dirs_processed"] += 1
                         try:
-                            handler_stats = self._process_list_dir(os.path.join(work_item[1], dirname))
+                            handler_stats = handler(os.path.join(work_item[1], dirname))
                         except MemoryError:
                             LOG.exception(TXT_STR[T_OOM_PROCESS_NEW_DIR].format(tid=name, r=work_item[1], d=dirname))
                             raise TerminateThread
@@ -464,114 +461,19 @@ class ScanIt(threading.Thread):
         state["run_state"] = S_IDLE
         LOG.debug(TXT_STR[T_EXIT].format(tid=name))
 
-    def _process_queues(self, state):
-        state["run_state"] = S_RUNNING
-        name = state["handle"].name
-        reset_idle_required = False
-        stats = state["stats"]
-        wait_timeout_countdown = state["wait_timeout_countdown"]
-        while True:
-            # Process our command queue
-            try:
-                cmd_item = state["cmd_q"].get(block=False)
-                cmd = cmd_item[0]
-                if cmd == CMD_EXIT:
-                    state["run_state"] = S_IDLE
-                    LOG.debug(TXT_STR[T_CMD_EXIT].format(tid=name))
-                    break
-            except queue.Empty:
-                pass
-            except Exception as e:
-                LOG.exception(e)
-            # Process the normal work queues
-            try:
-                start = time.time()
-                q_to_read = self._get_queue_to_read()
-                work_item = q_to_read.get(block=True, timeout=self.work_q_short_timeout)
-                stats["q_wait_time"] += time.time() - start
-                if reset_idle_required:
-                    reset_idle_required = False
-                    state["run_state"] = S_RUNNING
-                cmd = work_item[0]
-                start = time.time()
-                if cmd == CMD_PROC_DIR:
-                    for dirname in work_item[2]:
-                        # If the directory name is in our skip directory list, skip this directory
-                        if dirname in self.default_skip_dirs:
-                            stats["dirs_skipped"] += 1
-                            continue
-                        # If handler_dir returns True, we should skip this directory
-                        if self.handler_dir and self.handler_dir(work_item[1], dirname):
-                            stats["dirs_skipped"] += 1
-                            continue
-                        stats["dirs_processed"] += 1
-                        try:
-                            handler_stats = self._process_walk_dir(os.path.join(work_item[1], dirname))
-                        except MemoryError:
-                            LOG.exception(TXT_STR[T_OOM_PROCESS_NEW_DIR].format(tid=name, r=work_item[1], d=dirname))
-                            raise TerminateThread
-                        except:
-                            LOG.exception(TXT_STR[T_EX_PROCESS_NEW_DIR].format(tid=name, r=work_item[1], d=dirname))
-                            raise TerminateThread
-                        for stat_item in handler_stats:
-                            stats[stat_item] += handler_stats[stat_item]
-                    stats["dir_handler_time"] += time.time() - start
-                elif cmd == CMD_PROC_FILE:
-                    try:
-                        handler_stats = self.handler_file(
-                            work_item[1],  # root path
-                            work_item[2],  # List of filenames in the root path
-                            stats,
-                            {
-                                "custom_state": self.custom_state,
-                                "start_time": self.run_start,
-                                "thread_custom_state": state["custom"],
-                                "thread_state": state,
-                            },
-                        )
-                        stats["file_handler_time"] += time.time() - start
-                        stats["files_processed"] += handler_stats["processed"]
-                        stats["files_skipped"] += handler_stats["skipped"]
-                    except MemoryError:
-                        LOG.exception(TXT_STR[T_OOM_PROCESS_FILE].format(tid=name, r=work_item[1]))
-                        raise TerminateThread
-                    except:
-                        LOG.exception(TXT_STR[T_EX_PROCESS_FILE].format(tid=name, r=work_item[1]))
-                        raise TerminateThread
-                if q_to_read == self.dir_q:
-                    self._decr_dir_q_thread_count()
-                if cmd == CMD_EXIT:
-                    break
-            except TerminateThread:
-                self.terminate()
-                break
-            except queue.Empty:
-                wait_timeout_countdown -= 1
-                if wait_timeout_countdown <= 0 and self.dir_q.empty() and self.file_q.empty():
-                    state["run_state"] = S_IDLE
-                    wait_timeout_countdown = state["wait_timeout_countdown"]
-                    reset_idle_required = True
-            except MemoryError:
-                LOG.exception(TXT_STR[T_OOM_PROCESS_GENERAL].format(tid=name))
-                self.terminate()
-                break
-            except Exception as e:
-                LOG.exception(TXT_STR[T_EX_PROCESS_GENERAL].format(tid=name, ex=e))
-                self.terminate()
-                break
-        state["run_state"] = S_IDLE
-        LOG.debug(TXT_STR[T_EXIT].format(tid=name))
-
     def _start_worker_threads(self):
         if self.threads_state:
             return
         for thread_id in range(self.num_threads):
             thread_instance = self._create_thread_instance_state()
             self.threads_state.append(thread_instance)
-            if self.processing_type == PROCESS_TYPE_ADVANCED:
-                thandle = threading.Thread(target=self._process_adv_queues, kwargs={"state": thread_instance})
-            else:
-                thandle = threading.Thread(target=self._process_queues, kwargs={"state": thread_instance})
+            thandle = threading.Thread(
+                target=self._process_queues,
+                kwargs={
+                    "state": thread_instance,
+                    "ptype": self.processing_type,
+                },
+            )
             thread_instance["handle"] = thandle
             if self.handler_init_thread:
                 self.handler_init_thread(self.custom_state, thread_instance["custom"])

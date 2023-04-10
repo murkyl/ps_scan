@@ -3,7 +3,7 @@
 # fmt: off
 __title__         = "constants"
 __version__       = "1.0.0"
-__date__          = "20 March 2023"
+__date__          = "10 April 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -90,6 +90,7 @@ PS_SCAN_MAPPING = {
         "pool_target_metadata": {"type": "keyword"},
         "pool_target_metadata_name": {"type": "keyword"},
         # ========== Permissions ==========
+        "perms_acl": {"type": "keyword"},
         "perms_gid": {"type": "long"},
         "perms_uid": {"type": "long"},
         "perms_unix": {"type": "short"},
