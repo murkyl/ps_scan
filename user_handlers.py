@@ -251,7 +251,7 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 "ssd_status_name": SSD_STATUS[fstats["di_la_ssd_status"]],
             }
             if acl:
-                file_info["perms_acl"]: onefs_acl.get_acl_dict(fd)
+                file_info["perms_acl"] = onefs_acl.get_acl_dict(fd)
             if extra_attr:
                 # di_flags may have other bits we need to translate
                 #     Coalescer setting (on|off|endurant all|coalescer only)
@@ -284,7 +284,6 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 file_info["size_logical"] = 0
                 # Save directories to re-queue
                 dir_list.append(filename)
-                LOG.critical("DIR QUEUED: %s" % filename)
                 continue
             else:
                 result_list.append(file_info)
