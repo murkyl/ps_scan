@@ -6,23 +6,21 @@ OneFS file scanner
 # fmt: off
 __title__         = "ps_scan"
 __version__       = "1.0.0"
-__date__          = "10 April 2023"
+__date__          = "12 April 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 # fmt: on
-import json
 import logging
 import multiprocessing as mp
 import os
 import queue
-import socket
 import sys
 import threading
 import time
 
-import elasticsearchlite
+import elasticsearch_wrapper
 import scanit
 import user_handlers
 import helpers.misc as misc
@@ -30,81 +28,11 @@ from helpers.cli_parser import *
 from helpers.constants import *
 
 DEFAULT_LOG_BARE_FORMAT = "%(message)s"
-DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(thread)d) %(message)s"
+DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s"
 DEFAULT_LOG_STATS_FORMAT = "%(asctime)s %(message)s"
 LOG = logging.getLogger(__name__)
 STATSLOG = logging.getLogger("statistics")
 STATS_CONLOG = logging.getLogger("statistics_console")
-
-
-def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_interval=scanit.DEFAULT_POLL_INTERVAL):
-    es_client = elasticsearchlite.ElasticsearchLite()
-    es_client.username = username
-    es_client.password = password
-    es_client.endpoint = url
-    file_idx = index_name + "_file"
-    dir_idx = index_name + "_dir"
-
-    while True:
-        # Process our command queue
-        try:
-            cmd_item = cmd_q.get(block=False)
-            cmd = cmd_item[0]
-            if cmd == CMD_EXIT:
-                break
-        except queue.Empty:
-            pass
-        except Exception as e:
-            LOG.exception(e)
-        # Process send queue
-        try:
-            cmd_item = send_q.get(block=True, timeout=poll_interval)
-            cmd = cmd_item[0]
-            if cmd == CMD_EXIT:
-                break
-            elif cmd & (CMD_SEND | CMD_SEND_DIR):
-                # TODO: Optimize this section by using a byte buffer and writing directly into the buffer?
-                bulk_data = []
-                work_items = cmd_item[1]
-                for i in range(len(work_items)):
-                    bulk_data.append(json.dumps({"index": {"_id": work_items[i]["inode"]}}))
-                    bulk_data.append(json.dumps(work_items[i]))
-                    work_items[i] = None
-                bulk_str = "\n".join(bulk_data)
-                resp = es_client.bulk(bulk_str, index_name=file_idx if cmd == CMD_SEND else dir_idx)
-                if resp["errors"]:
-                    for item in resp["items"]:
-                        if item["index"]["status"] != 200:
-                            LOG.error(json.dumps(item["index"]["error"]))
-                del bulk_str
-                del bulk_data
-                del cmd_item
-        except queue.Empty:
-            pass
-        except socket.gaierror as gaie:
-            LOG.critical("Elasticsearch URL is invalid")
-            break
-        except Exception as e:
-            LOG.exception(e)
-            break
-
-
-def es_init_index(url, username, password, index):
-    if index[-1] == "_":
-        index = index[0:-1]
-    LOG.debug("Creating new indices with mapping: {idx}_file and {idx}_dir".format(idx=index))
-    es_client = elasticsearchlite.ElasticsearchLite()
-    es_client.username = username
-    es_client.password = password
-    es_client.endpoint = url
-    for i in [index + "_file", index + "_dir"]:
-        resp = es_client.create_index(i, mapping=PS_SCAN_MAPPING)
-        LOG.debug("Create index response: %s" % resp)
-        if resp.get("status", 200) != 200:
-            if resp["error"]["type"] == "resource_already_exists_exception":
-                LOG.debug("Index {idx} already exists".format(idx=i))
-            else:
-                LOG.error(json.dumps(resp["error"]))
 
 
 def print_interim_statistics(stats, now, start):
@@ -137,7 +65,7 @@ def print_interim_statistics(stats, now, start):
 
 def print_final_statistics(stats, num_threads, wall_time, es_time):
     STATS_CONLOG.info("Wall time (s): {tm:.2f}".format(tm=wall_time))
-    STATS_CONLOG.info("Time to send remaining data to Elasticsearch (s): {t:.2f}".format(t=es_time))
+    # STATS_CONLOG.info("Time to send remaining data to Elasticsearch (s): {t:.2f}".format(t=es_time))
     STATS_CONLOG.info("Average Q wait time (s): {dt:.2f}".format(dt=stats["q_wait_time"] / num_threads))
     STATS_CONLOG.info(
         "Total time spent in dir/file handler routines across all threads (s): {dht:.2f}/{fht:.2f}".format(
@@ -251,7 +179,7 @@ def subprocess(process_state, scan_paths, file_handler, options):
         send_q = scanner.get_custom_state()[0]["send_q"]
         for i in range(options.es_threads):
             es_thread_instance = threading.Thread(
-                target=es_data_sender,
+                target=elasticsearch_wrapper.es_data_sender,
                 args=(
                     send_q,
                     es_send_cmd_q,
@@ -562,11 +490,22 @@ def main():
         file_handler = user_handlers.file_handler_basic
     LOG.debug("Parsed options: {opt}".format(opt=options))
 
-    if options.es_init_index and options.es_user and options.es_pass and options.es_url and options.es_index:
+    es_client = None
+    if options.es_index and options.es_user and options.es_pass and options.es_url:
+        es_client = elasticsearch_wrapper.es_create_connection(
+            options.es_url, options.es_user, options.es_pass, options.es_index
+        )
+    if es_client and (options.es_init_index or options.es_reset_index):
+        if options.es_reset_index:
+            elasticsearch_wrapper.es_delete_index(es_client)
         LOG.debug("Initializing indices for Elasticsearch: {index}".format(index=options.es_index))
-        es_init_index(options.es_url, options.es_user, options.es_pass, options.es_index)
-
+        elasticsearch_wrapper.es_init_index(es_client, options.es_index)
+    if es_client:
+        elasticsearch_wrapper.es_start_processing(es_client, options)
+    # Start scanner
     ps_scan(args, options, file_handler)
+    if es_client:
+        elasticsearch_wrapper.es_stop_processing(es_client, options)
 
 
 if __name__ == "__main__" or __file__ == None:
