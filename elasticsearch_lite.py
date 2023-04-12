@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 # -*- coding: utf8 -*-
 # fmt: off
-__title__         = "elasticsearchlite"
+__title__         = "elasticsearch_lite"
 __version__       = "1.0.0"
-__date__          = "01 April 2023"
+__date__          = "12 April 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -19,6 +19,14 @@ try:
     import http.client as http_conn
 except:
     import httplib as http_conn
+try:
+    import urllib.parse
+
+    urlencode = urllib.parse.urlencode
+except:
+    import urllib
+
+    urlencode = urllib.urlencode
 
 
 def get_basic_auth_header(user, password):
@@ -35,6 +43,20 @@ class ElasticsearchLite:
         self.use_https = True
         self.username = None
 
+    def _simple_es_request(self, url_base, op="GET", body_str=None, index_name=None, query=None):
+        if not self.conn:
+            self.connect()
+        if index_name:
+            url_base = "{idx}/{url}".format(idx=index_name, url=url_base)
+        if query:
+            if not (isinstance(query, str) or isinstance(query, unicode)):
+                url_base += "?" + urlencode(query)
+            else:
+                url_base += "?" + query
+        self.conn.request(op, url_base, body_str, self.headers)
+        resp = self.conn.getresponse()
+        return json.loads(resp.read())
+
     def connect(self):
         self.validate_options()
         if self.use_https:
@@ -50,23 +72,20 @@ class ElasticsearchLite:
         if auth_header:
             self.headers["Authorization"] = auth_header
 
-    def bulk(self, body_str, index_name=None):
+    def disconnect(self):
         if not self.conn:
-            self.connect()
-        url = "_bulk"
-        if index_name:
-            url = "{idx}/".format(idx=index_name) + url
+            return
+        self.conn.close()
+        self.conn = None
 
+    def bulk(self, body_str, index_name=None):
         if body_str[-1] != "\n":
             body_str += "\n"
-        self.conn.request("POST", url, body_str, self.headers)
-        resp = self.conn.getresponse()
-        return json.loads(resp.read())
+        return self._simple_es_request("_bulk", op="POST", body_str=body_str, index_name=index_name)
 
     def create_index(self, index_name, query=None, settings=None, aliases=None, mapping=None):
-        if not self.conn:
-            self.connect()
         body = {}
+        body_str = None
         if settings:
             body["settings"] = settings
         if aliases:
@@ -74,29 +93,26 @@ class ElasticsearchLite:
         if mapping:
             body["mappings"] = mapping
         if body:
-            str_body = json.dumps(body)
-        else:
-            str_body = None
-        self.conn.request("PUT", index_name, str_body, self.headers)
-        resp = self.conn.getresponse()
-        return json.loads(resp.read())
+            body_str = json.dumps(body)
+        return self._simple_es_request(index_name, op="PUT", body_str=body_str)
+
+    def delete_index(self, index_name, query=None):
+        return self._simple_es_request(index_name, op="DELETE", query=query)
+
+    def forcemerge(self, index_name=None, query=None):
+        return self._simple_es_request("_forcemerge", op="POST", index_name=index_name, query=query)
+
+    def flush(self, index_name=None):
+        return self._simple_es_request("_flush", op="POST", index_name=index_name)
 
     def info(self):
-        if not self.conn:
-            self.connect()
-        self.conn.request("GET", "_xpack", headers=self.headers)
-        resp = self.conn.getresponse()
-        return json.loads(resp.read())
+        return self._simple_es_request("_xpack")
 
     def search(self, body_str, index_name=None):
-        if not self.conn:
-            self.connect()
-        url = "_search"
-        if index_name:
-            url = "{idx}/".format(idx=index_name) + url
-        self.conn.request("GET", url, body_str, headers=self.headers)
-        resp = self.conn.getresponse()
-        return json.loads(resp.read())
+        return self._simple_es_request("_search", body_str=body_str, index_name=index_name)
+
+    def update_index_settings(self, body_str, index_name=None, query=None):
+        return self._simple_es_request("_settings", op="PUT", body_str=body_str, index_name=index_name, query=query)
 
     def validate_options(self):
         if not self.endpoint:
