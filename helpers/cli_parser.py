@@ -140,15 +140,9 @@ Default: %default
         "--es-index",
         action="store",
         default=None,
-        help="""
-Prefix of Elasticsearch index. The suffixes _file and _dir will automatically be appended to this prefix
+        help="""Prefix of Elasticsearch index. The suffixes _file and _dir  
+will automatically be appended to this prefix         
 """,
-    )
-    group.add_option(
-        "--es-init-index",
-        action="store_true",
-        default=False,
-        help="When set, the script will initialize the index before uploading data",
     )
     group.add_option(
         "--es-user",
@@ -166,8 +160,25 @@ Prefix of Elasticsearch index. The suffixes _file and _dir will automatically be
         "--es-cred-file",
         action="store",
         default=None,
-        help="""File holding at a minimum the user name and password, on individual lines, for Elasticsearch.
-Additionally you can specify the index name and the URL for the Elasticsearch on the following 2 lines.
+        help="""File holding at a minimum the user name and password, 
+on individual lines, for Elasticsearch. Additionally  
+you can specify the index name and the URL for the    
+Elasticsearch on the following 2 lines.               
+""",
+    )
+    group.add_option(
+        "--es-init-index",
+        action="store_true",
+        default=False,
+        help="When set, the script will initialize the index before uploading data",
+    )
+    group.add_option(
+        "--es-reset-index",
+        action="store_true",
+        default=False,
+        help="""When set, the script will delete any existing indices 
+before creating a new one. This option implies the    
+--es-init-index option is also set                    
 """,
     )
     group.add_option(
@@ -183,7 +194,7 @@ Default: %default
         "--es-max-send-q-size",
         action="store",
         type="int",
-        default=DEFAULT_MAX_Q_SIZE,
+        default=DEFAULT_ES_MAX_Q_SIZE,
         help="""Number of unsent entries in the Elasticsearch send    
 queue before throttling file scanning.                
 Default: %default
@@ -193,7 +204,16 @@ Default: %default
         "--es-send-q-sleep",
         action="store",
         type="int",
-        default=DEFAULT_SEND_Q_SLEEP,
+        default=DEFAULT_ES_SEND_Q_SLEEP,
+        help="""When max send queue size is reached, sleep each file  
+scanner by this value in seconds to slow scanning.    
+Default: %default
+""",
+    )
+    group.add_option(
+        "--es-bulk-refresh",
+        action="store",
+        default=DEFAULT_ES_BULK_REFRESH_INTERVAL,
         help="""When max send queue size is reached, sleep each file  
 scanner by this value in seconds to slow scanning.    
 Default: %default
