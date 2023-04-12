@@ -167,35 +167,6 @@ IFLAGS_SF_BACKUP_SPARSE = 0x08000000
 IFLAG_COMBO_UF_DOS_ATTR = IFLAGS_UF_DOS_OFFLINE | IFLAGS_UF_DOS_ARCHIVE | IFLAGS_UF_DOS_HIDDEN | IFLAGS_UF_DOS_RO | IFLAGS_UF_DOS_SYSTEM
 IFLAG_COMBO_STUBBED     = IFLAGS_SF_STUBBED | IFLAGS_SF_STUBBED_CACHE
 # fmt: on
-"""
-Unused dinode fields:
-  di_at_r_repair
-  di_at_r_repairing
-  di_attr_bytes
-  di_bad_sin
-  di_bug_124996
-  di_create_timensec
-  di_ctimensec
-  di_data_bytes
-  di_data_depth
-  di_data_fmt
-  di_dir_version
-  di_in_cstat
-  di_inode_version
-  di_istrashdir
-  di_la_drivecount
-  di_magic
-  di_max_pg_n
-  di_mtimensec
-  di_packing_incomplete
-  di_packing_target
-  di_parent_hash
-  di_recovered_flag
-  di_restripe_state
-  di_stream # Normal is 0, 2 is usually for CloudPools targeting the writes to local cache
-  di_upgrade_async
-  di_upgrading
-"""
 
 # fmt: off
 CMD_EXIT            = 0x0001
@@ -214,12 +185,13 @@ DEFAULT_CMD_POLL_INTERVAL = 0.01
 DEFAULT_DIR_OUTPUT_INTERVAL = 2
 DEFAULT_DIR_REQUEST_INTERVAL = 2
 DEFAULT_DIRQ_REQUEST_PERCENTAGE = 0.5
+DEFAULT_ES_BULK_REFRESH_INTERVAL = "10m"
+DEFAULT_ES_MAX_Q_SIZE = 2000
+DEFAULT_ES_SEND_Q_SLEEP = 0.5
 DEFAULT_ES_THREADS = 4
 DEFAULT_LOW_DIR_Q_THRESHOLD = 5
-DEFAULT_MAX_Q_SIZE = 2000
 DEFAULT_MAX_Q_WAIT_LOOPS = 100
 DEFAULT_REQUEST_WORK_INTERVAL = 2
-DEFAULT_SEND_Q_SLEEP = 0.5
 DEFAULT_STATS_OUTPUT_INTERVAL = 30
 DEFAULT_THREAD_COUNT = 8
 DEFAULT_THREADS_PER_PROC_COUNT = 4
