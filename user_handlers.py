@@ -66,7 +66,7 @@ def file_handler_basic(root, filename_list, stats, args={}):
     thread_state = args.get("thread_state", {})
 
     custom_tagging = custom_state.get("custom_tagging", None)
-    max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_MAX_Q_SIZE)
+    max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
     send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_SEND_Q_SLEEP)
     send_to_es = custom_state.get("send_to_es", False)
 
@@ -152,10 +152,10 @@ def file_handler_pscale(root, filename_list, stats, args={}):
     custom_tagging = custom_state.get("custom_tagging", None)
     extra_attr = custom_state.get("extra_attr", False)
     user_attr = custom_state.get("user_attr", False)
-    max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_MAX_Q_SIZE)
+    max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
     phys_block_size = custom_state.get("phys_block_size", IFS_BLOCK_SIZE)
     pool_translate = custom_state.get("node_pool_translation", {})
-    send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_SEND_Q_SLEEP)
+    send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
     send_to_es = custom_state.get("send_to_es", False)
 
     processed = 0
