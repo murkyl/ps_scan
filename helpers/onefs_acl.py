@@ -252,17 +252,18 @@ ACE_FLAG_STR_MAP = [
     [ACE_FLAG_SUCCESSFUL_ACCESS, "successful_access"],
     [ACE_FLAG_FAILED_ACCESS, "failed_access"],
 ]
-ACE_TYPE_FLAG_STR_MAP = [
-    "allow",
-    "deny",
-    "audit",
-    "alarm",
-    "allowed_compound",
-    "access_allowed_object",
-    "access_denied_object",
-    "system_audit_object",
-    "system_alarm_object",
-]
+ACE_TYPE_FLAG_STR_MAP = {
+    "0": "allow",
+    "1": "deny",
+    "2": "audit",
+    "3": "alarm",
+    "4": "allowed_compound",
+    "5": "access_allowed_object",
+    "6": "access_denied_object",
+    "7": "system_audit_object",
+    "8": "system_alarm_object",
+    "254": "posix_mask",
+}
 
 try:
     ffi = FFI()
@@ -369,7 +370,7 @@ def trustees_txt_to_aces(trustee_str):
                 "ifs_flags": int(parts[5]),
                 "ifs_flags_list": [],
                 "perm_type": int(parts[2]),
-                "perm_type_str": ACE_TYPE_FLAG_STR_MAP[int(parts[2])],
+                "perm_type_str": ACE_TYPE_FLAG_STR_MAP.get(parts[2], parts[2]),
                 "perms": int(parts[3]),
                 "perms_list": [],
             }
