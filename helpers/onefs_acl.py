@@ -292,7 +292,7 @@ def flags_to_text_list(flags):
 def get_acl_dict(fd, detailed=True):
     sd_str = get_sd_text(fd)
     if sd_str is None:
-        return None
+        return {}
     match = re.match(SD_ACL_REGEX, sd_str)
     acl_dict = {
         "aces": trustees_txt_to_aces(match.group("dacltrustees")),

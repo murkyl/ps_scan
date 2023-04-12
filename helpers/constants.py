@@ -90,7 +90,9 @@ PS_SCAN_MAPPING = {
         "pool_target_metadata": {"type": "keyword"},
         "pool_target_metadata_name": {"type": "keyword"},
         # ========== Permissions ==========
-        "perms_acl": {"type": "nested"},
+        "perms_acl_aces": {"type": "keyword"},
+        "perms_acl_group": {"type": "keyword"},
+        "perms_acl_user": {"type": "keyword"},
         "perms_gid": {"type": "long"},
         "perms_uid": {"type": "long"},
         "perms_unix": {"type": "short"},

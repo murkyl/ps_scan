@@ -38,6 +38,7 @@ STATS_CONLOG = logging.getLogger("statistics_console")
 def print_interim_statistics(stats, now, start):
     STATSLOG.info(
         """Statistics:
+    Current run time (s): {runtime:d}
     FPS: {fps:0.1f}
     Total file bytes processed: {f_bytes}
     Files (Processed/Queued/Skipped): {f_proc}/{f_queued}/{f_skip}
@@ -46,6 +47,7 @@ def print_interim_statistics(stats, now, start):
     Dirs (Processed/Queued/Skipped): {d_proc}/{d_queued}/{d_skip}
     Dir Q Size/Handler time: {d_q_size}/{d_h_time:0.1f}
 """.format(
+            runtime=int(now - start),
             d_proc=stats.get("dirs_processed", 0),
             d_h_time=stats.get("dir_handler_time", 0),
             d_q_size=stats.get("dir_q_size", 0),

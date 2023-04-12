@@ -12,6 +12,9 @@ __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 __all__ = [
+    "ace_list_to_str_list",
+    "acl_group_to_str",
+    "acl_user_to_str",
     "chunk_list",
     "is_onefs_os",
     "merge_process_stats",
@@ -19,6 +22,34 @@ __all__ = [
 # fmt: on
 import copy
 import platform
+
+
+def ace_list_to_str_list(ace_list):
+    ace_strs = []
+    if not ace_list:
+        return ace_strs
+    for ace in ace_list:
+        perm_str = "{etype}:{entity} {ptype} {perms} {flags}".format(
+            etype=ace["entity_type"],
+            entity=ace["entity"],
+            ptype=ace["perm_type_str"],
+            perms=",".join(ace["perms_list"]),
+            flags=",".join(ace["flags_list"]),
+        )
+        ace_strs.append(perm_str)
+    return ace_strs
+
+
+def acl_group_to_str(acl):
+    if not acl:
+        return ""
+    return "{gtype}:{group}".format(gtype=acl.get("group_type"), group=acl.get("group"))
+
+
+def acl_user_to_str(acl):
+    if not acl:
+        return ""
+    return "{utype}:{user}".format(utype=acl.get("user_type"), user=acl.get("user"))
 
 
 def chunk_list(list_data, chunks):

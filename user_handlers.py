@@ -251,12 +251,14 @@ def file_handler_pscale(root, filename_list, stats, args={}):
                 "ssd_status_name": SSD_STATUS[fstats["di_la_ssd_status"]],
             }
             if acl:
-                file_info["perms_acl"] = onefs_acl.get_acl_dict(fd)
+                acl = onefs_acl.get_acl_dict(fd)
+                file_info["perms_acl_aces"] = misc.ace_list_to_str_list(acl.get("aces"))
+                file_info["perms_acl_group"] = misc.acl_group_to_str(acl)
+                file_info["perms_acl_user"] = misc.acl_user_to_str(acl)
             if extra_attr:
                 # di_flags may have other bits we need to translate
                 #     Coalescer setting (on|off|endurant all|coalescer only)
                 #     IFLAGS_UF_WRITECACHE and IFLAGS_UF_WC_ENDURANT flags
-                # Still need SID for file owner???
                 # Do we want inode locations? how many on SSD and spinning disk?
                 #   - Get data from estats["ge_iaddrs"], e.g. ge_iaddrs: [(1, 13, 1098752, 512)]
                 # Extended attributes/custom attributes?
