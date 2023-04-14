@@ -22,12 +22,10 @@ import copy
 import logging
 import multiprocessing
 import os
-import pickle
 import queue
 import stat
 import threading
 import time
-import zlib
 
 try:
     dir(PermissionError)
@@ -476,7 +474,7 @@ class ScanIt(threading.Thread):
             )
             thread_instance["handle"] = thandle
             if self.handler_init_thread:
-                self.handler_init_thread(self.custom_state, thread_instance["custom"])
+                self.handler_init_thread(thread_id, self.custom_state, thread_instance["custom"])
             LOG.debug(TXT_STR[T_START_THREAD].format(tid=thandle.name))
             thandle.start()
 

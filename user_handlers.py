@@ -67,7 +67,7 @@ def file_handler_basic(root, filename_list, stats, args={}):
 
     custom_tagging = custom_state.get("custom_tagging", None)
     max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
-    send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_SEND_Q_SLEEP)
+    send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
     send_to_es = custom_state.get("send_to_es", False)
 
     processed = 0
@@ -95,18 +95,18 @@ def file_handler_basic(root, filename_list, stats, args={}):
                 "ctime_date": datetime.date.fromtimestamp(fstats.st_ctime).isoformat(),
                 "file_ext": os.path.splitext(filename),
                 "file_name": filename,
+                "file_path": root,
                 "gid": fstats.st_gid,
                 "hard_links": fstats.st_nlink,
                 "inode": fstats.st_ino,
                 "logical_size": fstats.st_size,
                 "mtime": fstats.st_mtime,
                 "mtime_date": datetime.date.fromtimestamp(fstats.st_mtime).isoformat(),
+                "perms_unix": stat.S_IMODE(fstats.st_mode),
                 # Physical size without metadata
                 "physical_size": fstats.st_blocks * IFS_BLOCK_SIZE,
-                "file_path": root,
                 "type": FILE_TYPE[stat.S_IFMT(fstats.st_mode) & FILE_TYPE_MASK],
                 "uid": fstats.st_uid,
-                "perms_unix": stat.S_IMODE(fstats.st_mode),
             }
             if custom_tagging:
                 file_info["user_tags"] = custom_tagging(file_info)
@@ -352,7 +352,7 @@ def init_custom_state(custom_state, options):
             LOG.critical("Unable to get the ID to name translation for node pools")
 
 
-def init_thread(custom_state, thread_custom_state):
+def init_thread(tid, custom_state, thread_custom_state):
     # Add any custom stats counters or values in the thread_custom_state dictionary
     # and access this inside each file handler
-    pass
+    thread_custom_state["thread_name"] = tid
