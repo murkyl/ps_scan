@@ -95,6 +95,8 @@ T_EX_PROCESS_NEW_DIR = next_int()
 T_EXIT = next_int()
 T_INCONSISTENT_THREAD_STATE = next_int()
 T_JOIN_THREADS = next_int()
+T_LIST_DIR_PERM_ERR = next_int()
+T_LIST_DIR_UNKNOWN_ERR = next_int()
 T_OOM_PROCESS_FILE = next_int()
 T_OOM_PROCESS_GENERAL = next_int()
 T_OOM_PROCESS_NEW_DIR = next_int()
@@ -109,6 +111,8 @@ TXT_STR = {
     T_EXIT: "({tid}) Thread exiting",
     T_INCONSISTENT_THREAD_STATE: "({tid}) Dead thread did not set run state to idle. Forcing idle status.",
     T_JOIN_THREADS: "Joining threads",
+    T_LIST_DIR_PERM_ERR: "Permission error listing directory: {file}",
+    T_LIST_DIR_UNKNOWN_ERR: "Unhandled exception error while listing directory: {file}",
     T_OOM_PROCESS_FILE: "({tid}) - Out of memory in file handler for root: {r}",
     T_OOM_PROCESS_GENERAL: "({tid}) - Out of memory in thread handler",
     T_OOM_PROCESS_NEW_DIR: "({tid}) - Out of memory in _process_new_dir on directory: {r}/{d}",
@@ -313,15 +317,17 @@ class ScanIt(threading.Thread):
             dir_file_list = []
             dirs_skipped = 1
             if ioe.errno == 13:
-                LOG.info("Permission error listing directory: {file}".format(file=path))
+                LOG.info(TXT_STR[T_LIST_DIR_PERM_ERR].format(file=path))
             else:
+                LOG.info(TXT_STR[T_LIST_DIR_UNKNOWN_ERR].format(file=path))
                 LOG.exception(ioe)
         except PermissionError:
             dir_file_list = []
             dirs_skipped = 1
-            LOG.info("Permission error listing directory: {file}".format(file=path))
+            LOG.info(TXT_STR[T_LIST_DIR_PERM_ERR].format(file=path))
         except Exception as e:
             dirs_skipped = 1
+            LOG.info(TXT_STR[T_LIST_DIR_UNKNOWN_ERR].format(file=path))
             LOG.exception(e)
         self._enqueue_chunks(path, dir_file_list, self.file_chunk, self.file_q, CMD_PROC_FILE)
         # files_queued includes all potential directories. Adjust the count when we actually know how many dirs
