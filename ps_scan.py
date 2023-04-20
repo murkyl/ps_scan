@@ -30,7 +30,7 @@ from helpers.constants import *
 DEFAULT_LOG_BARE_FORMAT = "%(message)s"
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s"
 DEFAULT_LOG_STATS_FORMAT = "%(asctime)s %(message)s"
-LOG = logging.getLogger(__name__)
+LOG = logging.getLogger('')
 STATSLOG = logging.getLogger("statistics")
 STATS_CONLOG = logging.getLogger("statistics_console")
 
