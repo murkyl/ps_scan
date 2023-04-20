@@ -273,7 +273,7 @@ def subprocess(process_state, scan_paths, file_handler, options):
                 thread_handle.join()
     except KeyboardInterrupt as kbe:
         LOG.debug("Enumerate threads: %s" % threading.enumerate())
-        sys.stderr.write("Termination signal received. Shutting down scanner.")
+        sys.stderr.write("Termination signal received. Shutting down scanner for subprocess: {pid}.\n".format(pid=mp.current_process()))
     except:
         LOG.exception("Unhandled exception in subprocess")
     finally:
@@ -443,7 +443,7 @@ def ps_scan(paths, options, file_handler):
             # Sleep for a short interval to slow down polling
             time.sleep(poll_interval)
         except KeyboardInterrupt as kbe:
-            sys.stderr.write("***** MAIN THREAD ***** Termination signal received. Shutting down scanner.")
+            sys.stderr.write("Termination signal received. Shutting down scanner.\n")
             break
     total_wall_time = time.time() - start_wall
     temp_stats = misc.merge_process_stats(process_states)
@@ -466,7 +466,7 @@ def main():
         cmd_line_errors.append("***** You must specify a scan type with the --type option.")
     if cmd_line_errors:
         parser.print_help()
-        sys.stderr.write("\n" + "\n".join(cmd_line_errors))
+        sys.stderr.write("\n" + "\n".join(cmd_line_errors) + "\n")
         sys.exit(1)
     if options.es_cred_file:
         try:
