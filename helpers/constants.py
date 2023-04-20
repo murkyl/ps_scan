@@ -31,6 +31,8 @@ IFS_BLOCK_SIZE = 8192
 PS_SCAN_MAPPING = {
     "properties": {
         # ========== Timestamps ==========
+        # Time when this entry was scanned
+        "_scan_time": {"type": "long"},
         # Last access time of the file both in fractional seconds and YYYY-mm-DD format
         "atime": {"type": "long"},
         "atime_date": {"type": "date", "format": "yyyy-MM-dd"},

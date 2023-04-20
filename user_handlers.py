@@ -51,7 +51,7 @@ def custom_stats_handler(common_stats, custom_state, custom_threads_state, threa
     pass
 
 
-def file_handler_basic(root, filename_list, stats, args={}):
+def file_handler_basic(root, filename_list, stats, now, args={}):
     """
     The file handler returns a dictionary:
     {
@@ -111,6 +111,7 @@ def file_handler_basic(root, filename_list, stats, args={}):
             if custom_tagging:
                 file_info["user_tags"] = custom_tagging(file_info)
             if stat.S_ISDIR(fstats.st_mode):
+                file_info["_scan_time"] = now
                 result_dir_list.append(file_info)
                 # Save directories to re-queue
                 dir_list.append(filename)
@@ -134,7 +135,7 @@ def file_handler_basic(root, filename_list, stats, args={}):
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
-def file_handler_pscale(root, filename_list, stats, args={}):
+def file_handler_pscale(root, filename_list, stats, now, args={}):
     """
     The file handler returns a dictionary:
     {
@@ -281,6 +282,7 @@ def file_handler_pscale(root, filename_list, stats, args={}):
             if custom_tagging:
                 file_info["user_tags"] = custom_tagging(file_info)
             if fstats["di_mode"] & 0o040000:
+                file_info["_scan_time"] = now
                 result_dir_list.append(file_info)
                 # Fix size issues with dirs
                 file_info["size_logical"] = 0

@@ -129,7 +129,7 @@ class TerminateThread(Exception):
     pass
 
 
-def default_file_handler(root, filename_list, stats, extra_args={}):
+def default_file_handler(root, filename_list, stats, now, extra_args={}):
     """
     The file handler returns a dictionary:
     {
@@ -150,7 +150,7 @@ def default_file_handler(root, filename_list, stats, extra_args={}):
     return {"processed": processed, "skipped": skipped}
 
 
-def default_adv_file_handler(root, filename_list, stats, extra_args={}):
+def default_adv_file_handler(root, filename_list, stats, now, extra_args={}):
     """
     The file handler returns a dictionary:
     {
@@ -417,6 +417,7 @@ class ScanIt(threading.Thread):
                             work_item[1],  # root path
                             work_item[2],  # List of filenames in the root path
                             stats,
+                            start,
                             {
                                 "custom_state": self.custom_state,
                                 "start_time": self.run_start,
