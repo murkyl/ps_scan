@@ -12,6 +12,7 @@ __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 # fmt: on
+import datetime
 import logging
 import multiprocessing as mp
 import os
@@ -27,17 +28,13 @@ import helpers.misc as misc
 from helpers.cli_parser import *
 from helpers.constants import *
 
-DEFAULT_LOG_BARE_FORMAT = "%(message)s"
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s"
-DEFAULT_LOG_STATS_FORMAT = "%(asctime)s %(message)s"
-LOG = logging.getLogger('')
-STATSLOG = logging.getLogger("statistics")
-STATS_CONLOG = logging.getLogger("statistics_console")
+LOG = logging.getLogger("")
 
 
 def print_interim_statistics(stats, now, start):
-    STATSLOG.info(
-        """Statistics:
+    sys.stdout.write(
+        """{ts} - Statistics:
     Current run time (s): {runtime:d}
     FPS: {fps:0.1f}
     Total file bytes processed: {f_bytes}
@@ -47,6 +44,7 @@ def print_interim_statistics(stats, now, start):
     Dirs (Processed/Queued/Skipped): {d_proc}/{d_queued}/{d_skip}
     Dir Q Size/Handler time: {d_q_size}/{d_h_time:0.1f}
 """.format(
+            ts=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             runtime=int(now - start),
             d_proc=stats.get("dirs_processed", 0),
             d_h_time=stats.get("dir_handler_time", 0),
@@ -61,43 +59,38 @@ def print_interim_statistics(stats, now, start):
             f_queued=stats.get("files_queued", 0),
             f_skip=stats.get("files_skipped", 0),
             fps=stats.get("files_processed", 0) / (now - start),
-        )
+        ),
     )
 
 
 def print_final_statistics(stats, num_threads, wall_time, es_time):
-    STATS_CONLOG.info("Wall time (s): {tm:.2f}".format(tm=wall_time))
-    # STATS_CONLOG.info("Time to send remaining data to Elasticsearch (s): {t:.2f}".format(t=es_time))
-    STATS_CONLOG.info("Average Q wait time (s): {dt:.2f}".format(dt=stats["q_wait_time"] / num_threads))
-    STATS_CONLOG.info(
-        "Total time spent in dir/file handler routines across all threads (s): {dht:.2f}/{fht:.2f}".format(
+    sys.stdout.write(
+        """Final statistics
+    Wall time (s): {wall_tm:.2f}
+    Average Q wait time (s): {avg_q_tm:.2f}
+    Total time spent in dir/file handler routines across all threads (s): {dht:.2f}/{fht:.2f}
+    Processed/Queued/Skipped dirs: {p_dirs}/{q_dirs}/{s_dirs}
+    Processed/Queued/Skipped files: {p_files}/{q_files}/{s_files}
+    Total file size: {fsize}
+    Avg files/second: {a_fps}
+""".format(
+            wall_tm=wall_time,
+            avg_q_tm=stats["q_wait_time"] / num_threads,
             dht=stats.get("dir_handler_time", 0),
             fht=stats.get("file_handler_time", 0),
-        ),
-    )
-    STATS_CONLOG.info(
-        "Processed/Queued/Skipped dirs: {p_dirs}/{q_dirs}/{s_dirs}".format(
             p_dirs=stats.get("dirs_processed", 0),
             q_dirs=stats.get("dirs_queued", 0),
             s_dirs=stats.get("dirs_skipped", 0),
-        ),
-    )
-    STATS_CONLOG.info(
-        "Processed/Queued/Skipped files: {p_files}/{q_files}/{s_files}".format(
             p_files=stats.get("files_processed", 0),
             q_files=stats.get("files_queued", 0),
             s_files=stats.get("files_skipped", 0),
-        ),
-    )
-    STATS_CONLOG.info("Total file size: {fsize}".format(fsize=stats.get("file_size_total", 0)))
-    STATS_CONLOG.info(
-        "Avg files/second: {a_fps}".format(
-            a_fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / wall_time
+            fsize=stats.get("file_size_total", 0),
+            a_fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / wall_time,
         ),
     )
 
 
-def setup_logger(log_obj, options, statslog_obj=None, stats_conlog_obj=None):
+def setup_logger(log_obj, options):
     debug_count = options.debug
     if (options.log is None) and (not options.quiet):
         options.console_log = True
@@ -115,23 +108,9 @@ def setup_logger(log_obj, options, statslog_obj=None, stats_conlog_obj=None):
         log_obj.addHandler(log_handler)
     if (options.log is None) and (options.console_log is False):
         log_obj.addHandler(logging.NullHandler())
-    if statslog_obj and not options.quiet:
-        # Set the highest level to 1 to capture everything. Filter on individual handlers below.
-        statslog_obj.setLevel(logging.INFO)
-        log_handler = logging.StreamHandler()
-        # log_handler.setLevel(logging.INFO)
-        log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_STATS_FORMAT, "%H:%M:%S"))
-        statslog_obj.addHandler(log_handler)
-    if stats_conlog_obj and not options.quiet:
-        stats_conlog_obj.setLevel(logging.INFO)
-        log_handler = logging.StreamHandler()
-        log_handler.setLevel(logging.INFO)
-        log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_BARE_FORMAT))
-        stats_conlog_obj.addHandler(log_handler)
 
 
 def subprocess(process_state, scan_paths, file_handler, options):
-    global LOG
     LOG = logging.getLogger()
     setup_logger(LOG, options)
     LOG.debug("Process loop started: {pid}".format(pid=mp.current_process()))
@@ -273,7 +252,11 @@ def subprocess(process_state, scan_paths, file_handler, options):
                 thread_handle.join()
     except KeyboardInterrupt as kbe:
         LOG.debug("Enumerate threads: %s" % threading.enumerate())
-        sys.stderr.write("Termination signal received. Shutting down scanner for subprocess: {pid}.\n".format(pid=mp.current_process()))
+        sys.stderr.write(
+            "Termination signal received. Shutting down scanner in subprocess: {pid}.\n".format(
+                pid=mp.current_process()
+            )
+        )
     except:
         LOG.exception("Unhandled exception in subprocess")
     finally:
@@ -339,7 +322,7 @@ def ps_scan(paths, options, file_handler):
         proc_handle.start()
     LOG.debug("All processes started")
 
-    STATSLOG.info("Statistics interval: {si} seconds".format(si=options.stats_interval))
+    sys.stdout.write("Statistics interval: {si} seconds\n".format(si=options.stats_interval))
     # Main loop
     #   * Check for any commands from the sub processes
     #   * Output statistics
@@ -456,7 +439,7 @@ def main():
     (parser, options, args) = parse_cli(sys.argv, __version__, __date__)
 
     # Setup logging
-    setup_logger(LOG, options, STATSLOG, STATS_CONLOG)
+    setup_logger(LOG, options)
 
     # Validate command line options
     cmd_line_errors = []
