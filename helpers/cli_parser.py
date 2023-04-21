@@ -247,7 +247,7 @@ Default: %default
     parser.add_option_group(group)
 
 
-def add_parser_options_advanced(parser):
+def add_parser_options_advanced(parser, hide_options=False):
     group = optparse.OptionGroup(parser, "ADVANCED options")
     group.add_option(
         "--cmd-poll-interval",
@@ -357,6 +357,9 @@ before more work can be sent to a process.
 Default: %default
 """,
     )
+    if hide_options:
+        for op in group.option_list:
+            op.help = optparse.SUPPRESS_HELP
     parser.add_option_group(group)
 
 
@@ -369,19 +372,6 @@ def parse_cli(argv, prog_ver, prog_date):
         epilog=EPILOG,
     )
     add_parser_options(parser)
-    if "--advanced" in argv:
-        add_parser_options_advanced(parser)
+    add_parser_options_advanced(parser, ("--advanced" not in argv))
     (options, args) = parser.parse_args(argv[1:])
-    if not options.advanced:
-        options.cmd_poll_interval = DEFAULT_CMD_POLL_INTERVAL
-        options.dir_output_interval = DEFAULT_DIR_OUTPUT_INTERVAL
-        options.dir_request_interval = DEFAULT_DIR_REQUEST_INTERVAL
-        options.dirq_chunk = scanit.DEFAULT_QUEUE_DIR_CHUNK_SIZE
-        options.dirq_priority = scanit.DEFAULT_DIR_PRIORITY_COUNT
-        options.dirq_request_percentage = DEFAULT_DIRQ_REQUEST_PERCENTAGE
-        options.fileq_chunk = scanit.DEFAULT_QUEUE_FILE_CHUNK_SIZE
-        options.fileq_cutoff = scanit.DEFAULT_FILE_QUEUE_CUTOFF
-        options.fileq_min_cutoff = scanit.DEFAULT_FILE_QUEUE_MIN_CUTOFF
-        options.request_work_interval = DEFAULT_REQUEST_WORK_INTERVAL
-        options.q_poll_interval = scanit.DEFAULT_POLL_INTERVAL
     return (parser, options, args)
