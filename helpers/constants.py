@@ -54,6 +54,7 @@ PS_SCAN_MAPPING = {
         "file_ext": {"type": "keyword"},
         # ========== File attributes ==========
         "file_access_pattern": {"type": "keyword"},
+        "file_coalescer": {"type": "keyword"},
         "file_compression_ratio": {"type": "float"},
         # Number of hard links for the file. Files start with 1. A number > 1 indicates other links to the file
         "file_hard_links": {"type": "short"},

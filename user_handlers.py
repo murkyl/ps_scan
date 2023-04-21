@@ -273,6 +273,14 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 file_info["file_is_manual_access"] = not not estats["ge_manually_manage_access"]
                 file_info["file_is_manual_packing"] = not not estats["ge_manually_manage_packing"]
                 file_info["file_is_manual_protection"] = not not estats["ge_manually_manage_protection"]
+                if estats["ge_coalescing_ec"] & estats["ge_coalescing_on"]:
+                    file_info["file_coalescer"] = "coalescer on, ec off"
+                elif estats["ge_coalescing_on"]:
+                    file_info["file_coalescer"] = "coalescer on, ec on"
+                elif estats["ge_coalescing_ec"]:
+                    file_info["file_coalescer"] = "coalescer off, ec on"
+                else:
+                    file_info["file_coalescer"] = "coalescer off, ec off"
             if user_attr:
                 extended_attr = {}
                 keys = uattr.userattr_list(fd)
