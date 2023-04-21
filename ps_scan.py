@@ -426,8 +426,9 @@ def ps_scan(paths, options, file_handler):
             # Sleep for a short interval to slow down polling
             time.sleep(poll_interval)
         except KeyboardInterrupt as kbe:
-            sys.stderr.write("Termination signal received. Shutting down scanner.\n")
-            break
+            sys.stderr.write("Termination signal received. Sending exit commands to subprocesses.\n")
+            for proc in process_states:
+                proc["parent_conn"].send([CMD_EXIT, None])
     total_wall_time = time.time() - start_wall
     temp_stats = misc.merge_process_stats(process_states)
     # DEBUG: Need to add ES Send Q Time back in
