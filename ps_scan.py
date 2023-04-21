@@ -25,6 +25,7 @@ import elasticsearch_wrapper
 import scanit
 import user_handlers
 import helpers.misc as misc
+import helpers.sliding_window_stats as sliding_window_stats
 from helpers.cli_parser import *
 from helpers.constants import *
 
@@ -32,10 +33,11 @@ DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%
 LOG = logging.getLogger("")
 
 
-def print_interim_statistics(stats, now, start):
+def print_interim_statistics(stats, now, start, fps_window, interval):
     sys.stdout.write(
         """{ts} - Statistics:
     Current run time (s): {runtime:d}
+    FPS in the last (2, 5, 10) intervals: {fpsw1:0.1f} - {fpsw2:0.1f} - {fpsw3:0.1f}
     FPS: {fps:0.1f}
     Total file bytes processed: {f_bytes}
     Files (Processed/Queued/Skipped): {f_proc}/{f_queued}/{f_skip}
@@ -44,8 +46,6 @@ def print_interim_statistics(stats, now, start):
     Dirs (Processed/Queued/Skipped): {d_proc}/{d_queued}/{d_skip}
     Dir Q Size/Handler time: {d_q_size}/{d_h_time:0.1f}
 """.format(
-            ts=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            runtime=int(now - start),
             d_proc=stats.get("dirs_processed", 0),
             d_h_time=stats.get("dir_handler_time", 0),
             d_q_size=stats.get("dir_q_size", 0),
@@ -59,6 +59,11 @@ def print_interim_statistics(stats, now, start):
             f_queued=stats.get("files_queued", 0),
             f_skip=stats.get("files_skipped", 0),
             fps=stats.get("files_processed", 0) / (now - start),
+            fpsw1=fps_window[0] / interval,
+            fpsw2=fps_window[1] / interval,
+            fpsw3=fps_window[2] / interval,
+            runtime=int(now - start),
+            ts=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         ),
     )
 
@@ -281,6 +286,8 @@ def ps_scan(paths, options, file_handler):
     poll_interval = options.q_poll_interval
     request_work_dirq_percentage = options.dirq_request_percentage
     request_work_interval = options.request_work_interval
+    stats_fps_window = sliding_window_stats.SlidingWindowStats(STATS_FPS_BUCKETS)
+    stats_last_files_processed = 0
     stats_output_count = 0
     stats_output_interval = options.stats_interval
     thread_count = options.threads
@@ -328,6 +335,9 @@ def ps_scan(paths, options, file_handler):
     #   * Output statistics
     #   * Check if we should exit
     dir_list = []
+    stats_buckets = []
+    for sbucket in STATS_FPS_BUCKETS:
+        stats_buckets.append([0] * sbucket)
     continue_running = True
     while continue_running:
         try:
@@ -376,7 +386,16 @@ def ps_scan(paths, options, file_handler):
             cur_stats_count = (now - start_wall - 1) // stats_output_interval
             if cur_stats_count > stats_output_count:
                 temp_stats = misc.merge_process_stats(process_states) or {}
-                print_interim_statistics(temp_stats, now, start_wall)
+                new_files_processed = temp_stats.get("files_processed", stats_last_files_processed)
+                stats_fps_window.add_sample(new_files_processed - stats_last_files_processed)
+                stats_last_files_processed = new_files_processed
+                print_interim_statistics(
+                    temp_stats,
+                    now,
+                    start_wall,
+                    stats_fps_window.get_all_windows(),
+                    options.stats_interval,
+                )
                 stats_output_count = cur_stats_count
             # Check if we should exit
             continue_running = False

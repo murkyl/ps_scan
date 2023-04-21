@@ -57,7 +57,7 @@ PS_SCAN_MAPPING = {
         "file_coalescer": {"type": "keyword"},
         "file_compression_ratio": {"type": "float"},
         # Number of hard links for the file. Files start with 1. A number > 1 indicates other links to the file
-        "file_hard_links": {"type": "short"},
+        "file_hard_links": {"type": "long"},
         # does the file contain any alternative data streams
         "file_is_ads": {"type": "boolean"},
         # is the file compressed
@@ -133,6 +133,7 @@ SSD_STATUS = [
     "complete",
     "invalid",
 ]
+STATS_FPS_BUCKETS = [2, 5, 10]
 # Inode flag bit fields
 # fmt: off
 IFLAGS_UF_NODUMP        = 0x00000001 # do not dump file
