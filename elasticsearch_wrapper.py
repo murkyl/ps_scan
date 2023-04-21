@@ -69,7 +69,7 @@ def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_inte
                     LOG.error(resp["error"])
                 if resp.get("errors", False):
                     for item in resp.get("items"):
-                        if item["index"]["status"] != 200:
+                        if item["index"]["status"] < 200 or item["index"]["status"] > 299:
                             LOG.error(json.dumps(item["index"]["error"]))
                 del bulk_str
                 del bulk_data
