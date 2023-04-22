@@ -465,8 +465,6 @@ def main():
     cmd_line_errors = []
     if len(args) == 0:
         cmd_line_errors.append("***** A minimum of 1 path to scan is required to be specified on the command line.")
-    if options.type is None:
-        cmd_line_errors.append("***** You must specify a scan type with the --type option.")
     if cmd_line_errors:
         parser.print_help()
         sys.stderr.write("\n" + "\n".join(cmd_line_errors) + "\n")
@@ -484,6 +482,9 @@ def main():
         except:
             LOG.critical("Unable to open or read the credentials file: {file}".format(file=options.es_cred_file))
             sys.exit(3)
+    if options.type == "auto":
+        if misc.is_onefs_os():
+            options.type = "onefs"
     if options.type == "onefs":
         if not misc.is_onefs_os():
             sys.stderr.write(

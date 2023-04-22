@@ -62,9 +62,10 @@ def add_parser_options(parser):
         "-t",
         "--type",
         type="choice",
-        choices=("basic", "onefs"),
-        default=None,
+        choices=("auto", "basic", "onefs"),
+        default="auto",
         help="""Scan type to use.                                     
+auto: Use onefs when possible and fallback to basic   
 basic: Works on all file systems.                     
 onefs: Works on OneFS based file systems.             
 """,
