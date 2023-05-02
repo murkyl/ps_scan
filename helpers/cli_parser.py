@@ -123,12 +123,6 @@ Number of processes = Threads / ThreadsPerProc
 Default: %default
 """,
     )
-    group.add_option(
-        "--advanced",
-        action="store_true",
-        default=False,
-        help="Flag to enable advanced options",
-    )
     parser.add_option_group(group)
     group = optparse.OptionGroup(parser, "Elasticsearch options")
     group.add_option(
@@ -183,42 +177,10 @@ before creating a new one. This option implies the
 """,
     )
     group.add_option(
-        "--es-threads",
-        action="store",
-        type="int",
-        default=DEFAULT_ES_THREADS,
-        help="""Number of threads to send data to Elasticsearch.      
-Default: %default
-""",
-    )
-    group.add_option(
-        "--es-max-send-q-size",
-        action="store",
-        type="int",
-        default=DEFAULT_ES_MAX_Q_SIZE,
-        help="""Number of unsent entries in the Elasticsearch send    
-queue before throttling file scanning.                
-Default: %default
-""",
-    )
-    group.add_option(
-        "--es-send-q-sleep",
-        action="store",
-        type="int",
-        default=DEFAULT_ES_SEND_Q_SLEEP,
-        help="""When max send queue size is reached, sleep each file  
-scanner by this value in seconds to slow scanning.    
-Default: %default
-""",
-    )
-    group.add_option(
-        "--es-bulk-refresh",
-        action="store",
-        default=DEFAULT_ES_BULK_REFRESH_INTERVAL,
-        help="""When max send queue size is reached, sleep each file  
-scanner by this value in seconds to slow scanning.    
-Default: %default
-""",
+        "--advanced",
+        action="store_true",
+        default=False,
+        help="Flag to enable advanced options",
     )
     parser.add_option_group(group)
     group = optparse.OptionGroup(parser, "Logging and debug options")
@@ -306,6 +268,53 @@ Default: %default
         default=DEFAULT_DIRQ_REQUEST_PERCENTAGE,
         help="""Percentage of the number of unprocessed directory     
 chunks to return each time a process requests work.   
+Default: %default
+""",
+    )
+    group.add_option(
+        "--es-bulk-refresh",
+        action="store",
+        default=DEFAULT_ES_BULK_REFRESH_INTERVAL,
+        help="""When max send queue size is reached, sleep each file  
+scanner by this value in seconds to slow scanning.    
+Default: %default
+""",
+    )
+    group.add_option(
+        "--es-max-send-q-size",
+        action="store",
+        type="int",
+        default=DEFAULT_ES_MAX_Q_SIZE,
+        help="""Number of unsent entries in the Elasticsearch send    
+queue before throttling file scanning.                
+Default: %default
+""",
+    )
+    group.add_option(
+        "--es-send-q-sleep",
+        action="store",
+        type="int",
+        default=DEFAULT_ES_SEND_Q_SLEEP,
+        help="""When max send queue size is reached, sleep each file  
+scanner by this value in seconds to slow scanning.    
+Default: %default
+""",
+    )
+    group.add_option(
+        "--es-shards",
+        action="store",
+        type="int",
+        default=DEFAULT_ES_SHARDS,
+        help="""Number of threads to send data to Elasticsearch.      
+Default: %default
+""",
+    )
+    group.add_option(
+        "--es-threads",
+        action="store",
+        type="int",
+        default=DEFAULT_ES_THREADS,
+        help="""Number of threads to send data to Elasticsearch.      
 Default: %default
 """,
     )
