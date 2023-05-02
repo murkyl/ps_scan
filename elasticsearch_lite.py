@@ -57,6 +57,11 @@ class ElasticsearchLite:
         resp = self.conn.getresponse()
         return json.loads(resp.read())
 
+    def bulk(self, body_str, index_name=None):
+        if body_str[-1] != "\n":
+            body_str += "\n"
+        return self._simple_es_request("_bulk", op="POST", body_str=body_str, index_name=index_name)
+
     def connect(self):
         self.validate_options()
         if self.use_https:
@@ -71,17 +76,6 @@ class ElasticsearchLite:
         }
         if auth_header:
             self.headers["Authorization"] = auth_header
-
-    def disconnect(self):
-        if not self.conn:
-            return
-        self.conn.close()
-        self.conn = None
-
-    def bulk(self, body_str, index_name=None):
-        if body_str[-1] != "\n":
-            body_str += "\n"
-        return self._simple_es_request("_bulk", op="POST", body_str=body_str, index_name=index_name)
 
     def create_index(self, index_name, query=None, settings=None, aliases=None, mapping=None):
         body = {}
@@ -98,6 +92,12 @@ class ElasticsearchLite:
 
     def delete_index(self, index_name, query=None):
         return self._simple_es_request(index_name, op="DELETE", query=query)
+
+    def disconnect(self):
+        if not self.conn:
+            return
+        self.conn.close()
+        self.conn = None
 
     def forcemerge(self, index_name=None, query=None):
         return self._simple_es_request("_forcemerge", op="POST", index_name=index_name, query=query)
