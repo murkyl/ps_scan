@@ -28,97 +28,6 @@ FILE_TYPE = {
 }
 FILE_TYPE_MASK = 0o170000
 IFS_BLOCK_SIZE = 8192
-PS_SCAN_MAPPING = {
-    "properties": {
-        # ========== Timestamps ==========
-        # Time when this entry was scanned
-        "_scan_time": {"type": "long"},
-        # Last access time of the file both in fractional seconds and YYYY-mm-DD format
-        "atime": {"type": "long"},
-        "atime_date": {"type": "date", "format": "yyyy-MM-dd"},
-        # Birth/creation time of the file both in fractional seconds and YYYY-mm-DD format
-        "btime": {"type": "long"},
-        "btime_date": {"type": "date", "format": "yyyy-MM-dd"},
-        # Last metadata change time of the file both in fractional seconds and YYYY-mm-DD format
-        "ctime": {"type": "long"},
-        "ctime_date": {"type": "date", "format": "yyyy-MM-dd"},
-        # Last data modified time of the file both in fractional seconds and YYYY-mm-DD format
-        "mtime": {"type": "long"},
-        "mtime_date": {"type": "date", "format": "yyyy-MM-dd"},
-        # ========== File and path strings ==========
-        # Parent directory of the file
-        "file_path": {"type": "keyword"},
-        # Full file name of the file including the extension but without the path
-        "file_name": {"type": "keyword"},
-        # File name extension portion. This is generally the text after the last . in the file name
-        "file_ext": {"type": "keyword"},
-        # ========== File attributes ==========
-        "file_access_pattern": {"type": "keyword"},
-        "file_coalescer": {"type": "keyword"},
-        "file_compression_ratio": {"type": "float"},
-        # Number of hard links for the file. Files start with 1. A number > 1 indicates other links to the file
-        "file_hard_links": {"type": "long"},
-        # does the file contain any alternative data streams
-        "file_is_ads": {"type": "boolean"},
-        # is the file compressed
-        "file_is_compressed": {"type": "boolean"},
-        # is the file file dedupe disabled - (0: can dedupe, 1: do not dedupe)
-        "file_is_dedupe_disabled": {"type": "boolean"},
-        # is the file deduped, assume the file is fully/partially deduped if it has shadow store references
-        "file_is_deduped": {"type": "boolean"},
-        # is the file data stored int the inode
-        "file_is_inlined": {"type": "boolean"},
-        "file_is_manual_access": {"type": "boolean"},
-        "file_is_manual_packing": {"type": "boolean"},
-        "file_is_manual_protection": {"type": "boolean"},
-        # is the file packed into a container (SFSE or Small File Storage Efficiency)
-        "file_is_packed": {"type": "boolean"},
-        # is the file a SmartLink or a stub file for CloudPools
-        "file_is_smartlinked": {"type": "boolean"},
-        # is the file a sparse file
-        "file_is_sparse": {"type": "boolean"},
-        # Type of the file object, typically "file", "dir", or "symlink". Values defined by the FILE_TYPE constant
-        "file_type": {"type": "keyword"},
-        # inode value of the file
-        "inode": {"type": "long"},
-        # Number of inodes this file has
-        "inode_mirror_count": {"type": "byte"},
-        # The inode number of the parent directory
-        "inode_parent": {"type": "long"},
-        # Number of times the inode has been modified. An indicator of file change rate. Starts at 2
-        "inode_revision": {"type": "long"},
-        # ========== Storage pool targets ==========
-        "pool_target_data": {"type": "keyword"},
-        "pool_target_data_name": {"type": "keyword"},
-        "pool_target_metadata": {"type": "keyword"},
-        "pool_target_metadata_name": {"type": "keyword"},
-        # ========== Permissions ==========
-        "perms_acl_aces": {"type": "keyword"},
-        "perms_acl_group": {"type": "keyword"},
-        "perms_acl_user": {"type": "keyword"},
-        "perms_gid": {"type": "long"},
-        "perms_uid": {"type": "long"},
-        "perms_unix": {"type": "short"},
-        # ========== File protection level ==========
-        "protection_current": {"type": "keyword"},
-        "protection_target": {"type": "keyword"},
-        # ========== File allocation size and blocks ==========
-        "size": {"type": "long"},
-        "size_logical": {"type": "long"},
-        "size_metadata": {"type": "integer"},
-        "size_physical": {"type": "long"},
-        "size_physical_data": {"type": "long"},
-        "size_protection": {"type": "long"},
-        # ========== SSD usage ==========
-        "ssd_strategy": {"type": "short"},
-        "ssd_strategy_name": {"type": "keyword"},
-        "ssd_status": {"type": "short"},
-        "ssd_status_name": {"type": "keyword"},
-        # ========== User attributes ==========
-        "user_attributes": {"type": "object"},
-        "user_tags": {"type": "keyword"},
-    }
-}
 SSD_STRATEGY = [
     "metadata read",
     "avoid ssd",
@@ -194,6 +103,7 @@ DEFAULT_DIRQ_REQUEST_PERCENTAGE = 0.5
 DEFAULT_ES_BULK_REFRESH_INTERVAL = "10m"
 DEFAULT_ES_MAX_Q_SIZE = 2000
 DEFAULT_ES_SEND_Q_SLEEP = 0.5
+DEFAULT_ES_SHARDS = 4
 DEFAULT_ES_THREADS = 4
 DEFAULT_LOW_DIR_Q_THRESHOLD = 5
 DEFAULT_MAX_Q_WAIT_LOOPS = 100
