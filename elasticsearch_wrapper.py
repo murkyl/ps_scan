@@ -165,12 +165,12 @@ def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_inte
                             body_text = body_text.decode("latin-1").encode("utf-8", errors="backslashreplace")
                         except Exception as e:
                             LOG.info("latin-1 backup decode failed. Dropping data.")
-                            LOG.debug("latin-1 exception: %s"%e)
-                            LOG.debug("Work item dump:\n%s"%work_items[i])
+                            LOG.debug("latin-1 exception: %s" % e)
+                            LOG.debug("Work item dump:\n%s" % work_items[i])
                             body_text = None
                     except Exception as e:
                         LOG.info("JSON dumps encountered an exception converting to text")
-                        LOG.debug("Work item dump:\n%s"%work_items[i])
+                        LOG.debug("Work item dump:\n%s" % work_items[i])
                     if body_text:
                         bulk_data.append(json.dumps({"index": {"_id": work_items[i]["inode"]}}))
                         bulk_data.append(body_text)
@@ -194,7 +194,7 @@ def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_inte
             break
         except Exception as e:
             LOG.exception(e)
-            LOG.debug("Work items triggering exception:\n%s"%work_items[i])
+            LOG.debug("Work items triggering exception:\n%s" % work_items[i])
 
 
 def es_create_connection(url, username, password, index):
@@ -204,7 +204,7 @@ def es_create_connection(url, username, password, index):
     es_client.username = username
     es_client.password = password
     es_client.endpoint = url
-    return [es_client, [index + x for x in ["_file", "_dir"]], "%s_state"%index]
+    return [es_client, [index + x for x in ["_file", "_dir"]], "%s_state" % index]
 
 
 def es_create_settings(options=None):
@@ -226,7 +226,6 @@ def es_delete_index(es_client):
     if resp.get("status", 200) not in [200, 404]:
         LOG.error(json.dumps(resp.get("error", {})))
     LOG.debug("Delete index (%s) response: %s" % (es_client[2], resp))
-    
 
 
 def es_init_index(es_client, index, settings=None):

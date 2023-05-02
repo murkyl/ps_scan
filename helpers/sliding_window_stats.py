@@ -14,7 +14,7 @@ __email__         = "andrew.chung@dell.com"
 # fmt: on
 
 
-class SlidingWindowStats():
+class SlidingWindowStats:
     def __init__(self, window_sizes):
         self.first_sample = True
         self.window_sizes = window_sizes
@@ -42,7 +42,7 @@ class SlidingWindowStats():
         bucket = self.buckets[bucket_idx]
         for val in bucket:
             total += val
-        return total/window_size
+        return total / window_size
 
     def get_window_sizes(self):
         return list(self.window_sizes)
