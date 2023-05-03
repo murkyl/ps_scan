@@ -17,6 +17,8 @@ import logging
 import multiprocessing as mp
 import os
 import queue
+import select
+import socket
 import sys
 import threading
 import time
@@ -179,8 +181,6 @@ def subprocess(process_state, scan_paths, file_handler, options):
             es_send_thread_handles.append(es_thread_instance)
 
     # Main processing loop
-    # TODO: DEBUG: Add some code to detect when processes have died/never coming back
-    # Maybe due to a memory error??
     try:
         while True:
             now = time.time()
@@ -195,7 +195,7 @@ def subprocess(process_state, scan_paths, file_handler, options):
                     break
                 elif cmd == CMD_SEND_DIR:
                     # Parent process has sent directories to process
-                    LOG.debug("CMD: SEND_DIR - Got %s dirs to process" % (len(work_item[1])))
+                    LOG.debug("CMD: SEND_DIR - Got {num} dirs to process".format(num=len(work_item[1])))
                     process_state["status"] = "running"
                     process_state["want_data"] = 0
                     scanner.add_scan_path(work_item[1])
@@ -256,7 +256,7 @@ def subprocess(process_state, scan_paths, file_handler, options):
             for thread_handle in es_send_thread_handles:
                 thread_handle.join()
     except KeyboardInterrupt as kbe:
-        LOG.debug("Enumerate threads: %s" % threading.enumerate())
+        LOG.debug("Enumerate threads in subprocess: {threads}".format(threads=threading.enumerate()))
         sys.stderr.write(
             "Termination signal received. Shutting down scanner in subprocess: {pid}.\n".format(
                 pid=mp.current_process()
@@ -279,20 +279,22 @@ def subprocess(process_state, scan_paths, file_handler, options):
 
 
 def ps_scan(paths, options, file_handler):
-    # Start local scanning processes
     start_wall = time.time()
     num_procs = options.threads // options.threads_per_proc + 1 * (options.threads % options.threads_per_proc != 0)
     base_threads = options.threads // num_procs
     poll_interval = options.q_poll_interval
+    process_states = []
+    remote_connections = []
     request_work_dirq_percentage = options.dirq_request_percentage
     request_work_interval = options.request_work_interval
+    scan_path_chunks = misc.chunk_list(paths, num_procs)
+    select_handles = []
     stats_fps_window = sliding_window_stats.SlidingWindowStats(STATS_FPS_BUCKETS)
     stats_last_files_processed = 0
     stats_output_count = 0
     stats_output_interval = options.stats_interval
     thread_count = options.threads
-    process_states = []
-    scan_path_chunks = misc.chunk_list(paths, num_procs)
+    # Start local scanning processes
     LOG.debug(
         "Starting {count} processes with {threads} threads across all processes".format(
             count=num_procs, threads=options.threads
@@ -300,6 +302,7 @@ def ps_scan(paths, options, file_handler):
     )
     for i in range(num_procs):
         parent_conn, child_conn = mp.Pipe()
+        select_handles.append(parent_conn)
         threads_for_process = base_threads if thread_count > base_threads else thread_count
         process_state = {
             "dir_count": 0,
@@ -327,7 +330,14 @@ def ps_scan(paths, options, file_handler):
         process_states.append(process_state)
         LOG.debug("Starting process: {id} with {tcount} threads".format(id=i + 1, tcount=threads_for_process))
         proc_handle.start()
-    LOG.debug("All processes started")
+    LOG.debug("All local processes started")
+
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind(("0.0.0.0", 1842))
+    # print("DEBUG: SERVER: %s" % server)
+    server.listen(10)
+    select_handles.append(server)
 
     sys.stdout.write("Statistics interval: {si} seconds\n".format(si=options.stats_interval))
     # Main loop
@@ -335,15 +345,96 @@ def ps_scan(paths, options, file_handler):
     #   * Output statistics
     #   * Check if we should exit
     dir_list = []
-    stats_buckets = []
-    for sbucket in STATS_FPS_BUCKETS:
-        stats_buckets.append([0] * sbucket)
     continue_running = True
+    readable = []
+    exceptional = []
     while continue_running:
         try:
             now = time.time()
+            # DEBUG: TODO: Change select time to fix the poll interval
+            # First iteration, save current time, sleep for half the poll interval
+            # After processing all extra work, take the difference from start time and
+            # desired poll interval and wait in select for that amount of time
+            # Each loop needs to calculate the correct select wait time to get a
+            # multiple of the poll interval
+
             # Check if there are any commands coming from the sub processes
             idle_proc = 0
+            try:
+                readable, _, exceptional = select.select(select_handles, [], select_handles, 0.001)
+            except IOError as ioe:
+                print(ioe)
+            if len(readable) > 0 or len(exceptional) > 0:
+                # LOG.critical("DEBUG: Got %d readable" % len(readable))
+                # A subprocess or remote process has sent us data
+                for conn in readable:
+                    if conn is server:
+                        connection, client_address = server.accept()
+                        LOG.critical("New connection from client %s, FD: %s" % (client_address, connection.fileno()))
+                        connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+                        select_handles.append(connection)
+                        remote_connections.append(connection)
+                        continue
+                    # Find the subprocess state
+                    proc = None
+                    for x in process_states:
+                        if x["parent_conn"] == conn:
+                            proc = x
+                            break
+                    if not proc:
+                        if conn not in remote_connections:
+                            LOG.exception(
+                                "Select returned readable but process state was not found for: {proc}".format(proc=conn)
+                            )
+                            continue
+                        print("GOT SOCKET")
+                        data = conn.recv(1)
+                        print("RAW DATA: %s" % data)
+                        continue
+                    # Read all commands from a given connection until it is empty
+                    while True:
+                        data_avail = proc["parent_conn"].poll(0.001)
+                        if not data_avail:
+                            break
+                        work_item = proc["parent_conn"].recv()
+                        cmd = work_item[0]
+                        LOG.debug("Process cmd received ({pid}): 0x{cmd:x}".format(pid=proc["id"], cmd=cmd))
+                        if cmd == CMD_EXIT:
+                            proc["status"] = "stopped"
+                        elif cmd == CMD_SEND_STATS:
+                            # LOG.critical("DEBUG: GOT STATS: %s" % work_item[1])
+                            proc["stats"] = work_item[1]
+                            proc["stats_time"] = now
+                        elif cmd == CMD_REQ_DIR:
+                            # A child process is requesting directories to process
+                            proc["want_data"] = now
+                            LOG.debug(
+                                (
+                                    "CMD: REQ_DIR - Process ({pid}) wants dirs."
+                                    "Has {dchunks}/{fchunks} dir/file chunks queued"
+                                ).format(
+                                    pid=proc["id"],
+                                    dchunks=work_item[1],
+                                    fchunks=work_item[2],
+                                )
+                            )
+                        elif cmd == CMD_SEND_DIR:
+                            dir_list.extend(work_item[1])
+                            proc["data_requested"] = 0
+                            proc["want_data"] = 0
+                        elif cmd == CMD_SEND_DIR_COUNT:
+                            proc["dir_count"] = work_item[1]
+                        elif cmd == CMD_STATUS_IDLE:
+                            proc["status"] = "idle"
+                            proc["want_data"] = now
+                        elif cmd == CMD_STATUS_RUN:
+                            proc["status"] = "running"
+                            proc["want_data"] = 0
+                    if proc["status"] == "idle":
+                        idle_proc += 1
+                for conn in exceptional:
+                    print("EXCEPTIONAL EVENT IN SELECT FOR CONN: %s" % conn)
+            """
             for proc in process_states:
                 data_avail = True
                 # DEBUG: Change to a select call to handle sockets
@@ -363,8 +454,14 @@ def ps_scan(paths, options, file_handler):
                         # A child process is requesting directories to process
                         proc["want_data"] = now
                         LOG.debug(
-                            "CMD: REQ_DIR - Process (%s) wants directories. Currently gas %d dir chunks and %d file chunks queued"
-                            % (proc["id"], work_item[1], work_item[2])
+                            (
+                                "CMD: REQ_DIR - Process ({pid}) wants dirs."
+                                "Has {dchunks}/{fchunks} dir/file chunks queued"
+                            ).format(
+                                pid=proc["id"],
+                                dchunks=work_item[1],
+                                fchunks=work_item[2],
+                            )
                         )
                     elif cmd == CMD_SEND_DIR:
                         dir_list.extend(work_item[1])
@@ -380,7 +477,7 @@ def ps_scan(paths, options, file_handler):
                         proc["want_data"] = 0
                 if proc["status"] == "idle":
                     idle_proc += 1
-
+            """
             # Output statistics
             #   The -1 is for a 1 second offset to allow time for stats to come from processes
             cur_stats_count = (now - start_wall - 1) // stats_output_interval
@@ -505,7 +602,8 @@ def main():
         if options.es_reset_index:
             elasticsearch_wrapper.es_delete_index(es_client)
         LOG.debug("Initializing indices for Elasticsearch: {index}".format(index=options.es_index))
-        elasticsearch_wrapper.es_init_index(es_client, options.es_index)
+        es_settings = elasticsearch_wrapper.es_create_settings(options)
+        elasticsearch_wrapper.es_init_index(es_client, options.es_index, es_settings)
     if es_client:
         elasticsearch_wrapper.es_start_processing(es_client, options)
     # Start scanner

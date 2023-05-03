@@ -79,35 +79,7 @@ def file_handler_basic(root, filename_list, stats, now, args={}):
     for filename in filename_list:
         full_path = os.path.join(root, filename)
         try:
-            fstats = os.lstat(full_path)
-            try:
-                btime = fstats.st_birthtime
-                btime_date = datetime.date.fromtimestamp(fstats.st_btime).isoformat()
-            except:
-                btime = 0
-                btime_date = ""
-            file_info = {
-                "atime": fstats.st_atime,
-                "atime_date": datetime.date.fromtimestamp(fstats.st_atime).isoformat(),
-                "btime": btime,
-                "btime_date": btime_date,
-                "ctime": fstats.st_ctime,
-                "ctime_date": datetime.date.fromtimestamp(fstats.st_ctime).isoformat(),
-                "file_ext": os.path.splitext(filename),
-                "file_name": filename,
-                "file_path": root,
-                "gid": fstats.st_gid,
-                "hard_links": fstats.st_nlink,
-                "inode": fstats.st_ino,
-                "logical_size": fstats.st_size,
-                "mtime": fstats.st_mtime,
-                "mtime_date": datetime.date.fromtimestamp(fstats.st_mtime).isoformat(),
-                "perms_unix": stat.S_IMODE(fstats.st_mode),
-                # Physical size without metadata
-                "physical_size": fstats.st_blocks * IFS_BLOCK_SIZE,
-                "type": FILE_TYPE[stat.S_IFMT(fstats.st_mode) & FILE_TYPE_MASK],
-                "uid": fstats.st_uid,
-            }
+            file_info = get_file_stat(full_path)
             if custom_tagging:
                 file_info["user_tags"] = custom_tagging(file_info)
             if stat.S_ISDIR(fstats.st_mode):
@@ -169,7 +141,15 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
         try:
             full_path = os.path.join(root, filename)
             fd = None
-            fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
+            try:
+                fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
+            except Exception as e:
+                LOG.debug("Standard os.open failed, falling back to os.lstat for: %s" % full_path)
+                file_info = get_file_stat(full_path, IFS_BLOCK_SIZE)
+                result_list.append(file_info)
+                stats["file_size_total"] += fstats["di_size"]
+                processed += 1
+                continue
             fstats = attr.get_dinode(fd)
             # atime call can return empty if the file does not have an atime or atime tracking is disabled
             atime = attr.get_access_time(fd)
@@ -297,11 +277,10 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 # Save directories to re-queue
                 dir_list.append(filename)
                 continue
-            else:
-                result_list.append(file_info)
-                if fstats["di_mode"] & 0o120000:
-                    # Fix size issues with symlinks
-                    file_info["size_logical"] = 0
+            result_list.append(file_info)
+            if (fstats["di_mode"] & 0o010000) or (fstats["di_mode"] & 0o120000) or (fstats["di_mode"] & 0o140000):
+                # Fix size issues with symlinks, sockets, and FIFOs
+                file_info["size_logical"] = 0
             stats["file_size_total"] += fstats["di_size"]
             processed += 1
         except IOError as ioe:
@@ -334,12 +313,54 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
+def get_file_stat(full_path, block_unit = STAT_BLOCK_SIZE):
+    fstats = os.lstat(full_path)
+    try:
+        btime = fstats.st_birthtime
+        btime_date = datetime.date.fromtimestamp(fstats.st_btime).isoformat()
+    except:
+        btime = 0
+        btime_date = ""
+    file_info = {
+        # ========== Timestamps ==========
+        "atime": fstats.st_atime,
+        "atime_date": datetime.date.fromtimestamp(fstats.st_atime).isoformat(),
+        "btime": btime,
+        "btime_date": btime_date,
+        "ctime": fstats.st_ctime,
+        "ctime_date": datetime.date.fromtimestamp(fstats.st_ctime).isoformat(),
+        "mtime": fstats.st_mtime,
+        "mtime_date": datetime.date.fromtimestamp(fstats.st_mtime).isoformat(),
+        # ========== File and path strings ==========
+        "file_path": root,
+        "file_name": filename,
+        "file_ext": os.path.splitext(filename),
+        # ========== File attributes ==========
+        "file_hard_links": fstats.st_nlink,
+        "file_type": FILE_TYPE[stat.S_IFMT(fstats.st_mode) & FILE_TYPE_MASK],
+        "inode": fstats.st_ino,
+        # ========== Permissions ==========
+        "perms_gid": fstats.st_gid,
+        "perms_uid": fstats.st_uid,
+        "perms_unix": stat.S_IMODE(fstats.st_mode),
+        # ========== File allocation size and blocks ==========
+        "size": fstats.st_size,
+        "size_logical": block_unit
+        * (int(fstats.st_size / block_unit) + 1 * ((fstats.st_size % block_unit) > 0)),
+        # st_blocks includes metadata blocks
+        "size_physical": block_unit * (int(fstats.st_blocks * STAT_BLOCK_SIZE / block_unit)),
+    }
+    if file_info["size"] == 0 and file_info["size_physical"] == 0:
+        file_info["size_physical"] = file_info["size_logical"]
+    return file_info
+
+
 def init_custom_state(custom_state, options):
     # TODO: Parse the custom tag input file and produce a parser
     # Add any common parameters that each processing thread should have access to
     # by adding values to the custom_state dictionary
     custom_state["acl"] = options.acl
-    custom_state["custom_tagging"] = lambda x: None
+    # custom_state["custom_tagging"] = lambda x: None
     custom_state["custom_stats"] = {}
     custom_state["extra_attr"] = options.extra
     custom_state["max_send_q_size"] = options.es_max_send_q_size

@@ -42,6 +42,7 @@ SSD_STATUS = [
     "complete",
     "invalid",
 ]
+STAT_BLOCK_SIZE = 512
 STATS_FPS_BUCKETS = [2, 5, 10]
 # Inode flag bit fields
 # fmt: off
