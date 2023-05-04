@@ -48,6 +48,15 @@ Custom tagging file format
 ====================
 TBD
 
+Logging
+====================
+You can dynamically enable and disable debugging by sending a SIGUSR1 to the main
+process.
+
+Example on a Bash shell where <pid> is replaced with the actual process ID:
+kill -SIGUSR1 <pid>
+
+
 Return values
 ====================
 0   No errors
