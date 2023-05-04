@@ -148,6 +148,16 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             except Exception as e:
                 LOG.debug("Standard os.open failed, falling back to os.lstat for: %s" % full_path)
                 file_info = get_file_stat(root, filename, IFS_BLOCK_SIZE)
+                if custom_tagging:
+                    file_info["user_tags"] = custom_tagging(file_info)
+                if file_info["file_type"] == "dir":
+                    file_info["_scan_time"] = now
+                    result_dir_list.append(file_info)
+                    # Fix size issues with dirs
+                    file_info["size_logical"] = 0
+                    # Save directories to re-queue
+                    dir_list.append(filename)
+                    continue
                 result_list.append(file_info)
                 stats["file_size_total"] += fstats["di_size"]
                 processed += 1
