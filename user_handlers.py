@@ -77,20 +77,22 @@ def file_handler_basic(root, filename_list, stats, now, args={}):
     result_dir_list = []
 
     for filename in filename_list:
-        full_path = os.path.join(root, filename)
         try:
-            file_info = get_file_stat(full_path)
+            file_info = get_file_stat(root, filename)
             if custom_tagging:
                 file_info["user_tags"] = custom_tagging(file_info)
-            if stat.S_ISDIR(fstats.st_mode):
+            if file_info["file_type"] == "dir":
                 file_info["_scan_time"] = now
                 result_dir_list.append(file_info)
                 # Save directories to re-queue
                 dir_list.append(filename)
                 continue
-            stats["file_size_total"] += fstats.st_size
+            stats["file_size_total"] += file_info["size"]
             processed += 1
             result_list.append(file_info)
+        except FileNotFoundError as fnfe:
+            skipped += 1
+            LOG.info("File not found: {filename}".format(filename=filename))
         except Exception as e:
             skipped += 1
             LOG.exception(e)
@@ -145,7 +147,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
             except Exception as e:
                 LOG.debug("Standard os.open failed, falling back to os.lstat for: %s" % full_path)
-                file_info = get_file_stat(full_path, IFS_BLOCK_SIZE)
+                file_info = get_file_stat(root, filename, IFS_BLOCK_SIZE)
                 result_list.append(file_info)
                 stats["file_size_total"] += fstats["di_size"]
                 processed += 1
@@ -289,6 +291,9 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 LOG.info("Permission error scanning: {file}".format(file=full_path))
             else:
                 LOG.exception(ioe)
+        except FileNotFoundError as fnfe:
+            skipped += 1
+            LOG.info("File not found: {filename}".format(filename=filename))
         except PermissionError:
             skipped += 1
             LOG.info("Permission error scanning: {file}".format(file=full_path))
@@ -313,7 +318,8 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
-def get_file_stat(full_path, block_unit = STAT_BLOCK_SIZE):
+def get_file_stat(root, filename, block_unit = STAT_BLOCK_SIZE):
+    full_path = os.path.join(root, filename)
     fstats = os.lstat(full_path)
     try:
         btime = fstats.st_birthtime
