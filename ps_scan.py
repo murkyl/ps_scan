@@ -18,6 +18,7 @@ import multiprocessing as mp
 import os
 import queue
 import select
+import signal
 import socket
 import sys
 import threading
@@ -33,6 +34,14 @@ from helpers.constants import *
 
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s"
 LOG = logging.getLogger("")
+
+
+def handler_signal_usr1(signum, frame):
+    cur_level = LOG.getEffectiveLevel()
+    if cur_level != logging.DEBUG:
+        LOG.setLevel(logging.DEBUG)
+    else:
+        LOG.setLevel(logging.INFO)
 
 
 def print_interim_statistics(stats, now, start, fps_window, interval):
@@ -592,6 +601,8 @@ def main():
     else:
         file_handler = user_handlers.file_handler_basic
     LOG.debug("Parsed options: {opt}".format(opt=options))
+
+    signal.signal(signal.SIGUSR1, handler_signal_usr1)
 
     es_client = None
     if options.es_index and options.es_user and options.es_pass and options.es_url:
