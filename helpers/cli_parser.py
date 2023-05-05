@@ -37,16 +37,30 @@ This es-cred-file is sensitive information and should be properly secured. Remov
 permissions for any user that should not have access to this file.
 
 Command line options
-Some options can significantly reduce scan speed. The following options may cause scan
-speeds to be reduced by more than half:
-  * --acl
+Some options can significantly impact scan speed. The following options may cause scan
+speeds to impacted:
+  * --no-acl
+      When this option is selected, the script will not attempt to parse ACL information
+      when running on a OneFS system. This will result in any files that have a user or
+      group owner that is a SID to instead use the UNIX equivalent value.
+      
+      This option can improve scan speeds at the expense of missing ACL information.
   * --extra
-  * --tagging
+      When this option is selected, some additional metadata items will be present in
+      the output. These fields include:
+      file_coalescer
+      file_is_manual_access
+      file_is_manual_packing
+      file_is_manual_protection
+      size_metadata
+      
+      This option can decrease scan speeds.
   * --user-attr
+      When this option is enabled, extended attributes stored in the user portion of the
+      file will be scanned.
+      
+      This option can decrease scan speeds.
 
-Custom tagging file format
-====================
-TBD
 
 Logging
 ====================
@@ -80,16 +94,16 @@ onefs: Works on OneFS based file systems.
 """,
     )
     parser.add_option(
-        "--acl",
+        "--no-acl",
         action="store_true",
         default=False,
-        help="Parse ACL file permissions",
+        help="Skip parsing ACL file permissions on OneFS systems",
     )
     parser.add_option(
         "--extra",
         action="store_true",
         default=False,
-        help="Parse additional file information on OneFS systems",
+        help="Parse additional file metadata information on OneFS systems",
     )
     # parser.add_option(
     #    "--tagging",
@@ -101,7 +115,7 @@ onefs: Works on OneFS based file systems.
         "--user-attr",
         action="store_true",
         default=False,
-        help="Parse user defined extended attributes from each file",
+        help="Parse user defined extended attributes for each file on OneFS systems",
     )
     parser.add_option(
         "--stats-interval",
@@ -353,6 +367,14 @@ Default: %default
         default=scanit.DEFAULT_FILE_QUEUE_MIN_CUTOFF,
         help="""When the number of files in the file queue is less    
 than this value, only process directories if possible.
+Default: %default
+""",
+    )
+    group.add_option(
+        "--no-sid-pref",
+        action="store_true",
+        default=False,
+        help="""When set, do not prefer SIDs for permissions          
 Default: %default
 """,
     )

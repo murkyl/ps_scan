@@ -123,11 +123,12 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     thread_custom_state = args.get("thread_custom_state", {})
     thread_state = args.get("thread_state", {})
 
-    acl = custom_state.get("acl", None)
     custom_tagging = custom_state.get("custom_tagging", None)
     extra_attr = custom_state.get("extra_attr", False)
     user_attr = custom_state.get("user_attr", False)
     max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
+    no_acl = custom_state.get("no_acl", None)
+    no_sid_pref = custom_state.get("no_sid_pref", False)
     phys_block_size = custom_state.get("phys_block_size", IFS_BLOCK_SIZE)
     pool_translate = custom_state.get("node_pool_translation", {})
     send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
@@ -231,7 +232,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 "size": fstats["di_size"],
                 # Logical size in 8K blocks. Sparse files only show the real data portion
                 "size_logical": fstats["di_logical_size"],
-                # Physical size on disk including protection overhead and excluding metadata
+                # Physical size on disk including protection overhead, including extension blocks and excluding metadata
                 "size_physical": fstats["di_physical_blocks"] * phys_block_size,
                 # Physical size on disk excluding protection overhead and excluding metadata
                 "size_physical_data": fstats["di_data_blocks"] * phys_block_size,
@@ -243,7 +244,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 "ssd_status": fstats["di_la_ssd_status"],
                 "ssd_status_name": SSD_STATUS[fstats["di_la_ssd_status"]],
             }
-            if acl:
+            if not no_acl:
                 acl = onefs_acl.get_acl_dict(fd)
                 file_info["perms_acl_aces"] = misc.ace_list_to_str_list(acl.get("aces"))
                 file_info["perms_acl_group"] = misc.acl_group_to_str(acl)
@@ -281,6 +282,15 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 file_info["user_attributes"] = extended_attr
             if custom_tagging:
                 file_info["user_tags"] = custom_tagging(file_info)
+            # Fix up the UID/GID values if necessary. Prefer the SID over the UNIX values
+            if not no_sid_pref:
+                if file_info["perms_acl_user"]:
+                    file_info["perms_uid"] = file_info["perms_acl_user"]
+                if file_info["perms_acl_group"]:
+                    file_info["perms_gid"] = file_info["perms_acl_group"]
+            if file_info["perms_uid"] == 0xFFFFFFFF or file_info["perms_gid"] == 0xFFFFFFFF:
+                LOG.debug("Unable to get file UID/GID properly for: {filename}".format(filename=full_path))
+                
             if fstats["di_mode"] & 0o040000:
                 file_info["_scan_time"] = now
                 result_dir_list.append(file_info)
@@ -375,11 +385,12 @@ def init_custom_state(custom_state, options):
     # TODO: Parse the custom tag input file and produce a parser
     # Add any common parameters that each processing thread should have access to
     # by adding values to the custom_state dictionary
-    custom_state["acl"] = options.acl
     # custom_state["custom_tagging"] = lambda x: None
     custom_state["custom_stats"] = {}
     custom_state["extra_attr"] = options.extra
     custom_state["max_send_q_size"] = options.es_max_send_q_size
+    custom_state["no_acl"] = options.no_acl
+    custom_state["no_sid_pref"] = options.no_sid_pref
     custom_state["node_pool_translation"] = {}
     custom_state["phys_block_size"] = IFS_BLOCK_SIZE
     custom_state["send_q"] = queue.Queue()
