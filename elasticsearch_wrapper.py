@@ -103,11 +103,16 @@ ES_INDEX_MAPPING = {
         "protection_current": {"type": "keyword"},
         "protection_target": {"type": "keyword"},
         # ========== File allocation size and blocks ==========
+        # The apparent size of the file. Sparse files include the sparse area
         "size": {"type": "long"},
+        # Logical size in 8K blocks. Sparse files only show the real data portion
         "size_logical": {"type": "long"},
         "size_metadata": {"type": "integer"},
+        # Physical size on disk including protection overhead, including extension blocks and excluding metadata
         "size_physical": {"type": "long"},
+        # Physical size on disk excluding protection overhead and excluding metadata
         "size_physical_data": {"type": "long"},
+        # Physical size on disk of the protection overhead
         "size_protection": {"type": "long"},
         # ========== SSD usage ==========
         "ssd_strategy": {"type": "short"},
