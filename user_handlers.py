@@ -289,7 +289,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 if file_info["perms_acl_group"]:
                     file_info["perms_gid"] = file_info["perms_acl_group"]
             if file_info["perms_uid"] == 0xFFFFFFFF or file_info["perms_gid"] == 0xFFFFFFFF:
-                LOG.debug("Unable to get file UID/GID properly for: {filename}".format(filename=full_path))
+                LOG.info("Unable to get file UID/GID properly for: {filename}".format(filename=full_path))
                 
             if fstats["di_mode"] & 0o040000:
                 file_info["_scan_time"] = now
