@@ -290,7 +290,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                     file_info["perms_gid"] = file_info["perms_acl_group"]
             if file_info["perms_uid"] == 0xFFFFFFFF or file_info["perms_gid"] == 0xFFFFFFFF:
                 LOG.info("Unable to get file UID/GID properly for: {filename}".format(filename=full_path))
-                
+
             if fstats["di_mode"] & 0o040000:
                 file_info["_scan_time"] = now
                 result_dir_list.append(file_info)
@@ -300,7 +300,11 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 dir_list.append(filename)
                 continue
             result_list.append(file_info)
-            if (fstats["di_mode"] & 0o010000) or (fstats["di_mode"] & 0o120000) or (fstats["di_mode"] & 0o140000):
+            if (
+                (fstats["di_mode"] & 0o010000 == 0o010000)
+                or (fstats["di_mode"] & 0o120000 == 0o120000)
+                or (fstats["di_mode"] & 0o140000 == 0o140000)
+            ):
                 # Fix size issues with symlinks, sockets, and FIFOs
                 file_info["size_logical"] = 0
             stats["file_size_total"] += fstats["di_size"]
@@ -338,7 +342,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
-def get_file_stat(root, filename, block_unit = STAT_BLOCK_SIZE):
+def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE):
     full_path = os.path.join(root, filename)
     fstats = os.lstat(full_path)
     try:
@@ -371,8 +375,7 @@ def get_file_stat(root, filename, block_unit = STAT_BLOCK_SIZE):
         "perms_unix": stat.S_IMODE(fstats.st_mode),
         # ========== File allocation size and blocks ==========
         "size": fstats.st_size,
-        "size_logical": block_unit
-        * (int(fstats.st_size / block_unit) + 1 * ((fstats.st_size % block_unit) > 0)),
+        "size_logical": block_unit * (int(fstats.st_size / block_unit) + 1 * ((fstats.st_size % block_unit) > 0)),
         # st_blocks includes metadata blocks
         "size_physical": block_unit * (int(fstats.st_blocks * STAT_BLOCK_SIZE / block_unit)),
     }
