@@ -111,7 +111,8 @@ def print_final_statistics(stats, num_threads, wall_time, es_time):
     )
 
 
-def setup_logger(log_obj, options):
+def setup_logger(log_obj, options, pid=None):
+    log_obj.handlers.clear()
     debug_count = options.debug
     if (options.log is None) and (not options.quiet):
         options.console_log = True
@@ -124,7 +125,12 @@ def setup_logger(log_obj, options):
         log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
         log_obj.addHandler(log_handler)
     if options.log:
-        log_handler = logging.FileHandler(options.log)
+        log_filename = options.log
+        if pid:
+            # Append the subprocess pid before the extension
+            file_ext = os.path.splitext(log_filename)
+            log_filename = "%s-%s%s" % (file_ext[0], pid, file_ext[1])
+        log_handler = logging.FileHandler(log_filename)
         log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
         log_obj.addHandler(log_handler)
     if (options.log is None) and (options.console_log is False):
@@ -132,10 +138,13 @@ def setup_logger(log_obj, options):
 
 
 def subprocess(process_state, scan_paths, file_handler, options):
-    LOG = logging.getLogger()
-    setup_logger(LOG, options)
-    LOG.debug("Process loop started: {pid}".format(pid=mp.current_process()))
-
+    myproc = mp.current_process()
+    myproc_id = myproc.name.split("-")[1]
+    LOG = logging.getLogger("")
+    setup_logger(LOG, options, myproc_id)
+    LOG.debug("Subprocess started: ID: {id} - PID: {pid}".format(id=myproc_id, pid=os.getpid()))
+    LOG.debug("Subprocess options: {opt}".format(opt=options))
+    LOG.debug("VMEM ulimit values: {val}".format(val=resource.getrlimit(resource.RLIMIT_VMEM)))
     # Setup process local variables
     start_wall = time.time()
     cmd_poll_interval = options.cmd_poll_interval
@@ -289,7 +298,7 @@ def subprocess(process_state, scan_paths, file_handler, options):
         es_send_q_time = 0
     conn_pipe.send([CMD_SEND_STATS, scanner.get_stats()])
     conn_pipe.send([CMD_EXIT, None])
-    LOG.debug("Process loop ending: {pid}".format(pid=mp.current_process()))
+    LOG.debug("Subprocess ending: ID: {id} - PID: {pid}".format(id=myproc_id, pid=os.getpid()))
 
 
 def ps_scan(paths, options, file_handler):
@@ -563,6 +572,7 @@ def ps_scan(paths, options, file_handler):
     temp_stats = misc.merge_process_stats(process_states)
     # DEBUG: Need to add ES Send Q Time back in
     print_final_statistics(temp_stats, options.threads, total_wall_time, 0)
+    LOG.debug("All processes exiting")
 
 
 def main():
