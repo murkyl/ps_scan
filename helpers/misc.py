@@ -18,10 +18,13 @@ __all__ = [
     "chunk_list",
     "is_onefs_os",
     "merge_process_stats",
+    "sysctl",
+    "sysctl_raw",
 ]
 # fmt: on
 import copy
 import platform
+import subprocess
 
 
 def ace_list_to_str_list(ace_list):
@@ -81,3 +84,24 @@ def merge_process_stats(process_states):
                     continue
                 temp_stats[key] += state["stats"][key]
     return temp_stats
+
+
+def sysctl(name, newval=None):
+    sysctl_out = sysctl_raw(name, newval)
+    data = sysctl_out.decode("UTF-8")
+    kv = data.split(": ", 1)
+    return kv[1]
+
+
+def sysctl_raw(name, newval=None):
+    cmd_line = ["sysctl", name]
+    if newval:
+        cmd_line.append("=")
+        cmd_line.append(newval)
+    proc = subprocess.Popen(cmd_line, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    output, errors = proc.communicate()
+    if errors:
+        raise Exception(errors)
+    if not output.decode("UTF-8").startswith(name):
+        raise Exception(output)
+    return output
