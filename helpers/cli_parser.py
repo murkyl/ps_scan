@@ -398,6 +398,28 @@ before more work can be sent to a process.
 Default: %default
 """,
     )
+    group.add_option(
+        "--ulimit-memory",
+        action="store",
+        type="int",
+        default=DEFAULT_ULIMIT_MEMORY,
+        help="""When running on a OneFS system, the amount of memory  
+that each process will be allowed to utilize. The OS  
+default is 1 MiB which is insufficient for wide dirs.
+Default: %default
+""",
+    )
+    group.add_option(
+        "--ulimit-memory-min",
+        action="store",
+        type="int",
+        default=DEFAULT_ULIMIT_MEMORY_MIN,
+        help="""When running on a OneFS system, the minimum amount of 
+physical memory that must be present before increasing
+the per process memory limit.                        
+Default: %default
+""",
+    )
     if hide_options:
         for op in group.option_list:
             op.help = optparse.SUPPRESS_HELP
