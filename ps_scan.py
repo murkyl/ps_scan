@@ -272,7 +272,10 @@ def subprocess(process_state, scan_paths, file_handler, options):
             send_start = now
             while not send_q.empty():
                 time.sleep(poll_interval)
-            es_send_q_time = now - send_start
+                es_send_q_time = now - send_start
+                if es_send_q_time > DEFAULT_SEND_Q_WAIT_TIME:
+                    LOG.info("Send Q was not empty after {time} seconds. Force quitting.".format(time=DEFAULT_SEND_Q_WAIT_TIME))
+                    break
             LOG.debug("Sending exit command to send queue")
             for thread_handle in es_send_thread_handles:
                 es_send_cmd_q.put([CMD_EXIT, None])
