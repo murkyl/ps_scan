@@ -32,6 +32,11 @@ import helpers.sliding_window_stats as sliding_window_stats
 from helpers.cli_parser import *
 from helpers.constants import *
 
+try:
+    import resource
+except:
+    pass
+
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s"
 LOG = logging.getLogger("")
 
@@ -396,9 +401,9 @@ def ps_scan(paths, options, file_handler):
                                 "Select returned readable but process state was not found for: {proc}".format(proc=conn)
                             )
                             continue
-                        print("GOT SOCKET")
+                        # print("DEBUG: GOT SOCKET")
                         data = conn.recv(1)
-                        print("RAW DATA: %s" % data)
+                        # print("DEBUG: RAW DATA: %s" % data)
                         continue
                     # Read all commands from a given connection until it is empty
                     while True:
@@ -442,7 +447,7 @@ def ps_scan(paths, options, file_handler):
                     if proc["status"] == "idle":
                         idle_proc += 1
                 for conn in exceptional:
-                    print("EXCEPTIONAL EVENT IN SELECT FOR CONN: %s" % conn)
+                    print("DEBUG: EXCEPTIONAL EVENT IN SELECT FOR CONN: %s" % conn)
             """
             for proc in process_states:
                 data_avail = True
@@ -598,6 +603,15 @@ def main():
             )
             sys.exit(2)
         file_handler = user_handlers.file_handler_pscale
+        try:
+            physmem = int(misc.sysctl("hw.physmem"))
+            if physmem > options.ulimit_memory_min:
+                resource.setrlimit(resource.RLIMIT_VMEM, (options.ulimit_memory, options.ulimit_memory))
+                LOG.info("Set vmem ulimit to: {val} bytes".format(val=options.ulimit_memory))
+            else:
+                LOG.info("Node does not meet minimum physical memory size to increase memory limit automatically.")
+        except Exception as e:
+            LOG.exception("Unable to query physical memory sysctl hw.physmem: {err}".format(err=e))
     else:
         file_handler = user_handlers.file_handler_basic
     LOG.debug("Parsed options: {opt}".format(opt=options))
