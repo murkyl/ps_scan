@@ -29,8 +29,8 @@ SD_ACL_REGEX = (
     r"header:(revision:\d+)::(control:\d+)"
     r"::(owner:(?P<utype>UID|SID):(?P<user>\d+|S(-\d+)+))"
     r"::(group:(?P<gtype>GID|SID):(?P<group>\d+|S(-\d+)+))"
-    r"::->dacl<-:(?P<dacl>(rev:(?P<daclrev>\d+)::)?(?P<dacltrustees>::trustee.*)+)?"
-    r"::->sacl<-:(?P<sacl>(rev:(?P<saclrev>\d+)::)?(?P<sacltrustees>::trustee.*)+)?"
+    r"::->dacl<-:(?P<dacl>(rev:(?P<daclrev>\d+)::)?(?P<dacltrustees>::trustee.*))?"
+    r"::->sacl<-:(?P<sacl>(rev:(?P<saclrev>\d+)::)?(?P<sacltrustees>::trustee.*))?"
 )
 # fmt: off
 """ Mask bits for the trustee fields"""
@@ -295,6 +295,8 @@ def get_acl_dict(fd, detailed=True):
     if sd_str is None:
         return {}
     match = re.match(SD_ACL_REGEX, sd_str)
+    if not match:
+        return {}
     acl_dict = {
         "aces": trustees_txt_to_aces(match.group("dacltrustees")),
         "group": match.group("group"),
@@ -333,7 +335,7 @@ def get_sd_text(fd):
     retval = None
     sd = ISI_ACL_LIB.get_sd_text(fd)
     if sd != ffi.NULL:
-        retval = str(ffi.string(sd))
+        retval = ffi.string(sd).decode("utf-8")
     C_LIB.free(sd)
     return retval
 
