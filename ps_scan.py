@@ -112,7 +112,11 @@ def print_final_statistics(stats, num_threads, wall_time, es_time):
 
 
 def setup_logger(log_obj, options, pid=None):
-    log_obj.handlers.clear()
+    try:
+        log_obj.handlers.clear()
+    except:
+        for i in range(len(log_obj.handlers)):
+            log_obj.handlers.pop()
     debug_count = options.debug
     if (options.log is None) and (not options.quiet):
         options.console_log = True
