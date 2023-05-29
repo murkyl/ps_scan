@@ -371,14 +371,6 @@ Default: %default
 """,
     )
     group.add_option(
-        "--no-sid-pref",
-        action="store_true",
-        default=False,
-        help="""When set, do not prefer SIDs for permissions          
-Default: %default
-""",
-    )
-    group.add_option(
         "--q-poll-interval",
         action="store",
         type="int",

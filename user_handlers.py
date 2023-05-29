@@ -128,7 +128,6 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     user_attr = custom_state.get("user_attr", False)
     max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
     no_acl = custom_state.get("no_acl", None)
-    no_sid_pref = custom_state.get("no_sid_pref", False)
     phys_block_size = custom_state.get("phys_block_size", IFS_BLOCK_SIZE)
     pool_translate = custom_state.get("node_pool_translation", {})
     send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
@@ -221,9 +220,9 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                     int(fstats["di_metadata_pool_target"]), str(fstats["di_metadata_pool_target"])
                 ),
                 # ========== Permissions ==========
-                "perms_gid": fstats["di_gid"],
-                "perms_uid": fstats["di_uid"],
-                "perms_unix": stat.S_IMODE(fstats["di_mode"]),
+                "perms_unix_bitmask": stat.S_IMODE(fstats["di_mode"]),
+                "perms_unix_gid": fstats["di_gid"],
+                "perms_unix_uid": fstats["di_uid"],
                 # ========== File protection level ==========
                 "protection_current": fstats["di_current_protection"],
                 "protection_target": fstats["di_protection_policy"],
@@ -282,14 +281,8 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 file_info["user_attributes"] = extended_attr
             if custom_tagging:
                 file_info["user_tags"] = custom_tagging(file_info)
-            # Fix up the UID/GID values if necessary. Prefer the SID over the UNIX values
-            if not no_sid_pref:
-                if file_info["perms_acl_user"]:
-                    file_info["perms_uid"] = file_info["perms_acl_user"]
-                if file_info["perms_acl_group"]:
-                    file_info["perms_gid"] = file_info["perms_acl_group"]
-            if file_info["perms_uid"] == 0xFFFFFFFF or file_info["perms_gid"] == 0xFFFFFFFF:
-                LOG.info("Unable to get file UID/GID properly for: {filename}".format(filename=full_path))
+
+            translate_user_group_perms(full_path, file_info)
 
             if fstats["di_mode"] & 0o040000:
                 file_info["_scan_time"] = now
@@ -370,9 +363,9 @@ def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE):
         "file_type": FILE_TYPE[stat.S_IFMT(fstats.st_mode) & FILE_TYPE_MASK],
         "inode": fstats.st_ino,
         # ========== Permissions ==========
-        "perms_gid": fstats.st_gid,
-        "perms_uid": fstats.st_uid,
-        "perms_unix": stat.S_IMODE(fstats.st_mode),
+        "perms_unix_bitmask": stat.S_IMODE(fstats.st_mode),
+        "perms_unix_gid": fstats.st_gid,
+        "perms_unix_uid": fstats.st_uid,
         # ========== File allocation size and blocks ==========
         "size": fstats.st_size,
         "size_logical": block_unit * (int(fstats.st_size / block_unit) + 1 * ((fstats.st_size % block_unit) > 0)),
@@ -393,7 +386,6 @@ def init_custom_state(custom_state, options):
     custom_state["extra_attr"] = options.extra
     custom_state["max_send_q_size"] = options.es_max_send_q_size
     custom_state["no_acl"] = options.no_acl
-    custom_state["no_sid_pref"] = options.no_sid_pref
     custom_state["node_pool_translation"] = {}
     custom_state["phys_block_size"] = IFS_BLOCK_SIZE
     custom_state["send_q"] = queue.Queue()
@@ -417,3 +409,27 @@ def init_thread(tid, custom_state, thread_custom_state):
     # Add any custom stats counters or values in the thread_custom_state dictionary
     # and access this inside each file handler
     thread_custom_state["thread_name"] = tid
+
+
+def translate_user_group_perms(full_path, file_info):
+    # Populate the perms_user and perms_group fields from the avaialble SID and UID/GID data
+    # Translate the numeric values into human readable user name and group names if possible
+    # TODO: Add translation to names from SID/UID/GID values
+    if file_info["perms_unix_uid"] == 0xFFFFFFFF or file_info["perms_unix_gid"] == 0xFFFFFFFF:
+        LOG.debug("File found with invalid UNIX perms: {filename}".format(filename=full_path))
+        # In some cases when there is a SID the UID/GID can get set to 0xFFFFFFFF instead
+        # of the real UID/GID. When that happens, use os.fstat to get the UID/GID information
+        if fd:
+            fstats = os.lstat(full_path)
+            file_info["perms_unix_gid"] = fstats.st_gid,
+            file_info["perms_unix_uid"] = fstats.st_uid,
+        else:
+            LOG.info("Unable to get file UID/GID properly for: {filename}".format(filename=full_path))
+    if file_info["perms_acl_user"]:
+        file_info["perms_user"] = file_info["perms_acl_user"]
+    else:
+        file_info["perms_user"] = file_info["perms_unix_uid"]
+    if file_info["perms_acl_group"]:
+        file_info["perms_group"] = file_info["perms_acl_group"]
+    else:
+        file_info["perms_group"] = file_info["perms_unix_gid"]
