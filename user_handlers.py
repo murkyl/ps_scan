@@ -40,6 +40,10 @@ try:
     dir(PermissionError)
 except:
     PermissionError = Exception
+try:
+    dir(FileNotFoundError)
+except:
+    FileNotFoundError = IOError
 
 
 LOG = logging.getLogger(__name__)
@@ -311,7 +315,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
         except FileNotFoundError as fnfe:
             skipped += 1
             LOG.info("File not found: {filename}".format(filename=filename))
-        except PermissionError:
+        except PermissionError as pe:
             skipped += 1
             LOG.info("Permission error scanning: {file}".format(file=full_path))
         except Exception as e:
