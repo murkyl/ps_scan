@@ -426,7 +426,7 @@ def translate_user_group_perms(full_path, file_info):
         # by the cluster.
         # When this happens, use os.fstat to get the UID/GID information from the point
         # of view of the access zone that is running the script, normally the System zone
-        try::
+        try:
             fstats = os.lstat(full_path)
             file_info["perms_unix_gid"] = fstats.st_gid,
             file_info["perms_unix_uid"] = fstats.st_uid,
