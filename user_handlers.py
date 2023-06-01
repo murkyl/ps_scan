@@ -318,6 +318,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
         except PermissionError as pe:
             skipped += 1
             LOG.info("Permission error scanning: {file}".format(file=full_path))
+            LOG.exception(pe)
         except Exception as e:
             skipped += 1
             LOG.exception(e)
@@ -405,8 +406,8 @@ def init_custom_state(custom_state, options):
                 children = g.get_children()
                 for child in children:
                     custom_state["node_pool_translation"][int(child.entryid)] = g.name
-        except:
-            LOG.critical("Unable to get the ID to name translation for node pools")
+        except Exception as e:
+            LOG.exception("Unable to get the ID to name translation for node pools")
 
 
 def init_thread(tid, custom_state, thread_custom_state):
@@ -420,20 +421,24 @@ def translate_user_group_perms(full_path, file_info):
     # Translate the numeric values into human readable user name and group names if possible
     # TODO: Add translation to names from SID/UID/GID values
     if file_info["perms_unix_uid"] == 0xFFFFFFFF or file_info["perms_unix_gid"] == 0xFFFFFFFF:
-        LOG.debug("File found with invalid UNIX perms: {filename}".format(filename=full_path))
-        # In some cases when there is a SID the UID/GID can get set to 0xFFFFFFFF instead
-        # of the real UID/GID. When that happens, use os.fstat to get the UID/GID information
-        if fd:
+        LOG.debug("File requires standard lstat for UID/GID: {filename}".format(filename=full_path))
+        # If the UID/GID is set to 0xFFFFFFFF then on cluster, the UID/GID is generated
+        # by the cluster.
+        # When this happens, use os.fstat to get the UID/GID information from the point
+        # of view of the access zone that is running the script, normally the System zone
+        try::
             fstats = os.lstat(full_path)
             file_info["perms_unix_gid"] = fstats.st_gid,
             file_info["perms_unix_uid"] = fstats.st_uid,
-        else:
+        except Exception as e:
             LOG.info("Unable to get file UID/GID properly for: {filename}".format(filename=full_path))
     if file_info["perms_acl_user"]:
         file_info["perms_user"] = file_info["perms_acl_user"]
+        file_info["perms_user"].replace("uid:", "")
     else:
         file_info["perms_user"] = file_info["perms_unix_uid"]
     if file_info["perms_acl_group"]:
         file_info["perms_group"] = file_info["perms_acl_group"]
+        file_info["perms_group"].replace("gid:", "")
     else:
         file_info["perms_group"] = file_info["perms_unix_gid"]
