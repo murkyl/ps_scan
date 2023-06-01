@@ -432,12 +432,12 @@ def translate_user_group_perms(full_path, file_info):
             file_info["perms_unix_uid"] = fstats.st_uid,
         except Exception as e:
             LOG.info("Unable to get file UID/GID properly for: {filename}".format(filename=full_path))
-    if file_info["perms_acl_user"]:
+    if "perms_acl_user" in file_info:
         file_info["perms_user"] = file_info["perms_acl_user"]
         file_info["perms_user"].replace("uid:", "")
     else:
         file_info["perms_user"] = file_info["perms_unix_uid"]
-    if file_info["perms_acl_group"]:
+    if "perms_acl_group" in file_info:
         file_info["perms_group"] = file_info["perms_acl_group"]
         file_info["perms_group"].replace("gid:", "")
     else:
