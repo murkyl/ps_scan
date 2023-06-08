@@ -230,7 +230,7 @@ def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, sort=
         all_paths.append(az["path"].rstrip("/") + "/*")
     if sort:
         # If sort is set, sort the access zones by their name
-        filters = sorted(filters, key=lambda x: x["label"])
+        filters = sorted(filters, key=lambda x: x["label"].lower())
     if add_other:
         # Remove any duplicate entries in all_paths and sort them afterward
         all_paths = sorted(list(set([x for x in all_paths if x != "/ifs/*"])))
