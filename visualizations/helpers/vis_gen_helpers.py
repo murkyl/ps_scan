@@ -39,12 +39,43 @@ def _get_utc_now():
     return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f%Z")
 
 
-def clear_access_zone_filter(visState_dict):
-    pass
+def clear_access_zone_filter_ndjson(template_array):
+    ndjson = []
+    for line in template_array:
+        try:
+            json_data = json.loads(line)
+            if json_data.get("type") != "lens":
+                ndjson.append(line)
+                continue
+            # Update the lens state with a new set of filters
+            visState_dict = json_data["attributes"]["state"]
+            update_lens_access_zone_filter(visState_dict, [], add_other=False)
+            # Encode the updated dictionary into JSON
+            ndjson.append(json.dumps(json_data, sort_keys=True))
+        except Exception as e:
+            raise Exception("Exception generating access zone overview: {err}\n".format(err=traceback.format_exc()))
+            ndjson.append(line)
+    return ndjson
 
 
-def clear_vis_file_categories(visState_dict):
-    return update_vis_add_file_categories(visState_dict, {}, add_other=False)
+def clear_vis_file_categories_ndjson(template_array):
+    ndjson = []
+    for line in template_array:
+        try:
+            json_data = json.loads(line)
+            if json_data.get("type") != "visualization":
+                ndjson.append(line)
+                continue
+            # Update the visualization state embeded JSON with the categories in categories_dict
+            visState_dict = json.loads(json_data["attributes"]["visState"])
+            update_vis_add_file_categories(visState_dict, {}, add_other=False)
+            json_data["attributes"]["visState"] = json.dumps(visState_dict, sort_keys=True)
+            # Encode the updated dictionary into JSON
+            ndjson.append(json.dumps(json_data, sort_keys=True))
+        except Exception as e:
+            raise Exception("Exception generating file categories: {err}\n".format(err=traceback.format_exc()))
+            ndjson.append(line)
+    return ndjson
 
 
 def generate_access_zone_filter_ndjson(template_array):
@@ -60,7 +91,7 @@ def generate_access_zone_filter_ndjson(template_array):
             visState_dict = json_data["attributes"]["state"]
             update_lens_access_zone_filter(visState_dict, az_list)
             # Encode the updated dictionary into JSON
-            ndjson.append(json.dumps(json_data))
+            ndjson.append(json.dumps(json_data, sort_keys=True))
         except Exception as e:
             raise Exception("Exception generating access zone overview: {err}\n".format(err=traceback.format_exc()))
             ndjson.append(line)
@@ -78,9 +109,9 @@ def generate_file_category_ndjson(template_array, categories_dict):
             # Update the visualization state embeded JSON with the categories in categories_dict
             visState_dict = json.loads(json_data["attributes"]["visState"])
             update_vis_add_file_categories(visState_dict, categories_dict)
-            json_data["attributes"]["visState"] = json.dumps(visState_dict)
+            json_data["attributes"]["visState"] = json.dumps(visState_dict, sort_keys=True)
             # Encode the updated dictionary into JSON
-            ndjson.append(json.dumps(json_data))
+            ndjson.append(json.dumps(json_data, sort_keys=True))
         except Exception as e:
             raise Exception("Exception generating file categories: {err}\n".format(err=traceback.format_exc()))
             ndjson.append(line)
@@ -94,13 +125,18 @@ def get_dict_value_and_path(dict_obj, path):
         traversed, the list index will be returned in the path in the form ~<number>~.
 
     The path variable can be a string of the form "key1/key2/key3" or an array of keys like [key1, key2, key3]
-    The keys can be numeric, text, the special character '*', or the special string '*[<number>]'
+    The keys can be numeric, text, the special character '*', the special string '*[<number>]', or the special string
+        '=<string>'
     For the numeric and text keys, these are simply used to navigate down the object
     For the special character '*', this represents a wildcard and this will work on a part of the dictionary that is a
         list or a dictionary. It will try each list entry or dictionary key and try and return the first valid value
         that matches the remainder of the path.
     For the special string "*[<number>]" the method will assume that the object at that part of the path is a list and
         it will choose the index that is represented by the number between the square brackets.
+    For the special string "=<string>", the method will check if the string matches the value at that part in the
+        dictionary. If it matches then the method returns the value and the path else it will return the no match tuple.
+
+    If the method fails to find a matching path in the dictionary, the tuple (None, None) will be returned.
 
     Example string using a wildcard: /users/*/employed
     On the following dictionary object:
@@ -149,6 +185,10 @@ def get_dict_value_and_path(dict_obj, path):
             if val and found_path:
                 return val, path[0:i] + ["~%s~" % fixed_index] + found_path
             return None, None
+        elif re.match(r"=.*", path[i]):
+            if position == path[i][1:]:
+                return position, path
+            return None, None
         if path[i] not in position:
             return None, None
         last_idx = i
@@ -170,18 +210,13 @@ def get_ps_access_zone_list():
 
 def update_lens_access_zone_filter(visState_dict, az_list, add_other=True):
     value, path = get_dict_value_and_path(
-        # visState_dict, "datasourceStates/formBased/layers/*/columns/*/params/filters/*/input/query"
-        visState_dict,
-        "datasourceStates/formBased/layers/*/columns/*/operationType/=filters",
+        visState_dict, "datasourceStates/formBased/layers/*/columns/*/operationType/=filters"
     )
-    if not value or not path or "file_path" not in value:
-        if value and "file_path" not in value:
-            raise ValueError("Path found in dictionary but the value was not: file_path in the query portion")
-        raise ValueError("Could not find the input query section with a file_path argument in the passed in dictionary")
-    for i in range(len(path)):
-        if re.match(r"~\d+~", path[i]):
-            path = path[0 : i - 1]
-            break
+    if not value and not path:
+        raise ValueError('Could not find a section with "operationType=filters" in the passed in dictionary')
+    # Fix up the returned path and discard the last 2 parts and replace it with the section to perform the replacement
+    path = path[0:-2]
+    path.append("params")
     all_paths = []
     filters = []
     for az in az_list:
