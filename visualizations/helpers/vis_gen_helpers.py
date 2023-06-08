@@ -208,7 +208,7 @@ def get_ps_access_zone_list():
     return zone_list
 
 
-def update_lens_access_zone_filter(visState_dict, az_list, add_other=True):
+def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, sort=True):
     value, path = get_dict_value_and_path(
         visState_dict, "datasourceStates/formBased/layers/*/columns/*/operationType/=filters"
     )
@@ -224,9 +224,16 @@ def update_lens_access_zone_filter(visState_dict, az_list, add_other=True):
             "input": {"language": "kuery", "query": "file_path :{path}/*".format(path=az["path"].rstrip("/"))},
             "label": az["name"],
         }
+        if add_other and az["name"] == "System":
+            continue
         filters.append(entry)
         all_paths.append(az["path"].rstrip("/") + "/*")
+    if sort:
+        # If sort is set, sort the access zones by their name
+        filters = sorted(filters, key=lambda x: x["label"])
     if add_other:
+        # Remove any duplicate entries in all_paths and sort them afterward
+        all_paths = sorted(list(set([x for x in all_paths if x != "/ifs/*"])))
         entry = {
             "input": {
                 "language": "kuery",
