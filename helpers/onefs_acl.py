@@ -358,7 +358,7 @@ def perms_to_text_list(perms, detailed=True):
 
 def trustees_txt_to_aces(trustee_str):
     aces = []
-    if not trustee_str.startswith("::trustee:"):
+    if trustee_str and not trustee_str.startswith("::trustee:"):
         return aces
     trustee_list = trustee_str[10:].split("::trustee:")
     for trustee in trustee_list:
