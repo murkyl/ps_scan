@@ -163,7 +163,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                     dir_list.append(filename)
                     continue
                 result_list.append(file_info)
-                stats["file_size_total"] += fstats["di_size"]
+                stats["file_size_total"] += file_info["size"]
                 processed += 1
                 continue
             fstats = attr.get_dinode(fd)
@@ -343,12 +343,6 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
 def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE):
     full_path = os.path.join(root, filename)
     fstats = os.lstat(full_path)
-    try:
-        btime = fstats.st_birthtime
-        btime_date = datetime.date.fromtimestamp(fstats.st_btime).isoformat()
-    except:
-        btime = 0
-        btime_date = ""
     file_info = {
         # ========== Timestamps ==========
         "atime": fstats.st_atime,
@@ -377,6 +371,12 @@ def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE):
         # st_blocks includes metadata blocks
         "size_physical": block_unit * (int(fstats.st_blocks * STAT_BLOCK_SIZE / block_unit)),
     }
+    try:
+        file_info["btime"] = fstats.st_birthtime
+        file_info["btime_date"] = datetime.date.fromtimestamp(fstats.st_btime).isoformat()
+    except:
+        # No birthtime date so do not add those fields
+        pass
     if file_info["size"] == 0 and file_info["size_physical"] == 0:
         file_info["size_physical"] = file_info["size_logical"]
     return file_info
