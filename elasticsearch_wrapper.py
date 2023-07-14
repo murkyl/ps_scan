@@ -129,6 +129,7 @@ ES_INDEX_MAPPING = {
 ES_INDEX_SETTINGS = {
     "number_of_shards": 1,
     "max_regex_length": 4096,
+    "number_of_replicas": 0,
 }
 ES_REFERSH_INTERVAL = """{"index":{"refresh_interval":"%s"}}"""
 LOG = logging.getLogger(__name__)
@@ -220,6 +221,7 @@ def es_create_settings(options=None):
         return None
     new_settings = copy.deepcopy(ES_INDEX_SETTINGS)
     new_settings["number_of_shards"] = options.es_shards
+    new_settings["number_of_replicas"] = options.es_replicas
     return new_settings
 
 

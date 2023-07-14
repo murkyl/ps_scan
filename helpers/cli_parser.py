@@ -333,6 +333,15 @@ Default: %default
 """,
     )
     group.add_option(
+        "--es-replicas",
+        action="store",
+        type="int",
+        default=DEFAULT_ES_REPLICAS,
+        help="""Number of replications in Elasticsearch.
+Default: %default
+""",
+    )
+    group.add_option(
         "--es-threads",
         action="store",
         type="int",
