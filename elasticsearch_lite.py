@@ -14,6 +14,7 @@ __all__ = [
 # fmt: on
 import base64
 import json
+import ssl
 
 try:
     import http.client as http_conn
@@ -30,7 +31,10 @@ except:
 
 
 def get_basic_auth_header(user, password):
-    token = base64.b64encode("{u}:{p}".format(u=user, p=password)).encode("utf-8").decode("ascii")
+    user_pass_str = "{u}:{p}".format(u=user, p=password)
+    user_pass_str = user_pass_str.encode("ascii")
+    token = base64.b64encode(user_pass_str)
+    token = token.decode("ascii")
     return "Basic {t}".format(t=token)
 
 
@@ -65,7 +69,7 @@ class ElasticsearchLite:
     def connect(self):
         self.validate_options()
         if self.use_https:
-            self.conn = http_conn.HTTPSConnection(self.endpoint)
+            self.conn = http_conn.HTTPSConnection(self.endpoint, context = ssl._create_unverified_context())
         else:
             self.conn = http_conn.HTTPConnection(self.endpoint)
         auth_header = None
