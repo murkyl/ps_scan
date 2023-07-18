@@ -23,18 +23,20 @@ LOG = logging.getLogger(__name__)
 
 
 # TODO:
-# Improve decode_clients with support for node arrays like 1-3, 5, and also for decoding node types like hybrid nodes,
-# all flash nodes, avoiding A series nodes, and all nodes with memory of at least 64 GB
+# * Improve decode_clients with support for node arrays like 1-3, 5, and also for decoding node types like hybrid nodes,
+#   all flash nodes, avoiding A series nodes, and all nodes with memory of at least 64 GB
+# * Add support for SSH through the use of SSH keys or through screen capture of prompt
 class RemoteRun(object):
     def __init__(self, args={}):
-        self.remote_clients = {}
+        self.next_client_id = 0
         self.callback_function = args.get("callback", self.handle_callback)
         self.poll_timeout = args.get("poll_timeout", DEFAULT_PROC_POLL_TIMEOUT)
+        self.remote_clients = {}
         
     def _decode_clients(self, client_config):
         clients = []
         default = {}
-        for client in config:
+        for client in client_config:
             if client.get("type") == "default":
                 default = client
             else:
@@ -42,12 +44,16 @@ class RemoteRun(object):
         for client in clients:
             if default:
                 # Merge defaults into each client
-                pass
+                for key in default.keys():
+                    if not key in client:
+                        client[key] = default[key]
             # Perform additional client processing
-            pass
+            client["cmd"] = client.get("cmd", [])
+            if not isinstance(client["cmd"], list):
+                client["cmd"] = [client["cmd"]]
         return clients, default
 
-    def _threaded_client(self, client, event, default={}):
+    def _threaded_client(self, client, event, thread_id, default={}):
         cmd = client.get("cmd", default.get("cmd", []))
         code = 0
         endpoint = client.get("endpoint", default.get("endpoint"))
@@ -55,9 +61,9 @@ class RemoteRun(object):
         valid = True
         # Validate command
         if not valid:
-            self.callback_function(client, {"state": "invalid_params"})
+            self.callback_function(client, thread_id, {"state": "invalid_params"})
             return
-        self.callback_function(client, {"state": "start"})
+        self.callback_function(client, thread_id, {"state": "start"})
         # Execute command based on endpoint
         if client["type"] == "onefs":
             subproc = subprocess.Popen(
@@ -66,6 +72,7 @@ class RemoteRun(object):
                 stderr=subprocess.PIPE,
             )
         elif client["type"] == "ssh":
+            # TODO: Add support for SSH through the use of SSH keys or through screen capture of prompt
             pass
         # Wait for the process to terminate or for a signal to terminate
         valid = subproc.poll()
@@ -74,7 +81,8 @@ class RemoteRun(object):
             valid = subproc.poll()
         stdout, stderr = subproc.communicate()
         response = "\n".join([stdout, stderr])
-        self.callback_function(client, {"state": "end", "exit_code": code, "response": response})
+        self.callback_function(client, thread_id, {"state": "end", "exit_code": code, "response": response})
+        self.disconnect(thread_id)
 
     def connect(self, clients=[]):
         if not isinstance(clients, list):
@@ -83,21 +91,25 @@ class RemoteRun(object):
         working_list, default = self._decode_clients(clients)
         # Connect to each client
         for client in working_list:
-            event_handle = thread.event()
+            event_handle = threading.Event()
             thread_handle = threading.Thread(
                 target=self._threaded_client,
                 kwargs={
                     "client": client,
                     "default": default,
                     "event": event_handle,
+                    "thread_id": self.next_client_id,
                 }
             )
-        remote_clients[thread_handle] = {
-            "thread_handle": thread_handle,
-            "client": client,
-            "default": default,
-            "event": event_handle,
-        }
+            self.remote_clients[self.next_client_id] = {
+                "thread_handle": thread_handle,
+                "client": client,
+                "default": default,
+                "event": event_handle,
+            }
+            self.next_client_id += 1
+            thread_handle.start()
+        return self.get_client_list()
 
     def disconnect(self, client):
         remote_client = self.remote_clients.get(client)
@@ -108,9 +120,9 @@ class RemoteRun(object):
         return True
 
     def get_client_list(self):
-        return list(self.remote_clients().keys())
+        return list(self.remote_clients.keys())
 
-    def handle_callback(self, client, msg=None):
+    def handle_callback(self, client, client_id, msg=None):
         pass
 
     def shutdown(self):

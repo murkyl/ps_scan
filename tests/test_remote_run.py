@@ -34,17 +34,61 @@ def setup_logger():
 
 class TestRemoteRun(unittest.TestCase):
     def setUp(self):
-        print(dir(rr))
         if not os.path.isfile(rr.DEFAULT_ISI_FOR_ARRAY_BIN):
             self.skipTest("Could not find isi_for_array binary")
-        pass
+        self.last_msg = None
 
     def tearDown(self):
         pass
+        
+    def remote_callback(self, client, client_id, msg=None):
+        print("LOCAL CALLBACK (%s): %s\n"%(client_id, msg))
+        self.last_msg = msg
 
     # @unittest.skip("")
-    def test_01_uname_local_host(self):
-        pass
+    def test_01_hostname_local_host(self):
+        test_data = [
+          {
+              "type": "onefs",
+              "cmd": ["hostname"],
+              "endpoint": "1",
+          },
+        ]
+        test_obj = rr.RemoteRun()
+        test_obj.connect(test_data)
+        countdown = 50
+        client_list = True
+        while countdown > 0 and client_list:
+            client_list = test_obj.get_client_list()
+            time.sleep(1)
+            countdown -= 1
+        self.assertEqual(countdown > 0, True)
+        self.assertEqual(len(client_list), 0)
+        self.assertEqual(self.last_msg.get("state"), "end")
+
+    # @unittest.skip("")
+    def test_02_callback_with_cmd_default(self):
+        test_data = [
+          {
+              "type": "default",
+              "cmd": ["uname", "-a"],
+          },
+          {
+              "type": "onefs",
+              "endpoint": "1",
+          },
+        ]
+        test_obj = rr.RemoteRun({"callback": self.remote_callback})
+        test_obj.connect(test_data)
+        countdown = 50
+        client_list = True
+        while countdown > 0 and client_list:
+            client_list = test_obj.get_client_list()
+            time.sleep(1)
+            countdown -= 1
+        self.assertEqual(countdown > 0, True)
+        self.assertEqual(len(client_list), 0)
+        self.assertEqual(self.last_msg.get("state"), "end")
 
 
 if __name__ == "__main__":
