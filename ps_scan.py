@@ -38,6 +38,11 @@ except:
     pass
 
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s"
+DEFAULT_REMOTE_PORT = 49372
+DEFAULT_REMOTE_ADDR = "127.0.0.1"
+DEFAULT_SSL_ENABLED = False
+DEFAULT_POLL_INTERVAL = 0.25
+DEFAULT_POLL_LONG_INTERVAL = 2
 LOG = logging.getLogger("")
 
 
@@ -238,7 +243,7 @@ def subprocess(process_state, scan_paths, file_handler, options):
                     # Return the number of directory chunks we have queued for processing
                     conn_pipe.send([CMD_SEND_DIR_COUNT, cur_dir_q_size])
                 elif cmd == CMD_REQ_FILE_COUNT:
-                    # Return the number of directory chunks we have queued for processing
+                    # Return the number of files we have queued for processing
                     conn_pipe.send([CMD_SEND_FILE_COUNT, scanner.get_file_queue_size()])
                 else:
                     LOG.error("Unknown command received in process: {s}".format(s=cmd))
@@ -278,7 +283,11 @@ def subprocess(process_state, scan_paths, file_handler, options):
                 time.sleep(poll_interval)
                 es_send_q_time = now - send_start
                 if es_send_q_time > DEFAULT_SEND_Q_WAIT_TIME:
-                    LOG.info("Send Q was not empty after {time} seconds. Force quitting.".format(time=DEFAULT_SEND_Q_WAIT_TIME))
+                    LOG.info(
+                        "Send Q was not empty after {time} seconds. Force quitting.".format(
+                            time=DEFAULT_SEND_Q_WAIT_TIME
+                        )
+                    )
                     break
             LOG.debug("Sending exit command to send queue")
             for thread_handle in es_send_thread_handles:
@@ -394,90 +403,50 @@ def ps_scan(paths, options, file_handler):
                 readable, _, exceptional = select.select(select_handles, [], select_handles, 0.001)
             except IOError as ioe:
                 print(ioe)
-            if len(readable) > 0 or len(exceptional) > 0:
-                # LOG.critical("DEBUG: Got %d readable" % len(readable))
-                # A subprocess or remote process has sent us data
-                for conn in readable:
-                    if conn is server:
-                        connection, client_address = server.accept()
-                        LOG.critical("New connection from client %s, FD: %s" % (client_address, connection.fileno()))
-                        connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-                        select_handles.append(connection)
-                        remote_connections.append(connection)
+            # LOG.critical("DEBUG: Got %d readable" % len(readable))
+            # A subprocess or remote process has sent us data
+            for conn in readable:
+                if conn is server:
+                    connection, client_address = server.accept()
+                    LOG.debug(
+                        "New connection from client {addr}, FD: {fd}".format(
+                            addr=client_address, fd=connection.fileno()
+                        )
+                    )
+                    remote_client = RemoteSubscanner()
+
+                    # connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+                    # select_handles.append(connection)
+                    # remote_connections.append(connection)
+                    continue
+                # Find the subprocess state
+                proc = None
+                for x in process_states:
+                    if x["parent_conn"] == conn:
+                        proc = x
+                        break
+                if not proc:
+                    if conn not in remote_connections:
+                        LOG.exception(
+                            "Select returned readable but process state was not found for: {proc}".format(proc=conn)
+                        )
                         continue
-                    # Find the subprocess state
-                    proc = None
-                    for x in process_states:
-                        if x["parent_conn"] == conn:
-                            proc = x
-                            break
-                    if not proc:
-                        if conn not in remote_connections:
-                            LOG.exception(
-                                "Select returned readable but process state was not found for: {proc}".format(proc=conn)
-                            )
-                            continue
-                        # print("DEBUG: GOT SOCKET")
-                        data = conn.recv(1)
-                        # print("DEBUG: RAW DATA: %s" % data)
-                        continue
-                    # Read all commands from a given connection until it is empty
-                    while True:
-                        data_avail = proc["parent_conn"].poll(0.001)
-                        if not data_avail:
-                            break
-                        work_item = proc["parent_conn"].recv()
-                        cmd = work_item[0]
-                        LOG.debug("Process cmd received ({pid}): 0x{cmd:x}".format(pid=proc["id"], cmd=cmd))
-                        if cmd == CMD_EXIT:
-                            proc["status"] = "stopped"
-                        elif cmd == CMD_SEND_STATS:
-                            # LOG.critical("DEBUG: GOT STATS: %s" % work_item[1])
-                            proc["stats"] = work_item[1]
-                            proc["stats_time"] = now
-                        elif cmd == CMD_REQ_DIR:
-                            # A child process is requesting directories to process
-                            proc["want_data"] = now
-                            LOG.debug(
-                                (
-                                    "CMD: REQ_DIR - Process ({pid}) wants dirs."
-                                    "Has {dchunks}/{fchunks} dir/file chunks queued"
-                                ).format(
-                                    pid=proc["id"],
-                                    dchunks=work_item[1],
-                                    fchunks=work_item[2],
-                                )
-                            )
-                        elif cmd == CMD_SEND_DIR:
-                            dir_list.extend(work_item[1])
-                            proc["data_requested"] = 0
-                            proc["want_data"] = 0
-                        elif cmd == CMD_SEND_DIR_COUNT:
-                            proc["dir_count"] = work_item[1]
-                        elif cmd == CMD_STATUS_IDLE:
-                            proc["status"] = "idle"
-                            proc["want_data"] = now
-                        elif cmd == CMD_STATUS_RUN:
-                            proc["status"] = "running"
-                            proc["want_data"] = 0
-                    if proc["status"] == "idle":
-                        idle_proc += 1
-                for conn in exceptional:
-                    print("DEBUG: EXCEPTIONAL EVENT IN SELECT FOR CONN: %s" % conn)
-            """
-            for proc in process_states:
-                data_avail = True
-                # DEBUG: Change to a select call to handle sockets
-                while data_avail:
+                    # print("DEBUG: GOT SOCKET")
+                    data = conn.recv(1)
+                    # print("DEBUG: RAW DATA: %s" % data)
+                    continue
+                # Read all commands from a given connection until it is empty
+                while True:
                     data_avail = proc["parent_conn"].poll(0.001)
                     if not data_avail:
-                        continue
+                        break
                     work_item = proc["parent_conn"].recv()
                     cmd = work_item[0]
                     LOG.debug("Process cmd received ({pid}): 0x{cmd:x}".format(pid=proc["id"], cmd=cmd))
                     if cmd == CMD_EXIT:
                         proc["status"] = "stopped"
                     elif cmd == CMD_SEND_STATS:
+                        # LOG.critical("DEBUG: GOT STATS: %s" % work_item[1])
                         proc["stats"] = work_item[1]
                         proc["stats_time"] = now
                     elif cmd == CMD_REQ_DIR:
@@ -507,7 +476,8 @@ def ps_scan(paths, options, file_handler):
                         proc["want_data"] = 0
                 if proc["status"] == "idle":
                     idle_proc += 1
-            """
+            for conn in exceptional:
+                LOG.critical("Exceptional event occurred in select call for: %s" % conn)
             # Output statistics
             #   The -1 is for a 1 second offset to allow time for stats to come from processes
             cur_stats_count = (now - start_wall - 1) // stats_output_interval
