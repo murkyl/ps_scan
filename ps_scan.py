@@ -57,15 +57,14 @@ def handler_signal_usr1(signum, frame):
 def print_interim_statistics(stats, now, start, fps_window, interval):
     sys.stdout.write(
         """{ts} - Statistics:
-    Current run time (s): {runtime:d}
-    FPS in the last (2, 5, 10) intervals: {fpsw1:0.1f} - {fpsw2:0.1f} - {fpsw3:0.1f}
-    FPS: {fps:0.1f}
-    Total file bytes processed: {f_bytes}
-    Files (Processed/Queued/Skipped): {f_proc}/{f_queued}/{f_skip}
-    File Q Size/Handler time: {f_q_size}/{f_h_time:0.1f}
-    Dir scan time: {d_scan:0.1f}
-    Dirs (Processed/Queued/Skipped): {d_proc}/{d_queued}/{d_skip}
-    Dir Q Size/Handler time: {d_q_size}/{d_h_time:0.1f}
+    Current run time (s): {runtime:,d}
+    FPS overall / recent (2, 5, 10) intervals: {fps:,.1f} / {fpsw1:,.1f} - {fpsw2:,.1f} - {fpsw3:,.1f}
+    Total file bytes processed: {f_bytes:,d}
+    Files (Processed/Queued/Skipped): {f_proc:,d}/{f_queued:,d}/{f_skip:,d}
+    File Q Size/Handler time: {f_q_size:,d}/{f_h_time:,.1f}
+    Dir scan time: {d_scan:,.1f}
+    Dirs (Processed/Queued/Skipped): {d_proc:,d}/{d_queued:,d}/{d_skip:,d}
+    Dir Q Size/Handler time: {d_q_size:,d}/{d_h_time:,.1f}
 """.format(
             d_proc=stats.get("dirs_processed", 0),
             d_h_time=stats.get("dir_handler_time", 0),
@@ -92,13 +91,13 @@ def print_interim_statistics(stats, now, start, fps_window, interval):
 def print_final_statistics(stats, num_threads, wall_time, es_time):
     sys.stdout.write(
         """Final statistics
-    Wall time (s): {wall_tm:.2f}
-    Average Q wait time (s): {avg_q_tm:.2f}
-    Total time spent in dir/file handler routines across all threads (s): {dht:.2f}/{fht:.2f}
-    Processed/Queued/Skipped dirs: {p_dirs}/{q_dirs}/{s_dirs}
-    Processed/Queued/Skipped files: {p_files}/{q_files}/{s_files}
-    Total file size: {fsize}
-    Avg files/second: {a_fps}
+    Wall time (s): {wall_tm:,.2f}
+    Average Q wait time (s): {avg_q_tm:,.2f}
+    Total time spent in dir/file handler routines across all threads (s): {dht:,.2f}/{fht:,.2f}
+    Processed/Queued/Skipped dirs: {p_dirs:,d}/{q_dirs:,d}/{s_dirs:,d}
+    Processed/Queued/Skipped files: {p_files:,d}/{q_files:,d}/{s_files:,d}
+    Total file size: {fsize:,d}
+    Avg files/second: {a_fps:,.1f}
 """.format(
             wall_tm=wall_time,
             avg_q_tm=stats["q_wait_time"] / num_threads,
@@ -224,29 +223,58 @@ def subprocess(process_state, scan_paths, file_handler, options):
                 cmd = work_item[0]
                 if cmd == CMD_EXIT:
                     scanner.terminate()
+                    LOG.debug(
+                        "{cmd}: Process exit requested.".format(
+                            cmd=CMD_TXT_STR[cmd],
+                        )
+                    )
                     break
                 elif cmd == CMD_SEND_DIR:
                     # Parent process has sent directories to process
-                    LOG.debug("CMD: SEND_DIR - Got {num} dirs to process".format(num=len(work_item[1])))
                     process_state["status"] = "running"
                     process_state["want_data"] = 0
                     scanner.add_scan_path(work_item[1])
                     conn_pipe.send([CMD_STATUS_RUN, 0])
                     # Update our current queue size
                     cur_dir_q_size = scanner.get_dir_queue_size()
+                    LOG.debug(
+                        "{cmd}: Received {count} work items to process".format(
+                            cmd=CMD_TXT_STR[cmd],
+                            count=len(work_item[1]),
+                        )
+                    )
                 elif cmd == CMD_REQ_DIR:
                     # Need to return some directories if possible
                     dir_list = scanner.get_dir_queue_items(percentage=work_item[1])
                     if dir_list:
                         conn_pipe.send([CMD_SEND_DIR, dir_list, now])
+                    LOG.debug(
+                        "{cmd}: Asked to return work items. Returning {count} items.".format(
+                            cmd=CMD_TXT_STR[cmd],
+                            count=len(dir_list),
+                        )
+                    )
                 elif cmd == CMD_REQ_DIR_COUNT:
                     # Return the number of directory chunks we have queued for processing
                     conn_pipe.send([CMD_SEND_DIR_COUNT, cur_dir_q_size])
+                    LOG.debug(
+                        "{cmd}: Returning directory queue size of {count}".format(
+                            cmd=CMD_TXT_STR[cmd],
+                            count=cur_dir_q_size,
+                        )
+                    )
                 elif cmd == CMD_REQ_FILE_COUNT:
                     # Return the number of files we have queued for processing
-                    conn_pipe.send([CMD_SEND_FILE_COUNT, scanner.get_file_queue_size()])
+                    cur_file_q_size = scanner.get_file_queue_size()
+                    conn_pipe.send([CMD_SEND_FILE_COUNT, cur_file_q_size])
+                    LOG.debug(
+                        "{cmd}: Returning file queue size of {count}".format(
+                            cmd=CMD_TXT_STR[cmd],
+                            count=cur_file_q_size,
+                        )
+                    )
                 else:
-                    LOG.error("Unknown command received in process: {s}".format(s=cmd))
+                    LOG.error("Unknown command received: {cmd}".format(cmd=cmd))
             # Determine if we should send a statistics update
             cur_stats_count = (now - start_wall) // stats_output_interval
             if cur_stats_count > stats_output_count:
@@ -383,6 +411,8 @@ def ps_scan(paths, options, file_handler):
     #   * Check for any commands from the sub processes
     #   * Output statistics
     #   * Check if we should exit
+    #   * Distribute any work we have accumulated to any waiting sub processes
+    #   * Ask sub processes to return work
     dir_list = []
     continue_running = True
     readable = []
@@ -396,15 +426,19 @@ def ps_scan(paths, options, file_handler):
             # desired poll interval and wait in select for that amount of time
             # Each loop needs to calculate the correct select wait time to get a
             # multiple of the poll interval
+            #
+            # DEBUG: TODO: May need a more comprehensive state machine system for the
+            # sub processes. Instead of simple flags, we may need to, in addition, save
+            # state like the process is IDLE, but we sent it data, so ignore state updates
+            # from the sub process until we get a "RUNNING" state update, then allow it to
+            # ask for data again.
 
             # Check if there are any commands coming from the sub processes
-            idle_proc = 0
             try:
                 readable, _, exceptional = select.select(select_handles, [], select_handles, 0.001)
             except IOError as ioe:
                 print(ioe)
-            # LOG.critical("DEBUG: Got %d readable" % len(readable))
-            # A subprocess or remote process has sent us data
+            # A sub process or remote process has sent us data
             for conn in readable:
                 if conn is server:
                     connection, client_address = server.accept()
@@ -413,11 +447,9 @@ def ps_scan(paths, options, file_handler):
                             addr=client_address, fd=connection.fileno()
                         )
                     )
-                    remote_client = RemoteSubscanner()
-
-                    # connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-                    # select_handles.append(connection)
-                    # remote_connections.append(connection)
+                    connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+                    select_handles.append(connection)
+                    remote_connections.append(connection)
                     continue
                 # Find the subprocess state
                 proc = None
@@ -442,42 +474,79 @@ def ps_scan(paths, options, file_handler):
                         break
                     work_item = proc["parent_conn"].recv()
                     cmd = work_item[0]
-                    LOG.debug("Process cmd received ({pid}): 0x{cmd:x}".format(pid=proc["id"], cmd=cmd))
                     if cmd == CMD_EXIT:
                         proc["status"] = "stopped"
+                        LOG.debug(
+                            "{cmd} - ({pid}): Process STOPPING".format(
+                                pid=proc["id"],
+                                cmd=CMD_TXT_STR[cmd],
+                            )
+                        )
                     elif cmd == CMD_SEND_STATS:
-                        # LOG.critical("DEBUG: GOT STATS: %s" % work_item[1])
                         proc["stats"] = work_item[1]
                         proc["stats_time"] = now
+                        LOG.debug(
+                            "{cmd} - ({pid}): {data}".format(
+                                pid=proc["id"],
+                                cmd=CMD_TXT_STR[cmd],
+                                data=work_item[1],
+                            )
+                        )
                     elif cmd == CMD_REQ_DIR:
                         # A child process is requesting directories to process
                         proc["want_data"] = now
                         LOG.debug(
                             (
-                                "CMD: REQ_DIR - Process ({pid}) wants dirs."
-                                "Has {dchunks}/{fchunks} dir/file chunks queued"
+                                "{cmd} - ({pid}) Process wants work." " Has {dchunks}/{fchunks} dir/file chunks queued"
                             ).format(
-                                pid=proc["id"],
+                                cmd=CMD_TXT_STR[cmd],
                                 dchunks=work_item[1],
                                 fchunks=work_item[2],
+                                pid=proc["id"],
                             )
                         )
                     elif cmd == CMD_SEND_DIR:
                         dir_list.extend(work_item[1])
                         proc["data_requested"] = 0
                         proc["want_data"] = 0
+                        LOG.debug(
+                            "{cmd} - ({pid}): Sent {count} work items".format(
+                                cmd=CMD_TXT_STR[cmd],
+                                count=len(work_item[1]),
+                                pid=proc["id"],
+                            )
+                        )
                     elif cmd == CMD_SEND_DIR_COUNT:
                         proc["dir_count"] = work_item[1]
+                        LOG.debug(
+                            "{cmd} - ({pid}): Has {count} dirs queued.".format(
+                                cmd=CMD_TXT_STR[cmd],
+                                count=work_item[1],
+                                pid=proc["id"],
+                            )
+                        )
                     elif cmd == CMD_STATUS_IDLE:
                         proc["status"] = "idle"
                         proc["want_data"] = now
+                        LOG.debug(
+                            "{cmd} - ({pid}): Status IDLE".format(
+                                cmd=CMD_TXT_STR[cmd],
+                                pid=proc["id"],
+                            )
+                        )
                     elif cmd == CMD_STATUS_RUN:
                         proc["status"] = "running"
                         proc["want_data"] = 0
-                if proc["status"] == "idle":
-                    idle_proc += 1
+                        LOG.debug(
+                            "{cmd} - ({pid}): Status RUNNING".format(
+                                cmd=CMD_TXT_STR[cmd],
+                                pid=proc["id"],
+                            )
+                        )
+                    else:
+                        LOG.error("Unknown command received ({pid}): {cmd}".format(cmd=cmd, pid=proc["id"]))
             for conn in exceptional:
-                LOG.critical("Exceptional event occurred in select call for: %s" % conn)
+                LOG.error("Exceptional event occurred in select call for: %s" % conn)
             # Output statistics
             #   The -1 is for a 1 second offset to allow time for stats to come from processes
             cur_stats_count = (now - start_wall - 1) // stats_output_interval
@@ -494,35 +563,37 @@ def ps_scan(paths, options, file_handler):
                     options.stats_interval,
                 )
                 stats_output_count = cur_stats_count
-            # Check if we should exit
+            # Check all our process states to gather which are idle, which have work dirs, and which want work
             continue_running = False
-            for proc in process_states:
-                if proc["status"] != "stopped":
-                    continue_running = True
-                    break
-            # Check if we can terminate all the scanner processes
-            if idle_proc == num_procs:
-                # All sub processes are idle so we can quit the scanner
-                for proc in process_states:
-                    if proc["status"] != "exiting":
-                        proc["parent_conn"].send([CMD_EXIT, 0])
-                        proc["status"] = "exiting"
-                # Skip any further processing and just wait for processes to end
-                continue
-            # Check if we need to request or send any directories to existing processes
-            want_work_procs = []
+            idle_procs = 0
             have_dirs_procs = []
+            want_work_procs = []
             for proc in process_states:
+                if not continue_running and proc["status"] != "stopped":
+                    continue_running = True
+                if proc["status"] == "idle":
+                    idle_procs += 1
+                # Check if we need to request or send any directories to existing processes
                 if proc["want_data"]:
                     want_work_procs.append(proc)
                 # Any processes that have directories and did not request work in the last second
                 # will be put on a queue to ask for directories to process
                 if proc["dir_count"] and (not proc["want_data"] or proc["want_data"] > (now + 1)):
                     have_dirs_procs.append(proc)
+            # If all sub-processes are idle we can terminate all the scanner processes
+            if idle_procs == num_procs:
+                for proc in process_states:
+                    if proc["status"] != "exiting":
+                        proc["parent_conn"].send([CMD_EXIT, 0])
+                        proc["status"] = "exiting"
+                # Skip any further processing and just wait for processes to end
+                continue
+            # Send out our directories to all processes that want work if we have work to send
             if want_work_procs and dir_list:
-                # Send out our directories to all processes that want work evenly
-                want_work_count = len(want_work_procs)
-                increment = len(dir_list) // want_work_count + 1 * (len(dir_list) % want_work_count != 0)
+                got_work_procs = []
+                len_dir_list = len(dir_list)
+                len_want_work_procs = len(want_work_procs)
+                increment = (len_dir_list // len_want_work_procs) + (1 * (len_dir_list % len_want_work_procs != 0))
                 index = 0
                 for proc in want_work_procs:
                     work_dirs = dir_list[index : index + increment]
@@ -531,16 +602,22 @@ def ps_scan(paths, options, file_handler):
                     proc["parent_conn"].send([CMD_SEND_DIR, work_dirs])
                     proc["want_data"] = 0
                     index += increment
+                    got_work_procs.append(proc)
+                # Remove from the want_work_procs list, any process that got work sent to it
+                for proc in got_work_procs:
                     want_work_procs.remove(proc)
-                    dir_list = []
+                # Clear the dir_list variable now since we have sent all our work out
+                dir_list = []
+            # If processes want work and we know some processes have work, request those processes to return work
             if want_work_procs and have_dirs_procs:
+                LOG.debug("DEBUG: WANT WORK PROCS & HAVE DIR PROCS")
                 for proc in have_dirs_procs:
+                    LOG.debug("DEBUG: PROC: %s has dirs, evaluating if we should send message" % proc)
                     # Limit the number of times we request data from each process to request_work_interval seconds
                     if (now - proc["data_requested"]) > request_work_interval:
+                        LOG.debug("DEBUG: ACTUALLY SENDING CMD_REQ_DIR to proc: %s" % proc)
                         proc["parent_conn"].send([CMD_REQ_DIR, request_work_dirq_percentage])
                         proc["data_requested"] = now
-            # Sleep for a short interval to slow down polling
-            time.sleep(poll_interval)
         except KeyboardInterrupt as kbe:
             sys.stderr.write("Termination signal received. Sending exit commands to subprocesses.\n")
             for proc in process_states:
