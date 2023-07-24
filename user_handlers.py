@@ -149,22 +149,28 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             fd = None
             try:
                 fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
+            except FileNotFoundError:
+                LOG.debug("File %s is not found." %(full_path))
+                continue
             except Exception as e:
-                LOG.debug("Standard os.open failed, falling back to os.lstat for: %s" % full_path)
-                file_info = get_file_stat(root, filename, IFS_BLOCK_SIZE)
-                if custom_tagging:
-                    file_info["user_tags"] = custom_tagging(file_info)
-                if file_info["file_type"] == "dir":
-                    file_info["_scan_time"] = now
-                    result_dir_list.append(file_info)
-                    # Fix size issues with dirs
-                    file_info["size_logical"] = 0
-                    # Save directories to re-queue
-                    dir_list.append(filename)
+                if e.errno == 45:
+                    LOG.debug("File %s is not allowed to call os.open, use os.lstat instead." % full_path)
+                    file_info = get_file_stat(root, filename, IFS_BLOCK_SIZE)
+                    if custom_tagging:
+                        file_info["user_tags"] = custom_tagging(file_info)
+                    if file_info["file_type"] == "dir":
+                        file_info["_scan_time"] = now
+                        result_dir_list.append(file_info)
+                        # Fix size issues with dirs
+                        file_info["size_logical"] = 0
+                        # Save directories to re-queue
+                        dir_list.append(filename)
+                        continue
+                    result_list.append(file_info)
+                    stats["file_size_total"] += file_info["size"]
+                    processed += 1
                     continue
-                result_list.append(file_info)
-                stats["file_size_total"] += file_info["size"]
-                processed += 1
+                LOG.exception("Error found when calling os.open on %s. Error: %s" %(full_path, str(e)))
                 continue
             fstats = attr.get_dinode(fd)
             # atime call can return empty if the file does not have an atime or atime tracking is disabled
@@ -347,8 +353,8 @@ def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE):
         # ========== Timestamps ==========
         "atime": fstats.st_atime,
         "atime_date": datetime.date.fromtimestamp(fstats.st_atime).isoformat(),
-        "btime": btime,
-        "btime_date": btime_date,
+        "btime": None,
+        "btime_date": None,
         "ctime": fstats.st_ctime,
         "ctime_date": datetime.date.fromtimestamp(fstats.st_ctime).isoformat(),
         "mtime": fstats.st_mtime,
