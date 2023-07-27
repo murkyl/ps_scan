@@ -60,11 +60,11 @@ def print_interim_statistics(stats, now, start, fps_window, interval):
     Current run time (s): {runtime:,d}
     FPS overall / recent (2, 5, 10) intervals: {fps:,.1f} / {fpsw1:,.1f} - {fpsw2:,.1f} - {fpsw3:,.1f}
     Total file bytes processed: {f_bytes:,d}
-    Files (Processed/Queued/Skipped): {f_proc:,d}/{f_queued:,d}/{f_skip:,d}
-    File Q Size/Handler time: {f_q_size:,d}/{f_h_time:,.1f}
+    Files (Processed/Queued/Skipped): {f_proc:,d} / {f_queued:,d} / {f_skip:,d}
+    File Q Size/Handler time: {f_q_size:,d} / {f_h_time:,.1f}
     Dir scan time: {d_scan:,.1f}
-    Dirs (Processed/Queued/Skipped): {d_proc:,d}/{d_queued:,d}/{d_skip:,d}
-    Dir Q Size/Handler time: {d_q_size:,d}/{d_h_time:,.1f}
+    Dirs (Processed/Queued/Skipped): {d_proc:,d} / {d_queued:,d} / {d_skip:,d}
+    Dir Q Size/Handler time: {d_q_size:,d} / {d_h_time:,.1f}
 """.format(
             d_proc=stats.get("dirs_processed", 0),
             d_h_time=stats.get("dir_handler_time", 0),
@@ -93,9 +93,9 @@ def print_final_statistics(stats, num_threads, wall_time, es_time):
         """Final statistics
     Wall time (s): {wall_tm:,.2f}
     Average Q wait time (s): {avg_q_tm:,.2f}
-    Total time spent in dir/file handler routines across all threads (s): {dht:,.2f}/{fht:,.2f}
-    Processed/Queued/Skipped dirs: {p_dirs:,d}/{q_dirs:,d}/{s_dirs:,d}
-    Processed/Queued/Skipped files: {p_files:,d}/{q_files:,d}/{s_files:,d}
+    Total time spent in dir/file handler routines across all threads (s): {dht:,.2f} / {fht:,.2f}
+    Processed/Queued/Skipped dirs: {p_dirs:,d} / {q_dirs:,d} / {s_dirs:,d}
+    Processed/Queued/Skipped files: {p_files:,d} / {q_files:,d} / {s_files:,d}
     Total file size: {fsize:,d}
     Avg files/second: {a_fps:,.1f}
 """.format(
@@ -286,7 +286,7 @@ def subprocess(process_state, scan_paths, file_handler, options):
                 dir_output_count = cur_dir_count
                 conn_pipe.send([CMD_SEND_DIR_COUNT, cur_dir_q_size])
             # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
-            if (cur_dir_q_size < DEFAULT_LOW_DIR_Q_THRESHOLD) and (
+            if (cur_dir_q_size == 0) and (
                 now - process_state["want_data"] > dir_request_interval
             ):
                 process_state["want_data"] = now
@@ -381,7 +381,7 @@ def ps_scan(paths, options, file_handler):
             "child_conn": child_conn,
             "threads": threads_for_process,
             "want_data": time.time(),
-            "data_requested": 0,
+            "sent_data": 0,
         }
         proc_handle = mp.Process(
             target=subprocess,
@@ -507,7 +507,7 @@ def ps_scan(paths, options, file_handler):
                         )
                     elif cmd == CMD_SEND_DIR:
                         dir_list.extend(work_item[1])
-                        proc["data_requested"] = 0
+                        proc["sent_data"] = 0
                         proc["want_data"] = 0
                         LOG.debug(
                             "{cmd} - ({pid}): Sent {count} work items".format(
@@ -580,6 +580,9 @@ def ps_scan(paths, options, file_handler):
                 # will be put on a queue to ask for directories to process
                 if proc["dir_count"] and (not proc["want_data"] or proc["want_data"] > (now + 1)):
                     have_dirs_procs.append(proc)
+            # DEBUG: Remove for production!
+            log.DEBUG("Want work processes: {proc}".format(proc=want_work_procs))
+            # DEBUG: END
             # If all sub-processes are idle we can terminate all the scanner processes
             if idle_procs == num_procs:
                 for proc in process_states:
@@ -614,10 +617,10 @@ def ps_scan(paths, options, file_handler):
                 for proc in have_dirs_procs:
                     LOG.debug("DEBUG: PROC: %s has dirs, evaluating if we should send message" % proc)
                     # Limit the number of times we request data from each process to request_work_interval seconds
-                    if (now - proc["data_requested"]) > request_work_interval:
+                    if (now - proc["sent_data"]) > request_work_interval:
                         LOG.debug("DEBUG: ACTUALLY SENDING CMD_REQ_DIR to proc: %s" % proc)
                         proc["parent_conn"].send([CMD_REQ_DIR, request_work_dirq_percentage])
-                        proc["data_requested"] = now
+                        proc["sent_data"] = now
         except KeyboardInterrupt as kbe:
             sys.stderr.write("Termination signal received. Sending exit commands to subprocesses.\n")
             for proc in process_states:
