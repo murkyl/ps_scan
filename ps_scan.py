@@ -280,6 +280,8 @@ def subprocess(process_state, scan_paths, file_handler, options):
             if cur_stats_count > stats_output_count:
                 stats_output_count = cur_stats_count
                 conn_pipe.send([CMD_SEND_STATS, scanner.get_stats()])
+                # DEBUG: Remove in production
+                LOG.debug("LOCAL STATS: %s"%scanner.get_stats())
             # Determine if we should send a directory queue count update
             cur_dir_count = (now - start_wall) // dir_output_interval
             if cur_dir_count > dir_output_count:
@@ -581,7 +583,7 @@ def ps_scan(paths, options, file_handler):
                 if proc["dir_count"] and (not proc["want_data"] or proc["want_data"] > (now + 1)):
                     have_dirs_procs.append(proc)
             # DEBUG: Remove for production!
-            log.DEBUG("Want work processes: {proc}".format(proc=want_work_procs))
+            LOG.debug("Want work processes: {proc}".format(proc=want_work_procs))
             # DEBUG: END
             # If all sub-processes are idle we can terminate all the scanner processes
             if idle_procs == num_procs:
