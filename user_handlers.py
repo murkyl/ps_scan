@@ -181,9 +181,10 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 # If atime does not exist, use the last metadata change time as this captures the last time someone
                 # modified either the data or the inode of the file
                 atime = fstats["di_ctime"]
+            di_data_blocks = fstats.get("di_data_blocks", fstats["di_physical_blocks"] - fstats["di_protection_blocks"])
             logical_blocks = fstats["di_logical_size"] // phys_block_size
             comp_blocks = logical_blocks - fstats["di_shadow_refs"]
-            compressed_file = True if (fstats["di_data_blocks"] and comp_blocks) else False
+            compressed_file = True if (di_data_blocks and comp_blocks) else False
             stubbed_file = (fstats["di_flags"] & IFLAG_COMBO_STUBBED) > 0
             file_info = {
                 # ========== Timestamps ==========
@@ -201,10 +202,10 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 "file_ext": os.path.splitext(filename)[1],
                 # ========== File attributes ==========
                 "file_access_pattern": ACCESS_PATTERN[fstats["di_la_pattern"]],
-                "file_compression_ratio": comp_blocks / fstats["di_data_blocks"] if compressed_file else 1,
+                "file_compression_ratio": comp_blocks / di_data_blocks if compressed_file else 1,
                 "file_hard_links": fstats["di_nlink"],
                 "file_is_ads": ((fstats["di_flags"] & IFLAGS_UF_HASADS) != 0),
-                "file_is_compressed": (comp_blocks > fstats["di_data_blocks"]) if compressed_file else False,
+                "file_is_compressed": (comp_blocks > di_data_blocks) if compressed_file else False,
                 "file_is_dedupe_disabled": not not fstats["di_no_dedupe"],
                 "file_is_deduped": (fstats["di_shadow_refs"] > 0),
                 "file_is_inlined": (
@@ -244,7 +245,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 # Physical size on disk including protection overhead, including extension blocks and excluding metadata
                 "size_physical": fstats["di_physical_blocks"] * phys_block_size,
                 # Physical size on disk excluding protection overhead and excluding metadata
-                "size_physical_data": fstats["di_data_blocks"] * phys_block_size,
+                "size_physical_data": di_data_blocks * phys_block_size,
                 # Physical size on disk of the protection overhead
                 "size_protection": fstats["di_protection_blocks"] * phys_block_size,
                 # ========== SSD usage ==========
