@@ -32,19 +32,19 @@ ES_INDEX_MAPPING = {
     "properties": {
         # ========== Timestamps ==========
         # Time when this entry was scanned
-        "_scan_time": {"type": "long"},
+        "_scan_time": {"type": "date", "format": "epoch_second||date_optional_time"},
         # Last access time of the file both in fractional seconds and YYYY-mm-DD format
-        "atime": {"type": "long"},
-        "atime_date": {"type": "date", "format": "yyyy-MM-dd"},
+        "atime": {"type": "date", "format": "epoch_second||date_optional_time"},
+        "atime_date": {"type": "date", "format": "date_optional_time||epoch_second"},
         # Birth/creation time of the file both in fractional seconds and YYYY-mm-DD format
-        "btime": {"type": "long"},
-        "btime_date": {"type": "date", "format": "yyyy-MM-dd"},
+        "btime": {"type": "date", "format": "epoch_second||date_optional_time"},
+        "btime_date": {"type": "date", "format": "date_optional_time||epoch_second"},
         # Last metadata change time of the file both in fractional seconds and YYYY-mm-DD format
-        "ctime": {"type": "long"},
-        "ctime_date": {"type": "date", "format": "yyyy-MM-dd"},
+        "ctime": {"type": "date", "format": "epoch_second||date_optional_time"},
+        "ctime_date": {"type": "date", "format": "date_optional_time||epoch_second"},
         # Last data modified time of the file both in fractional seconds and YYYY-mm-DD format
-        "mtime": {"type": "long"},
-        "mtime_date": {"type": "date", "format": "yyyy-MM-dd"},
+        "mtime": {"type": "date", "format": "epoch_second||date_optional_time"},
+        "mtime_date": {"type": "date", "format": "date_optional_time||epoch_second"},
         # ========== File and path strings ==========
         # Parent directory of the file
         "file_path": {"type": "keyword"},
