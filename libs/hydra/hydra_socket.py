@@ -8,7 +8,6 @@ __email__      = "Andrew.Chung@dell.com"
 __credits__    = []
 __copyright__  = """"""
 __all__        = [
-    "CMD_MSG_SOCKET_CLOSED",
     "HydraSocket",
 ]
 # fmt: on
@@ -23,7 +22,7 @@ import struct
 import threading
 import time
 
-from hydra_const import *
+from .hydra_const import *
 
 try:
     dir(ConnectionResetError)
@@ -31,7 +30,6 @@ except:
     class ConnectionResetError(Exception):
         pass
 
-CMD_MSG_SOCKET_CLOSED = {"type": "cmd", "cmd": "closed"}
 LOG = logging.getLogger(__name__)
 
 

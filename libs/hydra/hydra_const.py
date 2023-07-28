@@ -11,6 +11,8 @@ __copyright__ = """"""
 
 import struct
 
+CMD_MSG_SOCKET_CLOSED = {"type": "cmd", "cmd": "closed"}
+
 DEFAULT_ASYNC_SERVER = False
 DEFAULT_BIND_ADDR = "0.0.0.0"
 DEFAULT_CHUNK_SIZE = 131072

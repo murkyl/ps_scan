@@ -19,8 +19,8 @@ import socket
 import threading
 
 
-from hydra_const import *
-from hydra_socket import *
+from .hydra_const import *
+from .hydra_socket import HydraSocket
 
 LOG = logging.getLogger(__name__)
 
