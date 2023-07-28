@@ -582,8 +582,6 @@ def ps_scan(paths, options, file_handler):
                 # will be put on a queue to ask for directories to process
                 if proc["dir_count"] and (not proc["want_data"] or proc["want_data"] > (now + 1)):
                     have_dirs_procs.append(proc)
-            # DEBUG: Remove for production!
-            LOG.debug("Want work processes: {proc}".format(proc=want_work_procs))
             # DEBUG: END
             # If all sub-processes are idle we can terminate all the scanner processes
             if idle_procs == num_procs:
