@@ -13,6 +13,7 @@ __all__        = [
 ]
 # fmt: on
 
+import errno
 import logging
 import multiprocessing as mp
 import pickle
@@ -23,6 +24,12 @@ import threading
 import time
 
 from hydra_const import *
+
+try:
+    dir(ConnectionResetError)
+except:
+    class ConnectionResetError(Exception):
+        pass
 
 CMD_MSG_SOCKET_CLOSED = {"type": "cmd", "cmd": "closed"}
 LOG = logging.getLogger(__name__)
@@ -81,6 +88,16 @@ class HydraSocket(object):
         self.wait_list = [self.pipe_local]
         self.wait_flush = mp.Event()
 
+    def _get_socket_fd(self):
+        try:
+            return self.remote_socket.fileno()
+        except Exception as e:
+            if e.errno not in (errno.EBADF,):
+                # 9: Bad file descriptor
+                LOG.error("Unknown exception when checking for socket fileno: {err}".format(err=e))
+            # Python 2.7 doesn't support fileno() on closed sockets. Return -1 like Python 3
+            return -1
+
     def _send_keepalive(self):
         if (time.time() - self.last_keepalive_sent) > self.keep_alive_interval:
             LOG.debug("Sending keepalive to remote")
@@ -88,7 +105,7 @@ class HydraSocket(object):
             self.last_keepalive_sent = time.time()
 
     def _socket_recv(self, socket, length, chunk=DEFAULT_CHUNK_SIZE, raw=False):
-        if not socket or socket.fileno() == -1:
+        if not socket or self._get_socket_fd() == -1:
             raise EOFError("_socket_recv trying to read from closed socket: {sock}".format(sock=socket))
         data = bytearray(length)
         view = memoryview(data)
@@ -146,11 +163,11 @@ class HydraSocket(object):
             return False
         self.wait_list.append(self.remote_socket)
         self.last_keepalive_sent = time.time()
-        self.thread_handler = threading.Thread(target=self._thread_processor, kwargs={})
+        self.thread_handler = threading.Thread(target=self._socket_processor, kwargs={})
         self.thread_handler.start()
         return True
 
-    def _thread_processor(self):
+    def _socket_processor(self):
         try:
             while not self.thread_shutdown:
                 # Send a keepalive message to the remote side if necessary
@@ -195,12 +212,12 @@ class HydraSocket(object):
                     LOG.debug("Select returned an exception list")
                     break
         except IOError as ioe:
-            if ioe.errno in (9,):
+            if ioe.errno in (errno.EBADF,):
                 # 9: Bad file descriptor
                 LOG.debug("Socket closed while waiting in select")
-            elif ioe.errno in (32, 54, 104, 107):
+            elif ioe.errno in (errno.EPIPE, errno.EXFULL, errno.ECONNRESET, errno.ENOTCONN):
                 # 32: Broken pipe
-                # 54: Connection reset by peer
+                # 54: Exchange full
                 # 104: Connection reset by peer
                 # 107: Transport not connected
                 LOG.debug("Connection closed for: {sock} - {err}".format(err=ioe, sock=self.remote_socket))
@@ -211,8 +228,12 @@ class HydraSocket(object):
         except ConnectionResetError as cre:
             LOG.debug("Socket connection reset for: {sock} - {err}".format(err=cre, sock=self.remote_socket))
         except Exception as e:
-            LOG.exception("Unexpected exception occurred in _thread_processor: {err}".format(err=e))
-        LOG.debug("_thread_processor exiting")
+            if e.errno == errno.ECONNRESET:
+                # 104: Connection reset by peer
+                LOG.debug("Socket connection reset for: {sock} - {err}".format(err=cre, sock=self.remote_socket))
+            else:
+                LOG.exception("Unexpected exception occurred in _socket_processor: {err}".format(err=e))
+        LOG.debug("_socket_processor exiting")
         self.pipe_local.send(CMD_MSG_SOCKET_CLOSED)
         self.disconnect()
         self.thread_handler = None
@@ -224,6 +245,8 @@ class HydraSocket(object):
             return False
         self.remote_socket = remote_socket
         self.remote_socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
+        self.source_addr = self.remote_socket.getsockname()[0]
+        self.source_port = self.remote_socket.getsockname()[1]
         LOG.debug("Accepted socket: {data}".format(data=self.remote_socket))
         self._start()
         return True
@@ -258,17 +281,21 @@ class HydraSocket(object):
             self.remote_socket = None
             return False
 
-        LOG.debug("Connected to remote host on socket: {data}".format(data=self.remote_socket))
+        LOG.debug(
+            "Connected to remote host on local socket: {addr}:{port}".format(
+                addr=self.source_addr, port=self.source_port
+            )
+        )
         self._start()
         return True
 
     def disconnect(self):
         if not self.remote_socket:
             return False
-        if self.remote_socket.fileno() == -1:
+        if self._get_socket_fd() == -1:
             return True
         self.thread_shutdown = True
-        self.wait_list.clear()
+        self.wait_list[:] = []
         try:
             self.remote_socket.shutdown(socket.SHUT_RDWR)
         except:
@@ -286,6 +313,8 @@ class HydraSocket(object):
         if not self.remote_socket:
             LOG.warning("Cannot flush socket. Socket not connected.")
             return None
+        if self._get_socket_fd() == -1:
+            return True
         self.wait_flush.clear()
         self._socket_send_header(HYDRA_MSG_TYPE["flush"])
         self.wait_flush.wait(DEFAULT_SHUTDOWN_WAIT_TIMEOUT)
