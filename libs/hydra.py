@@ -61,14 +61,15 @@ class HydraServer(object):
 
     def _remove_client(self, client):
         try:
-            LOG.debug("Removing client from select list: {pipe}".format(pipe=client))
+            LOG.debug("Removing client from select list: {client}".format(client=client))
             if client in self.wait_list:
                 self.wait_list.remove(client)
             if client not in self.clients.keys():
                 return
-            self.clients[client]["hsock"].flush()
-            self.clients[client]["hsock"].disconnect()
+            cleaup_client = self.clients[client]
             del self.clients[client]
+            cleaup_client["hsock"].flush()
+            cleaup_client["hsock"].disconnect()
         except Exception as e:
             LOG.exception("Unexpected exception when removing client: {err}".format(err=e))
 
