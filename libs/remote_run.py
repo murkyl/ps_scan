@@ -32,7 +32,7 @@ class RemoteRun(object):
         self.callback_function = args.get("callback", self.handle_callback)
         self.poll_timeout = args.get("poll_timeout", DEFAULT_PROC_POLL_TIMEOUT)
         self.remote_clients = {}
-        
+
     def _decode_clients(self, client_config):
         clients = []
         default = {}
@@ -99,7 +99,7 @@ class RemoteRun(object):
                     "default": default,
                     "event": event_handle,
                     "thread_id": self.next_client_id,
-                }
+                },
             )
             self.remote_clients[self.next_client_id] = {
                 "thread_handle": thread_handle,
