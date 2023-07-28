@@ -53,7 +53,7 @@ class TestHydraServer(HydraServer):
             if msg["data"].get("cmd") == "quit":
                 self.shutdown()
                 return
-            print("**** GOT DATA: %s"%msg)
+            print("**** GOT DATA: %s" % msg)
 
 
 class TestHydra(unittest.TestCase):
@@ -111,7 +111,7 @@ class TestHydra(unittest.TestCase):
             client.disconnect()
 
     # @unittest.skip("")
-    def test_4_send_data_to_multiple_clients(self):
+    def test_5_send_data_to_multiple_clients(self):
         self.hs = TestHydraServer({"async_server": True})
         self.hs.start()
         clients = []

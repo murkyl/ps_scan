@@ -40,19 +40,19 @@ class TestRemoteRun(unittest.TestCase):
 
     def tearDown(self):
         pass
-        
+
     def remote_callback(self, client, client_id, msg=None):
-        print("LOCAL CALLBACK (%s): %s\n"%(client_id, msg))
+        print("LOCAL CALLBACK (%s): %s\n" % (client_id, msg))
         self.last_msg = msg
 
     # @unittest.skip("")
     def test_01_hostname_local_host(self):
         test_data = [
-          {
-              "type": "onefs",
-              "cmd": ["hostname"],
-              "endpoint": "1",
-          },
+            {
+                "type": "onefs",
+                "cmd": ["hostname"],
+                "endpoint": "1",
+            },
         ]
         test_obj = rr.RemoteRun()
         test_obj.connect(test_data)
@@ -69,14 +69,14 @@ class TestRemoteRun(unittest.TestCase):
     # @unittest.skip("")
     def test_02_callback_with_cmd_default(self):
         test_data = [
-          {
-              "type": "default",
-              "cmd": ["uname", "-a"],
-          },
-          {
-              "type": "onefs",
-              "endpoint": "1",
-          },
+            {
+                "type": "default",
+                "cmd": ["uname", "-a"],
+            },
+            {
+                "type": "onefs",
+                "endpoint": "1",
+            },
         ]
         test_obj = rr.RemoteRun({"callback": self.remote_callback})
         test_obj.connect(test_data)
