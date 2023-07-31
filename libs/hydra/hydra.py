@@ -58,6 +58,7 @@ class HydraServer(object):
         hsock.accept(connection)
         self.clients[hsock] = client_obj
         self.wait_list.append(hsock)
+        self.handler_client_connect(hsock)
 
     def _remove_client(self, client):
         try:
@@ -114,6 +115,9 @@ class HydraServer(object):
             self._remove_client(client)
 
     def handler_client_connect(self, client):
+        """
+        Users should override this method to add their own handler for notification of a new client connection
+        """
         pass
 
     def send(self, client_id, msg):

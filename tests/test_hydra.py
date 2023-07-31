@@ -23,9 +23,7 @@ import unittest
 # Test code is run from the tests directory. Add the parent directory to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "libs"))
-from libs.hydra_socket import *
-from libs.hydra_const import *
-from libs.hydra import *
+import libs.hydra as Hydra
 
 tracemalloc.start()
 LOG = logging.getLogger()
@@ -41,7 +39,7 @@ def setup_logger():
     LOG.setLevel(logging.DEBUG)
 
 
-class TestHydraServer(HydraServer):
+class TestHydraServer(Hydra.HydraServer):
     def handler_client_command(self, client, msg):
         """
         Users should override this method to add their own handler for client commands.
@@ -80,7 +78,7 @@ class TestHydra(unittest.TestCase):
     def test_3_client_connect_send_msg_then_server_shutdown_on_client(self):
         self.hs = TestHydraServer({"async_server": True})
         self.hs.start()
-        self.hsock = HydraSocket()
+        self.hsock = Hydra.HydraSocket()
         self.hsock.connect()
         self.hsock.send(TEST_MSG_1)
         self.hs.shutdown()
@@ -88,7 +86,7 @@ class TestHydra(unittest.TestCase):
         # Client should get a closed message from the server shutting down
         rlist, _, _ = select.select([self.hsock], [], [], 2)
         msg = self.hsock.recv()
-        self.assertEqual(msg, CMD_MSG_SOCKET_CLOSED)
+        self.assertEqual(msg, Hydra.CMD_MSG_SOCKET_CLOSED)
         # Cleanup client socket
         self.hsock.disconnect()
 
@@ -98,7 +96,7 @@ class TestHydra(unittest.TestCase):
         self.hs.start()
         clients = []
         for i in range(10):
-            client = HydraSocket()
+            client = Hydra.HydraSocket()
             client.connect()
             clients.append(client)
         # Shutdown server
@@ -107,7 +105,7 @@ class TestHydra(unittest.TestCase):
         rlist, _, _ = select.select(clients, [], [], 2)
         for client in rlist:
             msg = client.recv()
-            self.assertEqual(msg, CMD_MSG_SOCKET_CLOSED)
+            self.assertEqual(msg, Hydra.CMD_MSG_SOCKET_CLOSED)
             client.disconnect()
 
     # @unittest.skip("")
@@ -116,7 +114,7 @@ class TestHydra(unittest.TestCase):
         self.hs.start()
         clients = []
         for i in range(10):
-            client = HydraSocket()
+            client = Hydra.HydraSocket()
             client.connect()
             clients.append(client)
 

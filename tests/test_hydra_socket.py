@@ -23,8 +23,7 @@ import unittest
 # Test code is run from the tests directory. Add the parent directory to the path
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.realpath(__file__))))
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(__file__))), "libs"))
-from libs.hydra_socket import *
-from libs.hydra_const import *
+import libs.hydra as Hydra
 
 tracemalloc.start()
 LOG = logging.getLogger()
@@ -52,11 +51,11 @@ class TestHydraSocket(unittest.TestCase):
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         for i in range(10):
             try:
-                sock.bind((DEFAULT_SERVER_ADDR, DEFAULT_SERVER_PORT))
+                sock.bind(("127.0.0.1", Hydra.DEFAULT_SERVER_PORT))
                 break
             except:
                 pass
-        sock.listen(DEFAULT_SOCKET_LISTEN_QUEUE)
+        sock.listen(Hydra.DEFAULT_SOCKET_LISTEN_QUEUE)
         return sock
 
     def setup_hsock(self, hydra_obj, sock):
@@ -65,14 +64,14 @@ class TestHydraSocket(unittest.TestCase):
         self.assertTrue(len(hydra_obj.wait_list) > 1)
 
     def setup_connect_server(self):
-        client_conn = HydraSocket()
+        client_conn = Hydra.HydraSocket()
         client_conn.connect()
         return client_conn
 
     def setup_connect_new_client(self):
         connection, client_address = self.listen_socket.accept()
         connection.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, True)
-        new_hydra_handler = HydraSocket()
+        new_hydra_handler = Hydra.HydraSocket()
         new_hydra_handler.accept(connection)
         return new_hydra_handler
 
@@ -90,7 +89,7 @@ class TestHydraSocket(unittest.TestCase):
             # Get the closed message
             rlist, _, _ = select.select([self.hsock], [], [], 2)
             msg = self.hsock.recv()
-            self.assertEqual(msg, CMD_MSG_SOCKET_CLOSED)
+            self.assertEqual(msg, Hydra.CMD_MSG_SOCKET_CLOSED)
         self.hsock = None
 
     def teardown_listen_socket(self, sock):
@@ -128,13 +127,13 @@ class TestHydraSocket(unittest.TestCase):
 
     # @unittest.skip("")
     def test_1_simple_create_destroy(self):
-        hsock = HydraSocket()
-        self.assertTrue(isinstance(hsock, HydraSocket))
+        hsock = Hydra.HydraSocket()
+        self.assertTrue(isinstance(hsock, Hydra.HydraSocket))
         hsock.disconnect()
 
     # @unittest.skip("")
     def test_2_simple_start_stop_server_handler(self):
-        hsock = HydraSocket()
+        hsock = Hydra.HydraSocket()
         sock = self.setup_listen_socket()
         self.setup_hsock(hsock, sock)
 
