@@ -27,8 +27,10 @@ from .hydra_const import *
 try:
     dir(ConnectionResetError)
 except:
+
     class ConnectionResetError(Exception):
         pass
+
 
 LOG = logging.getLogger(__name__)
 

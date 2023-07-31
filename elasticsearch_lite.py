@@ -69,7 +69,7 @@ class ElasticsearchLite:
     def connect(self):
         self.validate_options()
         if self.use_https:
-            self.conn = http_conn.HTTPSConnection(self.endpoint, context = ssl._create_unverified_context())
+            self.conn = http_conn.HTTPSConnection(self.endpoint, context=ssl._create_unverified_context())
         else:
             self.conn = http_conn.HTTPConnection(self.endpoint)
         auth_header = None

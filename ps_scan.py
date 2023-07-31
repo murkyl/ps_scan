@@ -281,16 +281,14 @@ def subprocess(process_state, scan_paths, file_handler, options):
                 stats_output_count = cur_stats_count
                 conn_pipe.send([CMD_SEND_STATS, scanner.get_stats()])
                 # DEBUG: Remove in production
-                LOG.debug("LOCAL STATS: %s"%scanner.get_stats())
+                LOG.debug("LOCAL STATS: %s" % scanner.get_stats())
             # Determine if we should send a directory queue count update
             cur_dir_count = (now - start_wall) // dir_output_interval
             if cur_dir_count > dir_output_count:
                 dir_output_count = cur_dir_count
                 conn_pipe.send([CMD_SEND_DIR_COUNT, cur_dir_q_size])
             # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
-            if (cur_dir_q_size == 0) and (
-                now - process_state["want_data"] > dir_request_interval
-            ):
+            if (cur_dir_q_size == 0) and (now - process_state["want_data"] > dir_request_interval):
                 process_state["want_data"] = now
                 conn_pipe.send([CMD_REQ_DIR, cur_dir_q_size, scanner.get_file_queue_size()])
             # Check if the scanner is idle

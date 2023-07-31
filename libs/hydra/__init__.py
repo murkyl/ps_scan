@@ -1,6 +1,6 @@
-__all__= [
-  'HydraServer',
-  'HydraSocket',
+__all__ = [
+    "HydraServer",
+    "HydraSocket",
 ]
 from .hydra_const import *
 from .hydra import HydraServer

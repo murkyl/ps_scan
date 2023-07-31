@@ -150,7 +150,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             try:
                 fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
             except FileNotFoundError:
-                LOG.debug("File %s is not found." %(full_path))
+                LOG.debug("File %s is not found." % (full_path))
                 continue
             except Exception as e:
                 if e.errno == 45:
@@ -170,7 +170,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                     stats["file_size_total"] += file_info["size"]
                     processed += 1
                     continue
-                LOG.exception("Error found when calling os.open on %s. Error: %s" %(full_path, str(e)))
+                LOG.exception("Error found when calling os.open on %s. Error: %s" % (full_path, str(e)))
                 continue
             fstats = attr.get_dinode(fd)
             # atime call can return empty if the file does not have an atime or atime tracking is disabled
@@ -435,8 +435,8 @@ def translate_user_group_perms(full_path, file_info):
         # of view of the access zone that is running the script, normally the System zone
         try:
             fstats = os.lstat(full_path)
-            file_info["perms_unix_gid"] = fstats.st_gid,
-            file_info["perms_unix_uid"] = fstats.st_uid,
+            file_info["perms_unix_gid"] = (fstats.st_gid,)
+            file_info["perms_unix_uid"] = (fstats.st_uid,)
         except Exception as e:
             LOG.info("Unable to get file UID/GID properly for: {filename}".format(filename=full_path))
     if "perms_acl_user" in file_info:
