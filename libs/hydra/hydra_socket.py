@@ -27,6 +27,7 @@ from .hydra_const import *
 try:
     dir(ConnectionResetError)
 except:
+    errno.EXFULL = 54
 
     class ConnectionResetError(Exception):
         pass
