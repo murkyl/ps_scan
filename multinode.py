@@ -19,15 +19,13 @@ import os
 import platform
 import queue
 import select
+import signal
 import subprocess
 import time
 
 import libs.hydra as Hydra
 import libs.remote_run as RR
 
-# Global variables to allow direct access to the objects for a signal handler
-client = None
-svr = None
 LOG = logging.getLogger()
 
 
@@ -44,6 +42,13 @@ class PSScanClient(object):
             }
         )
         self.wait_list = [self.socket]
+
+    def parse_config_update_log_level(self, cfg):
+        log_level = cfg.get("log_level")
+        if not log_level:
+            LOG.error("log_level missing from cfg while updating the log level.")
+            return
+        LOG.setLevel(log_level)
 
     def parse_config_update_logger(self, cfg):
         format_string_vars = {
@@ -69,6 +74,8 @@ class PSScanClient(object):
             cfg = msg.get("config")
             if "logger" in cfg:
                 self.parse_config_update_logger(cfg)
+            if "log_level" in cfg:
+                self.parse_config_update_log_level(cfg)
 
     def connect(self):
         LOG.info("Connecting to server at {svr}:{port}".format(svr=self.server_addr, port=self.server_port))
@@ -105,6 +112,7 @@ class PSScanClient(object):
                 self.wait_list.remove(self.socket)
                 continue_running = False
                 break
+            LOG.debug("TOCK!")
 
 
 class PSScanCommandClient(object):
@@ -139,9 +147,13 @@ class PSScanServer(Hydra.HydraServer):
     def __init__(self, args={}):
         args["async_server"] = True
         super(PSScanServer, self).__init__(args=args)
+        self.setup_signal_handlers()
         self.connect_addr = args.get("server_connect_addr", None)
+        self.continue_running = True
         self.message_queue = queue.Queue()
         self.node_list = args.get("node_list", None)
+        # TODO: Set queue timeout
+        self.queue_timeout = 1
         self.remote_state = None
         self.script_path = args.get("script_path", None)
         self.work_queue = queue.Queue()
@@ -160,6 +172,26 @@ class PSScanServer(Hydra.HydraServer):
 
     def handler_client_connect(self, client):
         self.message_queue.put({"type": "control_client_connect", "client": client})
+
+    def handler_signal_interrupt(self, signum, frame):
+        self.continue_running = False
+        LOG.debug("Termination signal received. Program is exiting.")
+
+    def handler_signal_usr1(self, signum, frame):
+        LOG.debug("SIGUSR1 signal received. Toggling debug.")
+        cur_level = LOG.getEffectiveLevel()
+        if cur_level != logging.DEBUG:
+            LOG.setLevel(logging.DEBUG)
+        else:
+            LOG.setLevel(logging.INFO)
+        # Send a log level update to all clients
+        msg = {
+            "type": "config_update",
+            "config": {
+                "log_level": LOG.getEffectiveLevel(),
+            },
+        }
+        self.send_all_clients(msg)
 
     def launch_remote_processes(self):
         remote_server_addr = self.connect_addr
@@ -207,7 +239,7 @@ class PSScanServer(Hydra.HydraServer):
                             "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s",
                             "destination": "file",
                             "filename": "log-{filename}.txt",
-                            "level": LOG.level,
+                            "level": LOG.getEffectiveLevel(),
                         }
                     },
                 },
@@ -239,35 +271,45 @@ class PSScanServer(Hydra.HydraServer):
     def remote_callback(self, client, client_id, msg=None):
         self.message_queue.put({"type": "control_remote_msg", "data": msg, "client_id": client_id, "client": client})
 
+    def send_all_clients(self, msg):
+        # TODO:
+        pass
+
     def serve(self):
         LOG.info("Starting server")
         start_time = time.time()
         thread_id = self.start()
         self.launch_remote_processes()
-        # Start main processing loop, send initial directories to process to clients
-        # Wait for clients to request work and redistribute work as needed.
-        try:
-            # TODO: Set queue timeout
-            queue_timeout = 1
-            continue_running = True
-            while continue_running:
-                now = time.time()
+        # Start main processing loop
+        # Wait for clients to connect, request work, and redistribute work as needed.
+        while self.continue_running:
+            now = time.time()
+            try:
+                queue_item = self.message_queue.get(timeout=self.queue_timeout)
+            except queue.Empty as qe:
+                queue_item = None
+            except Exception as e:
+                LOG.exception(e)
+                self.continue_running = False
+                continue
+            else:
                 try:
-                    queue_item = self.message_queue.get(timeout=queue_timeout)
-                except queue.Empty as qe:
-                    queue_item = None
-                if queue_item:
                     reponse = self.parse_message(queue_item)
                     if reponse.get("cmd") == "quit":
-                        continue_running = False
-                LOG.debug("TICK!")
-                # if now - start_time > 20:
-                #    continue_running = False
-        except Exception as e:
-            LOG.exception(e)
+                        self.continue_running = False
+                except Exception as e:
+                    # parse_message should handle exceptions. Any uncaught exceptions should terminate the program.
+                    LOG.exception(e)
+                    self.continue_running = False
+                    continue
+            LOG.debug("TICK!")
         LOG.debug("ps_scan shutting down")
         self.shutdown()
         LOG.debug("ps_scan shutdown complete")
+
+    def setup_signal_handlers(self):
+        signal.signal(signal.SIGINT, self.handler_signal_interrupt)
+        signal.signal(signal.SIGUSR1, self.handler_signal_usr1)
 
 
 def get_local_internal_addr():
@@ -287,8 +329,6 @@ def get_script_path():
 
 
 def main():
-    global client
-    global svr
     import optparse
     import sys
 
