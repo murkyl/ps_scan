@@ -147,31 +147,33 @@ class PSScanServer(Hydra.HydraServer):
     def __init__(self, args={}):
         args["async_server"] = True
         super(PSScanServer, self).__init__(args=args)
-        self.setup_signal_handlers()
         self.connect_addr = args.get("server_connect_addr", None)
         self.continue_running = True
-        self.message_queue = queue.Queue()
+        self.msg_q = queue.Queue()
         self.node_list = args.get("node_list", None)
         # TODO: Set queue timeout
         self.queue_timeout = 1
         self.remote_state = None
         self.script_path = args.get("script_path", None)
-        self.work_queue = queue.Queue()
+        self.work_q = queue.Queue()
         if not (self.connect_addr and self.script_path):
             raise Exception("Server connect address and script path is required")
+        # Setup signal handlers
+        signal.signal(signal.SIGINT, self.handler_signal_interrupt)
+        signal.signal(signal.SIGUSR1, self.handler_signal_usr1)
 
     def handler_client_command(self, client, msg):
         """
         Users should override this method to add their own handler for client commands.
         """
         if not msg or (msg["type"] == "cmd" and msg["cmd"] == "closed"):
-            self.message_queue.put({"type": "control_client_closed", "data": msg, "client": client})
+            self.msg_q.put({"type": "control_client_closed", "data": msg, "client": client})
             self._remove_client(client)
         elif msg["type"] == "data":
-            self.message_queue.put({"type": "client_data", "data": msg["data"], "client": client})
+            self.msg_q.put({"type": "client_data", "data": msg["data"], "client": client})
 
     def handler_client_connect(self, client):
-        self.message_queue.put({"type": "control_client_connect", "client": client})
+        self.msg_q.put({"type": "control_client_connect", "client": client})
 
     def handler_signal_interrupt(self, signum, frame):
         self.continue_running = False
@@ -245,9 +247,9 @@ class PSScanServer(Hydra.HydraServer):
                 },
             )
             # Send up to 1 directory in our work queue to each connected client
-            if not self.work_queue.empty():
+            if not self.work_q.empty():
                 try:
-                    work_item = self.work_queue.get(False)
+                    work_item = self.work_q.get(False)
                     self.send(
                         msg["client"],
                         {
@@ -269,7 +271,7 @@ class PSScanServer(Hydra.HydraServer):
         return {}
 
     def remote_callback(self, client, client_id, msg=None):
-        self.message_queue.put({"type": "control_remote_msg", "data": msg, "client_id": client_id, "client": client})
+        self.msg_q.put({"type": "control_remote_msg", "data": msg, "client_id": client_id, "client": client})
 
     def send_all_clients(self, msg):
         # TODO:
@@ -285,7 +287,7 @@ class PSScanServer(Hydra.HydraServer):
         while self.continue_running:
             now = time.time()
             try:
-                queue_item = self.message_queue.get(timeout=self.queue_timeout)
+                queue_item = self.msg_q.get(timeout=self.queue_timeout)
             except queue.Empty as qe:
                 queue_item = None
             except Exception as e:
@@ -306,10 +308,6 @@ class PSScanServer(Hydra.HydraServer):
         LOG.debug("ps_scan shutting down")
         self.shutdown()
         LOG.debug("ps_scan shutdown complete")
-
-    def setup_signal_handlers(self):
-        signal.signal(signal.SIGINT, self.handler_signal_interrupt)
-        signal.signal(signal.SIGUSR1, self.handler_signal_usr1)
 
 
 def get_local_internal_addr():
