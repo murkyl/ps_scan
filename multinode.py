@@ -29,6 +29,19 @@ import libs.remote_run as RR
 LOG = logging.getLogger()
 
 
+PS_CMD_DUMPSTATE = "dumpstate"
+PS_CMD_QUIT = "quit"
+PS_CMD_TOGGLEDEBUG = "toggledebug"
+MSG_TYPE_CLIENT_DATA = "client_data"
+MSG_TYPE_CLIENT_CLOSED = "client_closed"
+MSG_TYPE_CLIENT_CONNECT = "client_connect"
+MSG_TYPE_COMMAND = "cmd"
+MSG_TYPE_CONFIG_UPDATE = "config_update"
+MSG_TYPE_DEBUG = "debug"
+MSG_TYPE_DIR_LIST = "dir_list"
+MSG_TYPE_REMOTE_CALLBACK = "remote_callback"
+
+
 class PSScanClient(object):
     def __init__(self, args={}):
         # TODO: Set default for poll interval
@@ -69,13 +82,19 @@ class PSScanClient(object):
             print("ERROR: Unhandled exception while trying to configure logger: {txt}".format(txt=str(ke)))
 
     def parse_message(self, msg):
+        LOG.debug("DEBUG: parse_message: {msg}".format(msg=msg))
         msg_type = msg.get("type")
-        if msg_type == "config_update":
+        if msg_type == MSG_TYPE_CONFIG_UPDATE:
             cfg = msg.get("config")
             if "logger" in cfg:
                 self.parse_config_update_logger(cfg)
             if "log_level" in cfg:
                 self.parse_config_update_log_level(cfg)
+        elif msg_type == MSG_TYPE_DEBUG:
+            LOG.debug("DEBUG: IN MSG TYPE DEBUG")
+            dbg = msg.get("cmd")
+            if "dump_state" in dbg:
+                self.dump_state()
 
     def connect(self):
         LOG.info("Connecting to server at {svr}:{port}".format(svr=self.server_addr, port=self.server_port))
@@ -89,7 +108,7 @@ class PSScanClient(object):
             if rlist:
                 data = self.socket.recv()
                 msg_type = data.get("type")
-                if msg_type == "cmd":
+                if msg_type == MSG_TYPE_COMMAND:
                     cmd = data.get("cmd")
                     LOG.debug("Command received: {cmd}".format(cmd=cmd))
                     if cmd == "closed":
@@ -114,6 +133,10 @@ class PSScanClient(object):
                 break
             LOG.debug("TOCK!")
 
+    def dump_state(self):
+        LOG.critical("\nDumping state\n" + "=" * 20)
+        pass
+
 
 class PSScanCommandClient(object):
     def __init__(self, args={}):
@@ -136,15 +159,24 @@ class PSScanCommandClient(object):
         if not connected:
             LOG.info("Unable to connect to server")
             return
-        if self.commands[0] == "quit":
-            LOG.info('Sending "quit" command to server')
-            self.socket.send({"type": "cmd", "cmd": "quit"})
+        cmd = self.commands[0]
+        LOG.info('Sending "{cmd}" command to server'.format(cmd=cmd))
+        if cmd in (PS_CMD_DUMPSTATE, PS_CMD_TOGGLEDEBUG, PS_CMD_QUIT):
+            self.socket.send({"type": MSG_TYPE_COMMAND, "cmd": cmd})
+        else:
+            LOG.error("Unknown command: {cmd}".format(cmd=cmd))
         time.sleep(1)
         self.socket.disconnect()
 
 
 class PSScanServer(Hydra.HydraServer):
     def __init__(self, args={}):
+        """
+        Argument keys:
+        server_connect_addr - FQDN/IP that clients should use to connect
+        node_list - List of clients to auto-start
+        script_path - Full path to script to run on clients
+        """
         args["async_server"] = True
         super(PSScanServer, self).__init__(args=args)
         self.connect_addr = args.get("server_connect_addr", None)
@@ -162,25 +194,50 @@ class PSScanServer(Hydra.HydraServer):
         signal.signal(signal.SIGINT, self.handler_signal_interrupt)
         signal.signal(signal.SIGUSR1, self.handler_signal_usr1)
 
-    def handler_client_command(self, client, msg):
-        """
-        Users should override this method to add their own handler for client commands.
-        """
-        if not msg or (msg["type"] == "cmd" and msg["cmd"] == "closed"):
-            self.msg_q.put({"type": "control_client_closed", "data": msg, "client": client})
-            self._remove_client(client)
-        elif msg["type"] == "data":
-            self.msg_q.put({"type": "client_data", "data": msg["data"], "client": client})
+    def _exec_dump_state(self):
+        msg = {
+            "type": MSG_TYPE_DEBUG,
+            "cmd": {
+                "dump_state": True,
+            },
+        }
+        LOG.debug("DEBUG: TRYING TO SEND ALL CLIENTS")
+        self.send_all_clients(msg)
+        LOG.debug("DEBUG: DONE")
+        self.dump_state()
 
-    def handler_client_connect(self, client):
-        self.msg_q.put({"type": "control_client_connect", "client": client})
+    def _exec_send_config_update(self, client):
+        self.send(
+            client,
+            {
+                "type": MSG_TYPE_CONFIG_UPDATE,
+                "config": {
+                    "logger": {
+                        "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s",
+                        "destination": "file",
+                        "filename": "log-{filename}.txt",
+                        "level": LOG.getEffectiveLevel(),
+                    }
+                },
+            },
+        )
 
-    def handler_signal_interrupt(self, signum, frame):
-        self.continue_running = False
-        LOG.debug("Termination signal received. Program is exiting.")
+    def _exec_send_one_work_item(self, client):
+        if self.work_q.empty():
+            return
+        try:
+            work_item = self.work_q.get(False)
+            self.send(
+                client,
+                {
+                    "type": MSG_TYPE_DIR_LIST,
+                    "work_item": [work_item],
+                },
+            )
+        except queue.Empty as qe:
+            LOG.error("Work queue was not empty but unable to get a work item to send to the new client")
 
-    def handler_signal_usr1(self, signum, frame):
-        LOG.debug("SIGUSR1 signal received. Toggling debug.")
+    def _exec_toggle_debug(self):
         cur_level = LOG.getEffectiveLevel()
         if cur_level != logging.DEBUG:
             LOG.setLevel(logging.DEBUG)
@@ -188,18 +245,43 @@ class PSScanServer(Hydra.HydraServer):
             LOG.setLevel(logging.INFO)
         # Send a log level update to all clients
         msg = {
-            "type": "config_update",
+            "type": MSG_TYPE_CONFIG_UPDATE,
             "config": {
                 "log_level": LOG.getEffectiveLevel(),
             },
         }
         self.send_all_clients(msg)
 
+    def dump_state(self):
+        LOG.critical("\nDumping state\n" + "=" * 20)
+        pass
+
+    def handler_client_command(self, client, msg):
+        """
+        Users should override this method to add their own handler for client commands.
+        """
+        if not msg or (msg["type"] == MSG_TYPE_COMMAND and msg["cmd"] == "closed"):
+            self.msg_q.put({"type": MSG_TYPE_CLIENT_CLOSED, "data": msg, "client": client})
+            self._remove_client(client)
+        elif msg["type"] == "data":
+            self.msg_q.put({"type": MSG_TYPE_CLIENT_DATA, "data": msg["data"], "client": client})
+
+    def handler_client_connect(self, client):
+        self.msg_q.put({"type": MSG_TYPE_CLIENT_CONNECT, "client": client})
+
+    def handler_signal_interrupt(self, signum, frame):
+        self.continue_running = False
+        LOG.debug("Termination signal received. Program is exiting.")
+
+    def handler_signal_usr1(self, signum, frame):
+        LOG.debug("SIGUSR1 signal received. Toggling debug.")
+        self._exec_toggle_debug()
+
     def launch_remote_processes(self):
         remote_server_addr = self.connect_addr
         remote_server_port = self.server_port
         script_path = self.script_path
-        CMD = [
+        run_cmd = [
             "python",
             script_path,
             "client",
@@ -211,55 +293,37 @@ class PSScanServer(Hydra.HydraServer):
         if self.node_list:
             for node in self.node_list:
                 if node.get("type") != "default":
-                    node["cmd"] = CMD
+                    node["cmd"] = run_cmd
             self.remote_state = RR.RemoteRun({"callback": self.remote_callback})
             self.remote_state.connect(self.node_list)
 
     def parse_message(self, msg):
-        if msg["type"] == "client_data":
+        if msg["type"] == MSG_TYPE_CLIENT_DATA:
             LOG.debug("Client data: {data}".format(data=msg))
             data = msg["data"]
             data_type = data.get("type")
             if data_type == "cmd":
                 cmd = data.get("cmd")
-                if cmd == "quit":
-                    LOG.debug("Quit command received: {data}".format(data=data))
-                    return {"cmd": "quit"}
-            elif data_type == "dir_list":
+                LOG.debug("Command received: {cmd}".format(cmd=cmd))
+                if cmd == PS_CMD_QUIT:
+                    return {"cmd": PS_CMD_QUIT}
+                elif cmd == PS_CMD_DUMPSTATE:
+                    self._exec_dump_state()
+                elif cmd == PS_CMD_TOGGLEDEBUG:
+                    self._exec_toggle_debug()
+                else:
+                    LOG.error("Unknown command received: {cmd}".format(cmd=cmd))
+            elif data_type == MSG_TYPE_DIR_LIST:
                 pass
-        elif msg["type"] == "control_client_closed":
+        elif msg["type"] == MSG_TYPE_CLIENT_CLOSED:
             LOG.debug("Client socket closed: {data}".format(data=msg))
-        elif msg["type"] == "control_client_connect":
+        elif msg["type"] == MSG_TYPE_CLIENT_CONNECT:
             LOG.debug("Client socket connected: {data}".format(data=msg))
             # Send configuration to client
-            self.send(
-                msg["client"],
-                {
-                    "type": "config_update",
-                    "config": {
-                        "logger": {
-                            "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s",
-                            "destination": "file",
-                            "filename": "log-{filename}.txt",
-                            "level": LOG.getEffectiveLevel(),
-                        }
-                    },
-                },
-            )
+            self._exec_send_config_update(msg["client"])
             # Send up to 1 directory in our work queue to each connected client
-            if not self.work_q.empty():
-                try:
-                    work_item = self.work_q.get(False)
-                    self.send(
-                        msg["client"],
-                        {
-                            "type": "dir_list",
-                            "work_item": [work_item],
-                        },
-                    )
-                except queue.Empty as qe:
-                    LOG.error("Work queue was not empty but unable to get a work item to send to the new client")
-        elif msg["type"] == "control_remote_msg":
+            self._exec_send_one_work_item(msg["client"])
+        elif msg["type"] == MSG_TYPE_REMOTE_CALLBACK:
             # This type of command is sent from the remote_run module that handles spawning processes on other machines
             # TODO: Add code to handle re-launching dead processes
             # TODO: Log any console output if there is an error
@@ -271,11 +335,7 @@ class PSScanServer(Hydra.HydraServer):
         return {}
 
     def remote_callback(self, client, client_id, msg=None):
-        self.msg_q.put({"type": "control_remote_msg", "data": msg, "client_id": client_id, "client": client})
-
-    def send_all_clients(self, msg):
-        # TODO:
-        pass
+        self.msg_q.put({"type": MSG_TYPE_REMOTE_CALLBACK, "data": msg, "client_id": client_id, "client": client})
 
     def serve(self):
         LOG.info("Starting server")
@@ -297,7 +357,7 @@ class PSScanServer(Hydra.HydraServer):
             else:
                 try:
                     reponse = self.parse_message(queue_item)
-                    if reponse.get("cmd") == "quit":
+                    if reponse.get("cmd") == PS_CMD_QUIT:
                         self.continue_running = False
                 except Exception as e:
                     # parse_message should handle exceptions. Any uncaught exceptions should terminate the program.
