@@ -91,7 +91,6 @@ class PSScanClient(object):
             if "log_level" in cfg:
                 self.parse_config_update_log_level(cfg)
         elif msg_type == MSG_TYPE_DEBUG:
-            LOG.debug("DEBUG: IN MSG TYPE DEBUG")
             dbg = msg.get("cmd")
             if "dump_state" in dbg:
                 self.dump_state()
@@ -193,6 +192,7 @@ class PSScanServer(Hydra.HydraServer):
         # Setup signal handlers
         signal.signal(signal.SIGINT, self.handler_signal_interrupt)
         signal.signal(signal.SIGUSR1, self.handler_signal_usr1)
+        signal.signal(signal.SIGUSR2, self.handler_signal_usr2)
 
     def _exec_dump_state(self):
         msg = {
@@ -201,9 +201,7 @@ class PSScanServer(Hydra.HydraServer):
                 "dump_state": True,
             },
         }
-        LOG.debug("DEBUG: TRYING TO SEND ALL CLIENTS")
         self.send_all_clients(msg)
-        LOG.debug("DEBUG: DONE")
         self.dump_state()
 
     def _exec_send_config_update(self, client):
@@ -276,6 +274,10 @@ class PSScanServer(Hydra.HydraServer):
     def handler_signal_usr1(self, signum, frame):
         LOG.debug("SIGUSR1 signal received. Toggling debug.")
         self._exec_toggle_debug()
+
+    def handler_signal_usr2(self, signum, frame):
+        LOG.debug("SIGUSR2 signal received. Dumping state.")
+        self._exec_dump_state()
 
     def launch_remote_processes(self):
         remote_server_addr = self.connect_addr
