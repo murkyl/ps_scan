@@ -127,6 +127,11 @@ class HydraServer(object):
         hsock = self.clients[client_id]["hsock"]
         hsock.send(msg)
 
+    def send_all_clients(self, msg):
+        client_keys = self.clients.keys()
+        for client in client_keys:
+            self.send(client, msg)
+
     def start(self):
         if not self.server_socket:
             self._setup_server()
