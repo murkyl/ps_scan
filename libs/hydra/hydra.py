@@ -122,10 +122,11 @@ class HydraServer(object):
 
     def send(self, client_id, msg):
         LOG.debug("Sending message to client: {client}".format(client=client_id))
-        if client_id not in self.clients:
+        if client_id not in self.clients.keys():
             LOG.error("Unable to find client to send message: {client}".format(client=client_id))
-        hsock = self.clients[client_id]["hsock"]
-        hsock.send(msg)
+        hsock = self.clients.get(client_id, {}).get("hsock")
+        if hsock:
+            hsock.send(msg)
 
     def send_all_clients(self, msg):
         client_keys = self.clients.keys()
