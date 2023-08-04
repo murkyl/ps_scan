@@ -162,55 +162,6 @@ class PSScanClient(object):
         s.num_threads = 4 # TODO:
         s.processing_type = scanit.PROCESS_TYPE_ADVANCED
 
-    def parse_config_update_log_level(self, cfg):
-        log_level = cfg.get("log_level")
-        if not log_level:
-            LOG.error("log_level missing from cfg while updating the log level.")
-            return
-        LOG.setLevel(log_level)
-
-    def parse_config_update_logger(self, cfg):
-        format_string_vars = {
-            "filename": platform.node(),
-            "pid": os.getpid(),
-        }
-        try:
-            logger_block = cfg.get("logger")
-            if logger_block["destination"] == "file":
-                log_filename = logger_block["filename"].format(**format_string_vars)
-                log_handler = logging.FileHandler(log_filename)
-                log_handler.setFormatter(logging.Formatter(logger_block["format"]))
-                LOG.handlers[:] = []
-                LOG.addHandler(log_handler)
-                LOG.setLevel(logger_block["level"])
-        except KeyError as ke:
-            sys.stderr.write("ERROR: Logger filename string is invalid: {txt}\n".format(txt=str(ke)))
-        except Exception as e:
-            sys.stderr.write("ERROR: Unhandled exception while trying to configure logger: {txt}\n".format(txt=str(ke)))
-
-    def parse_message(self, msg, now):
-        LOG.debug("DEBUG: parse_message: {msg}".format(msg=msg))
-        msg_type = msg.get("type")
-        if msg_type == MSG_TYPE_CLIENT_DIR_LIST:
-            self.work_list.extend(msg["work_item"])
-            if self.work_list:
-                self.exec_send_client_state_running()
-                self.state = CLIENT_STATE_RUNNING
-        elif msg_type == MSG_TYPE_CLIENT_QUIT:
-            self.disconnect()
-        elif msg_type == MSG_TYPE_CONFIG_UPDATE:
-            cfg = msg.get("config")
-            if "logger" in cfg:
-                self.parse_config_update_logger(cfg)
-            if "log_level" in cfg:
-                self.parse_config_update_log_level(cfg)
-        elif msg_type == MSG_TYPE_DEBUG:
-            dbg = msg.get("cmd")
-            if "dump_state" in dbg:
-                self.dump_state()
-        else:
-            LOG.debug("Unhandled message: {msg}".format(msg=msg))
-
     def connect(self):
         LOG.info("Connecting to server at {svr}:{port}".format(svr=self.server_addr, port=self.server_port))
         connected = self.socket.connect()
@@ -300,6 +251,55 @@ class PSScanClient(object):
         ]:
             state[member] = str(getattr(self))
         LOG.critical(state)
+
+    def parse_config_update_log_level(self, cfg):
+        log_level = cfg.get("log_level")
+        if not log_level:
+            LOG.error("log_level missing from cfg while updating the log level.")
+            return
+        LOG.setLevel(log_level)
+
+    def parse_config_update_logger(self, cfg):
+        format_string_vars = {
+            "filename": platform.node(),
+            "pid": os.getpid(),
+        }
+        try:
+            logger_block = cfg.get("logger")
+            if logger_block["destination"] == "file":
+                log_filename = logger_block["filename"].format(**format_string_vars)
+                log_handler = logging.FileHandler(log_filename)
+                log_handler.setFormatter(logging.Formatter(logger_block["format"]))
+                LOG.handlers[:] = []
+                LOG.addHandler(log_handler)
+                LOG.setLevel(logger_block["level"])
+        except KeyError as ke:
+            sys.stderr.write("ERROR: Logger filename string is invalid: {txt}\n".format(txt=str(ke)))
+        except Exception as e:
+            sys.stderr.write("ERROR: Unhandled exception while trying to configure logger: {txt}\n".format(txt=str(ke)))
+
+    def parse_message(self, msg, now):
+        LOG.debug("DEBUG: parse_message: {msg}".format(msg=msg))
+        msg_type = msg.get("type")
+        if msg_type == MSG_TYPE_CLIENT_DIR_LIST:
+            self.work_list.extend(msg["work_item"])
+            if self.work_list:
+                self.exec_send_client_state_running()
+                self.state = CLIENT_STATE_RUNNING
+        elif msg_type == MSG_TYPE_CLIENT_QUIT:
+            self.disconnect()
+        elif msg_type == MSG_TYPE_CONFIG_UPDATE:
+            cfg = msg.get("config")
+            if "logger" in cfg:
+                self.parse_config_update_logger(cfg)
+            if "log_level" in cfg:
+                self.parse_config_update_log_level(cfg)
+        elif msg_type == MSG_TYPE_DEBUG:
+            dbg = msg.get("cmd")
+            if "dump_state" in dbg:
+                self.dump_state()
+        else:
+            LOG.debug("Unhandled message: {msg}".format(msg=msg))
 
     def stats_merge(self, now):
         return {}
