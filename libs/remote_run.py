@@ -32,6 +32,7 @@ class RemoteRun(object):
         self.callback_function = args.get("callback", self.handle_callback)
         self.poll_timeout = args.get("poll_timeout", DEFAULT_PROC_POLL_TIMEOUT)
         self.remote_clients = {}
+        self.terminate_client = False
 
     def _decode_clients(self, client_config):
         clients = []
@@ -76,12 +77,21 @@ class RemoteRun(object):
             pass
         # Wait for the process to terminate or for a signal to terminate
         valid = subproc.poll()
-        while valid is None or event.is_set():
+        while (valid is None) or (not event.is_set()):
             event.wait(self.poll_timeout)
             valid = subproc.poll()
-        stdout, stderr = subproc.communicate()
-        response = "\n".join([stdout, stderr])
-        self.callback_function(client, thread_id, {"state": "end", "exit_code": code, "response": response})
+        if self.terminate:
+            try:
+                subproc.terminate()
+            except:
+                pass
+        else:
+            stdout, stderr = subproc.communicate(timeout=2)
+            response = "\n".join([stdout, stderr])
+            try:
+                self.callback_function(client, thread_id, {"state": "end", "exit_code": code, "response": response})
+            except Exception as e:
+                pass
         self.disconnect(thread_id)
 
     def connect(self, clients=[]):
@@ -129,3 +139,7 @@ class RemoteRun(object):
         keys = list(self.remote_clients.keys())
         for key in keys:
             self.disconnect(key)
+
+    def terminate(self):
+        self.terminate = True
+        self.shutdown()
