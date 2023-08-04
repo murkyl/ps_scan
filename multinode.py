@@ -12,7 +12,7 @@ __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 # fmt: on
-# import copy
+import copy
 import logging
 import multiprocessing as mp
 import optparse
@@ -38,14 +38,7 @@ from helpers.constants import *
 try:
     import resource
 except:
-
-    class resource:
-        def setrlimit(a, b):
-            pass
-
-        def getrlimit(a):
-            return "resource limit not available"
-
+    pass
 
 LOG = logging.getLogger()
 
@@ -132,6 +125,7 @@ class PSScanClient(object):
     def parse_config_update_logger(self, cfg):
         format_string_vars = {
             "filename": platform.node(),
+            "pid": os.getpid(),
         }
         try:
             logger_block = cfg.get("logger")
@@ -175,6 +169,7 @@ class PSScanClient(object):
             return
         continue_running = True
         start_wall = time.time()
+
         # Main client processing loop
         while continue_running:
             rlist, _, xlist = select.select(self.wait_list, [], self.wait_list, self.poll_interval)
@@ -205,11 +200,13 @@ class PSScanClient(object):
                 self.wait_list.remove(self.socket)
                 continue_running = False
                 break
+
             # Determine if we should send a statistics update
             cur_stats_count = (now - start_wall) // self.stats_output_interval
             if cur_stats_count > self.stats_output_count:
                 self.stats_output_count = cur_stats_count
                 self._exec_send_status_stats(now)
+
             # Determine if we should send a directory queue count update
             cur_dir_count = (now - start_wall) // self.dir_output_interval
             if cur_dir_count > self.dir_output_count:
@@ -254,7 +251,7 @@ class PSScanCommandClient(object):
             }
         )
 
-    def connect(self):
+    def send_command(self):
         if not self.commands:
             LOG.info("No commands to send. No connection to server required.")
             return
@@ -270,7 +267,7 @@ class PSScanCommandClient(object):
         else:
             LOG.error("Unknown command: {cmd}".format(cmd=cmd))
         time.sleep(1)
-        self.socket.disconnect()
+        self.socket.disconnect()    
 
 
 class PSScanServer(Hydra.HydraServer):
@@ -282,9 +279,11 @@ class PSScanServer(Hydra.HydraServer):
         args: dictionary
             node_list: list - List of clients to auto-start. Format of each entry is in remote_run module
             queue_timeout: int - Number of seconds to wait for new messages before continuing with the processing loop
+            request_work_interval: int - Number of seconds between requests to a client to return work
             scan_path: list - List of paths to scan
             script_path: str - Full path to script to run on clients
             server_connect_addr:str - FQDN/IP that clients should use to connect
+            stats_interval: int - Number of seconds between each statistics update
         """
         args["async_server"] = True
         super(PSScanServer, self).__init__(args=args)
@@ -292,13 +291,14 @@ class PSScanServer(Hydra.HydraServer):
         self.client_state = {}
         self.connect_addr = args.get("server_connect_addr", None)
         self.continue_running = True
-        self.stats_output_count = 0
-        self.stats_output_interval = args.get("stats_interval", DEFAULT_STATS_OUTPUT_INTERVAL)
         self.msg_q = queue.Queue()
         self.node_list = args.get("node_list", None)
         self.queue_timeout = args.get("queue_timeout", DEFAULT_QUEUE_TIMEOUT)
         self.remote_state = None
+        self.request_work_interval = args.get("request_work_interval", DEFAULT_REQUEST_WORK_INTERVAL)
         self.script_path = args.get("script_path", None)
+        self.stats_output_count = 0
+        self.stats_output_interval = args.get("stats_interval", DEFAULT_STATS_OUTPUT_INTERVAL)
         self.work_list = args.get("scan_path", [])
         if not (self.connect_addr and self.script_path):
             raise Exception("Server connect address and script path is required")
@@ -326,7 +326,7 @@ class PSScanServer(Hydra.HydraServer):
                     "logger": {
                         "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s",
                         "destination": "file",
-                        "filename": "log-{filename}.txt",
+                        "filename": "log-{filename}-{pid}.txt",
                         "level": LOG.getEffectiveLevel(),
                     }
                 },
@@ -350,6 +350,32 @@ class PSScanServer(Hydra.HydraServer):
             LOG.error("Work queue was not empty but unable to get a work item to send to the new client")
         return False
 
+    def _exec_send_quit(self, client):
+        self.send(
+            client,
+            {
+                "type": MSG_TYPE_CLIENT_QUIT,
+            },
+        )
+
+    def _exec_send_req_dir_list(self, client):
+        self.send(
+            client,
+            {
+                "type": MSG_TYPE_CLIENT_REQ_DIR_LIST,
+            },
+        )
+                        
+    def _exec_send_work_items(self, client, work_items):
+        self.send(
+            client,
+            {
+                "type": MSG_TYPE_CLIENT_DIR_LIST,
+                "work_item": work_items,
+            },
+        )
+        return True
+
     def _exec_toggle_debug(self):
         cur_level = LOG.getEffectiveLevel()
         if cur_level != logging.DEBUG:
@@ -367,8 +393,22 @@ class PSScanServer(Hydra.HydraServer):
 
     def dump_state(self):
         LOG.critical("\nDumping state\n" + "=" * 20)
-        LOG.critical("Work queue size: {data}".format(data=len(self.work_list)))
-        LOG.critical("Current clients: {data}".format(data=self.clients))
+        state = {}
+        for member in [
+            "client_count",
+            "connect_addr",
+            "continue_running",
+            "node_list",
+            "queue_timeout",
+            "remote_state",
+            "request_work_interval",
+            "script_path",
+            "stats_output_count",
+            "stats_output_interval",
+            "work_list",
+        ]:
+            state[member] = str(getattr(self))
+        LOG.critical(state)
 
     def handler_client_command(self, client, msg):
         """
@@ -415,6 +455,27 @@ class PSScanServer(Hydra.HydraServer):
             self.remote_state = RR.RemoteRun({"callback": self.remote_callback})
             self.remote_state.connect(self.node_list)
 
+    def output_statistics(self, now):
+        # TODO: Fix this!
+        # temp_stats = misc.merge_process_stats(process_states) or {}
+        # new_files_processed = temp_stats.get("files_processed", stats_last_files_processed)
+        # stats_fps_window.add_sample(new_files_processed - stats_last_files_processed)
+        # stats_last_files_processed = new_files_processed
+        # print_interim_statistics(
+        #    temp_stats,
+        #    now,
+        #    start_wall,
+        #    stats_fps_window.get_all_windows(),
+        #    options.stats_interval,
+        # )
+        LOG.debug("DEBUG: OUTPUT STATS")
+        pass
+    
+    def output_statistics_final(self, now, total_time):
+        # TODO: Merge stats and output
+        LOG.debug("DEBUG: OUTPUT FINAL STATS")
+        pass
+    
     def parse_message(self, msg, now):
         if msg["type"] == MSG_TYPE_CLIENT_DATA:
             LOG.debug("Client data: {data}".format(data=msg))
@@ -499,8 +560,9 @@ class PSScanServer(Hydra.HydraServer):
     def serve(self):
         LOG.info("Starting server")
         start_wall = time.time()
-        thread_id = self.start()
+        self.start()
         self.launch_remote_processes()
+
         # Start main processing loop
         # Wait for clients to connect, request work, and redistribute work as needed.
         while self.continue_running:
@@ -528,68 +590,82 @@ class PSScanServer(Hydra.HydraServer):
             #   The -1 is for a 1 second offset to allow time for stats to come from processes
             cur_stats_count = (now - start_wall) // self.stats_output_interval
             if cur_stats_count > self.stats_output_count:
-                # TODO: Fix this!
-                # temp_stats = misc.merge_process_stats(process_states) or {}
-                # new_files_processed = temp_stats.get("files_processed", stats_last_files_processed)
-                # stats_fps_window.add_sample(new_files_processed - stats_last_files_processed)
-                # stats_last_files_processed = new_files_processed
-                # print_interim_statistics(
-                #    temp_stats,
-                #    now,
-                #    start_wall,
-                #    stats_fps_window.get_all_windows(),
-                #    options.stats_interval,
-                # )
                 self.stats_output_count = cur_stats_count
+                self.output_statistics(now)
 
             # Check all our client states to gather which are idle, which have work dirs, and which want work
             self.continue_running = False
-            idle_procs = 0
-            have_dirs_procs = []
-            want_work_procs = []
+            idle_clients = 0
+            have_dirs_clients = []
+            want_work_clients = []
             client_keys = self.client_state.keys()
             for key in client_keys:
                 client = self.client_state[key]
                 if not self.continue_running and client["status"] != CLIENT_STATE_STOPPED:
                     self.continue_running = True
                 if client["status"] in (CLIENT_STATE_IDLE, CLIENT_STATE_STOPPED):
-                    idle_procs += 1
+                    idle_clients += 1
                 # Check if we need to request or send any directories to existing processes
                 if client["want_data"]:
-                    want_work_procs.append(client)
+                    want_work_clients.append(client)
                 # Any processes that have directories are checked
-                if client["dir_count"]:
-                    have_dirs_procs.append(client)
+                if client["dir_count"] > 1:
+                    have_dirs_clients.append(client)
             if not self.continue_running and self.work_list:
                 # If there are no connected clients and there is work to do then continue running
                 self.continue_running = True
+
             # If all sub-processes are idle and we have no work items, we can terminate all the scanner processes
-            if idle_procs == len(client_keys) and not self.work_list:
+            if idle_clients == len(client_keys) and not self.work_list:
                 for key in client_keys:
                     client = self.client_state[key]
                     if client["status"] != CLIENT_STATE_STOPPED:
-                        self.send(
-                            client,
-                            {
-                                "type": MSG_TYPE_CLIENT_QUIT,
-                            },
-                        )
-                        proc["parent_conn"].send([CMD_EXIT, 0])
+                        self._exec_send_quit(client)
                 # Skip any further processing and just wait for processes to end
                 continue
-            else:
-                LOG.debug(
-                    "System not idle. Idle proces: {idle}/{total}. Work list size: {work}".format(
-                        idle=idle_procs, total=len(client_keys), work=len(self.work_list)
-                    )
-                )
-            # Send out our directories to all processes that want work if we have work to send
 
-            # If processes want work and we know some processes have work, request those processes to return work
+            # Send out our directories to all processes that want work if we have work to send
+            if want_work_clients and self.work_list:
+                LOG.debug("DEBUG: Server has work and has clients that want work")
+                got_work_clients = []
+                len_dir_list = len(self.work_list)
+                len_want_work_procs = len(want_work_clients)
+                increment = (len_dir_list // len_want_work_procs) + (1 * (len_dir_list % len_want_work_procs != 0))
+                index = 0
+                for client_key in want_work_clients:
+                    work_dirs = self.work_list[index : index + increment]
+                    if not work_dirs:
+                        continue
+                    self._exec_send_work_items(client_key, work_dirs)
+                    self.client_state[client_key]["want_data"] = 0
+                    index += increment
+                    got_work_clients.append(client_key)
+                # Remove from the want_work_clients list, any clients that got work sent to it
+                for client_key in got_work_clients:
+                    want_work_clients.remove(client_key)
+                # Clear the dir_list variable now since we have sent all our work out
+                self.work_list[:] = []
+
+            # If processes want work and we know some processes have work, request those processes return work
+            if want_work_clients and have_dirs_clients:
+                LOG.debug("DEBUG: WANT WORK PROCS & HAVE DIR PROCS")
+                for client_key in have_dirs_clients:
+                    client = self.client_state[client_key]
+                    LOG.debug("DEBUG: CLIENT: %s has dirs, evaluating if we should send message" % client_key)
+                    # Limit the number of times we request data from each client to request_work_interval seconds
+                    if (now - client["sent_data"]) > self.request_work_interval:
+                        LOG.debug("DEBUG: ACTUALLY SENDING CMD_REQ_DIR to client: %s" % client_key)
+                        self._exec_send_req_dir_list(client_key)
+                        client["sent_data"] = now
         total_wall_time = time.time() - start_wall
-        LOG.debug("{prog} shutting down.".format(prog=__title__))
+        self.output_statistics_final(now, total_wall_time)
+        LOG.info("{prog} shutting down.".format(prog=__title__))
         self.shutdown()
-        LOG.debug("{prog} shutdown complete.".format(prog=__title__))
+        LOG.info("{prog} shutdown complete.".format(prog=__title__))
+
+    def shutdown(self):
+        super(PSScanServer, self).shutdown()
+        self.remote_state.terminate()
 
 
 def get_local_internal_addr():
@@ -606,6 +682,29 @@ def get_local_internal_addr():
 
 def get_script_path():
     return os.path.abspath(__file__)
+
+
+def set_resource_limits(min_memory=DEFAULT_ULIMIT_MEMORY, force=False):
+    if not misc.is_onefs_os() and not force:
+        return
+    try:
+        LOG.debug("VMEM ulimit values: {val}".format(val=resource.getrlimit(resource.RLIMIT_VMEM)))
+    except Exception as e:
+        pass
+        #LOG.info("Could not get current resource limit setting on this platform.")
+    try:
+        physmem = int(misc.sysctl("hw.physmem"))
+    except Exception as e:
+        LOG.info("Unable to query physical memory sysctl hw.physmem: {err}".format(err=e))
+        physmem = 0
+    try:
+        if physmem > min_memory or force:
+            resource.setrlimit(resource.RLIMIT_VMEM, (options.ulimit_memory, options.ulimit_memory))
+            LOG.info("Set VMEM ulimit to: {val} bytes".format(val=options.ulimit_memory))
+        else:
+            LOG.info("Machine does not meet minimum physical memory size to increase memory limit automatically.")
+    except Exception as e:
+        LOG.info("Unable to set resource limit setting on this platform.")
 
 
 def main():
@@ -632,7 +731,7 @@ def main():
                 "server_addr": options.addr,
             }
         )
-        client.connect()
+        client.send_command()
     elif args[0] in ("auto", "server"):
         LOG.info("Starting server")
         # TODO: Need to get this from config file or CLI options
@@ -642,7 +741,19 @@ def main():
                 "type": "onefs",
             },
             {
+                "endpoint": "5",
+                "type": "onefs",
+            },
+            {
                 "endpoint": "6",
+                "type": "onefs",
+            },
+            {
+                "endpoint": "6",
+                "type": "onefs",
+            },
+            {
+                "endpoint": "7",
                 "type": "onefs",
             },
             {
