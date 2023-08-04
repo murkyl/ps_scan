@@ -12,7 +12,7 @@ __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 # fmt: on
-import copy
+# import copy
 import logging
 import multiprocessing as mp
 import optparse
@@ -25,20 +25,22 @@ import subprocess
 import sys
 import time
 
-import elasticsearch_wrapper
-import scanit
-import user_handlers
-import helpers.misc as misc
-import helpers.sliding_window_stats as sliding_window_stats
-import libs.hydra as Hydra
-import libs.remote_run as RR
-from helpers.cli_parser import *
-from helpers.constants import *
-
 try:
     import resource
 except:
     pass
+
+import elasticsearch_wrapper
+import scanit
+import user_handlers
+import helpers.misc as misc
+from helpers.cli_parser import *
+from helpers.constants import *
+
+# import helpers.sliding_window_stats as sliding_window_stats
+import libs.hydra as Hydra
+import libs.remote_run as RR
+
 
 LOG = logging.getLogger()
 
@@ -83,9 +85,12 @@ class PSScanClient(object):
         """
         self.dir_output_count = 0
         self.dir_output_interval = args.get("dir_output_interval", DEFAULT_DIR_OUTPUT_INTERVAL)
+        self.dir_request_interval = args.get("dir_request_interval", DEFAULT_DIR_REQUEST_INTERVAL)
         self.poll_interval = args.get("poll_interval", DEFAULT_CMD_POLL_INTERVAL)
+        self.scanner = scanit.ScanIt()
         self.server_addr = args.get("server_addr", Hydra.DEFAULT_SERVER_ADDR)
         self.server_port = args.get("server_port", Hydra.DEFAULT_SERVER_PORT)
+        self.sent_data = 0
         self.socket = Hydra.HydraSocket(
             {
                 "server_addr": self.server_addr,
@@ -94,9 +99,34 @@ class PSScanClient(object):
         )
         self.stats_output_count = 0
         self.stats_output_interval = args.get("stats_interval", DEFAULT_STATS_OUTPUT_INTERVAL)
+        self.status = CLIENT_STATE_STARTING
         self.wait_list = [self.socket]
+        self.want_data = time.time()
         self.work_list = []
+        self._init_scanner()
+        #custom_state = self.scanner.get_custom_state()
+        #user_handlers.init_custom_state(custom_state[0])
 
+    def _exec_send_req_dir_list(self):
+        self.socket.send(
+            {
+                "type": MSG_TYPE_CLIENT_REQ_DIR_LIST,
+            }
+        )
+    
+    def _exec_send_client_state_idle(self):
+        self.socket.send(
+            {
+                "type": MSG_TYPE_CLIENT_STATE_IDLE,
+            }
+        )
+        
+    def _exec_send_client_state_running(self):
+        self.socket.send(
+            {
+                "type": MSG_TYPE_CLIENT_STATE_RUNNING,
+            }
+        )
     def _exec_send_status_stats(self, now):
         stats_data = self.stats_merge(now)
         self.socket.send(
@@ -114,6 +144,23 @@ class PSScanClient(object):
                 "data": len(self.work_list),  # TODO: Need to consolidate data from each subprocess
             }
         )
+
+    def _init_scanner(self):
+        s = self.scanner
+        for attrib in [
+            "dir_chunk",
+            "dir_priority_count",
+            "file_chunk",
+            "file_q_cutoff",
+            "file_q_min_cutoff",
+        ]:
+            pass
+        s.exit_on_idle = False
+        #s.handler_custom_stats =
+        #s.handler_file = 
+        #s.handler_init_thread =
+        s.num_threads = 4 # TODO:
+        s.processing_type = scanit.PROCESS_TYPE_ADVANCED
 
     def parse_config_update_log_level(self, cfg):
         log_level = cfg.get("log_level")
@@ -146,6 +193,9 @@ class PSScanClient(object):
         msg_type = msg.get("type")
         if msg_type == MSG_TYPE_CLIENT_DIR_LIST:
             self.work_list.extend(msg["work_item"])
+            if self.work_list:
+                self.exec_send_client_state_running()
+                self.state = CLIENT_STATE_RUNNING
         elif msg_type == MSG_TYPE_CLIENT_QUIT:
             self.disconnect()
         elif msg_type == MSG_TYPE_CONFIG_UPDATE:
@@ -169,11 +219,13 @@ class PSScanClient(object):
             return
         continue_running = True
         start_wall = time.time()
-
+        self.scanner.start()
+        
         # Main client processing loop
         while continue_running:
             rlist, _, xlist = select.select(self.wait_list, [], self.wait_list, self.poll_interval)
             now = time.time()
+            cur_dir_q_size = self.scanner.get_dir_queue_size()
             if rlist:
                 data = self.socket.recv()
                 msg_type = data.get("type")
@@ -212,10 +264,22 @@ class PSScanClient(object):
             if cur_dir_count > self.dir_output_count:
                 self.dir_output_count = cur_dir_count
                 self._exec_send_status_dir_count()
+            
             # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
-            # if (cur_dir_q_size == 0) and (now - process_state["want_data"] > dir_request_interval):
-            #    process_state["want_data"] = now
-            #    conn_pipe.send([CMD_REQ_DIR, cur_dir_q_size, scanner.get_file_queue_size()])
+            if (cur_dir_q_size == 0) and (now - self.want_data > self.dir_request_interval):
+                self.want_data = now
+                self._exec_send_req_dir_list()
+            
+            # Check if the scanner is idle
+            if (
+                not self.work_list
+                and not self.scanner.get_file_queue_size()
+                and not self.scanner.is_processing()
+                and self.status != CLIENT_STATE_IDLE
+            ):
+                self.status = CLIENT_STATE_IDLE
+                self._exec_send_client_state_idle()
+            
 
     def dump_state(self):
         LOG.critical("\nDumping state\n" + "=" * 20)
@@ -224,19 +288,21 @@ class PSScanClient(object):
             "dir_output_count",
             "dir_output_interval",
             "poll_interval",
+            "sent_data",
             "server_addr",
             "server_port",
             "server_socket",
             "stats_output_count",
             "stats_output_interval",
             "wait_list",
+            "want_data",
             "work_list",
         ]:
             state[member] = str(getattr(self))
         LOG.critical(state)
 
     def stats_merge(self, now):
-        pass
+        return {}
 
 
 class PSScanCommandClient(object):
@@ -267,7 +333,7 @@ class PSScanCommandClient(object):
         else:
             LOG.error("Unknown command: {cmd}".format(cmd=cmd))
         time.sleep(1)
-        self.socket.disconnect()    
+        self.socket.disconnect()
 
 
 class PSScanServer(Hydra.HydraServer):
@@ -365,7 +431,7 @@ class PSScanServer(Hydra.HydraServer):
                 "type": MSG_TYPE_CLIENT_REQ_DIR_LIST,
             },
         )
-                        
+
     def _exec_send_work_items(self, client, work_items):
         self.send(
             client,
@@ -470,22 +536,23 @@ class PSScanServer(Hydra.HydraServer):
         # )
         LOG.debug("DEBUG: OUTPUT STATS")
         pass
-    
+
     def output_statistics_final(self, now, total_time):
         # TODO: Merge stats and output
         LOG.debug("DEBUG: OUTPUT FINAL STATS")
         pass
-    
+
     def parse_message(self, msg, now):
         if msg["type"] == MSG_TYPE_CLIENT_DATA:
-            LOG.debug("Client data: {data}".format(data=msg))
             client_idx = msg["client"]
             cur_client = self.client_state.get(client_idx)
             data = msg["data"]
+            cid = cur_client["id"]
+            LOG.debug("[Client {cid}] - Data: {data}".format(cid=cid, data=msg))
             data_type = data.get("type")
             if data_type == "cmd":
                 cmd = data.get("cmd")
-                LOG.debug("Command received: {cmd}".format(cmd=cmd))
+                LOG.debug("[Client {cid}] - Command: {cmd}".format(cid=cid, cmd=cmd))
                 if cmd == PS_CMD_QUIT:
                     return {"cmd": PS_CMD_QUIT}
                 elif cmd == PS_CMD_DUMPSTATE:
@@ -493,7 +560,7 @@ class PSScanServer(Hydra.HydraServer):
                 elif cmd == PS_CMD_TOGGLEDEBUG:
                     self._exec_toggle_debug()
                 else:
-                    LOG.error("Unknown command received: {cmd}".format(cmd=cmd))
+                    LOG.error("[Client {cid}] - Unknown command: {cmd}".format(cid=cid, cmd=cmd))
             elif data_type == MSG_TYPE_CLIENT_DIR_LIST:
                 cur_client["sent_data"] = 0
                 cur_client["want_data"] = 0
@@ -516,18 +583,18 @@ class PSScanServer(Hydra.HydraServer):
             elif data_type == MSG_TYPE_CLIENT_REQ_DIR_LIST:
                 cur_client["want_data"] = now
             else:
-                LOG.error("Unknown command received: {cmd}".format(cmd=data_type))
+                LOG.error("[Client {cid}] - Unknown command: {cmd}".format(cid=cid, cmd=data_type))
         elif msg["type"] == MSG_TYPE_CLIENT_CLOSED:
-            LOG.debug("Client socket closed: {data}".format(data=msg))
             cur_client = self.client_state.get(msg["client"])
+            LOG.debug("[Client {cid}] - Socket closed: {data}".format(cid=cur_client["id"], data=msg))
             cur_client["dir_count"] = 0
             cur_client["sent_data"] = 0
             cur_client["status"] = CLIENT_STATE_STOPPED
             cur_client["want_data"] = 0
         elif msg["type"] == MSG_TYPE_CLIENT_CONNECT:
-            LOG.debug("Client socket connected: {data}".format(data=msg))
             client_idx = msg["client"]
             self.client_count += 1
+            LOG.debug("[Client {cid}] - Socket connected: {data}".format(cid=self.client_count, data=msg))
             state_obj = {
                 "client": client_idx,
                 "dir_count": 0,
@@ -620,7 +687,7 @@ class PSScanServer(Hydra.HydraServer):
                 for key in client_keys:
                     client = self.client_state[key]
                     if client["status"] != CLIENT_STATE_STOPPED:
-                        self._exec_send_quit(client)
+                        self._exec_send_quit(key)
                 # Skip any further processing and just wait for processes to end
                 continue
 
@@ -691,7 +758,6 @@ def set_resource_limits(min_memory=DEFAULT_ULIMIT_MEMORY, force=False):
         LOG.debug("VMEM ulimit values: {val}".format(val=resource.getrlimit(resource.RLIMIT_VMEM)))
     except Exception as e:
         pass
-        #LOG.info("Could not get current resource limit setting on this platform.")
     try:
         physmem = int(misc.sysctl("hw.physmem"))
     except Exception as e:
@@ -740,26 +806,26 @@ def main():
                 "endpoint": "5",
                 "type": "onefs",
             },
-            {
-                "endpoint": "5",
-                "type": "onefs",
-            },
-            {
-                "endpoint": "6",
-                "type": "onefs",
-            },
+            #{
+            #    "endpoint": "5",
+            #    "type": "onefs",
+            #},
             {
                 "endpoint": "6",
                 "type": "onefs",
             },
-            {
-                "endpoint": "7",
-                "type": "onefs",
-            },
-            {
-                "endpoint": "7",
-                "type": "onefs",
-            },
+            #{
+            #    "endpoint": "6",
+            #    "type": "onefs",
+            #},
+            #{
+            #    "endpoint": "7",
+            #    "type": "onefs",
+            #},
+            #{
+            #    "endpoint": "7",
+            #    "type": "onefs",
+            #},
         ]
         ps_scan_server_options = {
             "scan_path": ["/ifs"],
