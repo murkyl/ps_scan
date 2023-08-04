@@ -215,8 +215,8 @@ class ScanIt(threading.Thread):
         self.num_threads = DEFAULT_THREAD_COUNT
         # What type of handlers will be used. The default is PROCESS_TYPE_SIMPLE which uses os.walk and assumes
         # the file handler will perform a simple stat call on each file only. When the type is set to
-        # PROCESS_TYPE_POWERSCALE, the file handler is expected to use the isi.fs.attr.get_dinode call and to also
-        # return a list of directory entries for further processing. PROCESS_TYPE_POWERSCALE can only be used if the
+        # PROCESS_TYPE_ADVANCED, the file handler is expected to use the isi.fs.attr.get_dinode call and to also
+        # return a list of directory entries for further processing. PROCESS_TYPE_ADVANCED can only be used if the
         # script detects it is running on a PowerScale cluster
         self.processing_type = DEFAULT_PROCESS_TYPE
         # Set with directory names to skip processing
