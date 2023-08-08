@@ -96,13 +96,13 @@ onefs: Works on OneFS based file systems.
     parser.add_option(
         "--no-acl",
         action="store_true",
-        default=False,
+        default=DEFAULT_PARSE_SKIP_ACLS,
         help="Skip parsing ACL file permissions on OneFS systems",
     )
     parser.add_option(
         "--extra",
         action="store_true",
-        default=False,
+        default=DEFAULT_PARSE_EXTRA_ATTR,
         help="Parse additional file metadata information on OneFS systems",
     )
     # parser.add_option(
@@ -114,7 +114,7 @@ onefs: Works on OneFS based file systems.
     parser.add_option(
         "--user-attr",
         action="store_true",
-        default=False,
+        default=DEFAULT_PARSE_USER_ATTR,
         help="Parse user defined extended attributes for each file on OneFS systems",
     )
     parser.add_option(
