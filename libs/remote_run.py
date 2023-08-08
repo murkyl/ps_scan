@@ -61,6 +61,9 @@ class RemoteRun(object):
         response = None
         valid = True
         # Validate command
+        for i in range(len(cmd)):
+            cmd[i] = str(cmd[i])
+        # TODO: Add additional command validation routines
         if not valid:
             self.callback_function(client, thread_id, {"state": "invalid_params"})
             return
@@ -74,21 +77,23 @@ class RemoteRun(object):
             )
         elif client["type"] == "ssh":
             # TODO: Add support for SSH through the use of SSH keys or through screen capture of prompt
-            pass
+            raise Exception("SSH client type is not implemented")
+        else:
+            raise Exception("Unsupported client type: {msg}".format(msg=client["type"]))
         # Wait for the process to terminate or for a signal to terminate
         valid = subproc.poll()
-        while (valid is None) or (not event.is_set()):
+        while (valid is None) and (not event.is_set()):
             event.wait(self.poll_timeout)
             valid = subproc.poll()
-        if self.terminate:
+        if self.terminate_client:
             try:
                 subproc.terminate()
             except:
                 pass
         else:
-            stdout, stderr = subproc.communicate(timeout=2)
-            response = "\n".join([stdout, stderr])
             try:
+                stdout, stderr = subproc.communicate()
+                response = "\n".join([stdout, stderr])
                 self.callback_function(client, thread_id, {"state": "end", "exit_code": code, "response": response})
             except Exception as e:
                 pass
@@ -141,5 +146,5 @@ class RemoteRun(object):
             self.disconnect(key)
 
     def terminate(self):
-        self.terminate = True
+        self.terminate_client = True
         self.shutdown()
