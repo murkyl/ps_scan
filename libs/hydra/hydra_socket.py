@@ -195,7 +195,7 @@ class HydraSocket(object):
                         self.pipe_local.send({"type": "data", "data": msg})
                         continue
                     if header["type"] == "keepalive":
-                        LOG.debug("Received client keepalive")
+                        LOG.debug("Received remote keepalive")
                         self.last_keepalive = time.time()
                         continue
                     if header["type"] == "flush":
