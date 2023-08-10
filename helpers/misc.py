@@ -71,7 +71,7 @@ def is_onefs_os():
 
 def merge_process_stats(process_states):
     temp_stats = None
-    for state in process_states:
+    for state in process_states.values():
         if not state["stats"]:
             # No stats for this process yet
             continue
