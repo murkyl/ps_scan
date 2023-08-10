@@ -389,21 +389,21 @@ def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE):
     return file_info
 
 
-def init_custom_state(custom_state, options):
+def init_custom_state(custom_state, options={}):
     # TODO: Parse the custom tag input file and produce a parser
     # Add any common parameters that each processing thread should have access to
     # by adding values to the custom_state dictionary
     # custom_state["custom_tagging"] = lambda x: None
     custom_state["custom_stats"] = {}
-    custom_state["extra_attr"] = options.extra
-    custom_state["max_send_q_size"] = options.es_max_send_q_size
-    custom_state["no_acl"] = options.no_acl
+    custom_state["extra_attr"] = options.get("extra", DEFAULT_PARSE_EXTRA_ATTR)
+    custom_state["max_send_q_size"] = options.get("ex_max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
+    custom_state["no_acl"] = options.get("no_acl", DEFAULT_PARSE_SKIP_ACLS)
     custom_state["node_pool_translation"] = {}
     custom_state["phys_block_size"] = IFS_BLOCK_SIZE
     custom_state["send_q"] = queue.Queue()
-    custom_state["send_q_sleep"] = options.es_send_q_sleep
-    custom_state["send_to_es"] = options.es_user and options.es_pass and options.es_url and options.es_index
-    custom_state["user_attr"] = options.user_attr
+    custom_state["send_q_sleep"] = options.get("es_send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
+    custom_state["send_to_es"] = options.get("es_user") and options.get("es_pass") and options.get("es_index")
+    custom_state["user_attr"] = options.get("user_attr", DEFAULT_PARSE_USER_ATTR)
     if misc.is_onefs_os():
         # Query the cluster for node pool name information
         try:
