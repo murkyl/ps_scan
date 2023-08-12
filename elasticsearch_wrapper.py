@@ -216,12 +216,10 @@ def es_create_connection(url, username, password, index):
     return [es_client, [index + x for x in ["_file", "_dir"]], "%s_state" % index]
 
 
-def es_create_settings(options=None):
-    if not options:
-        return None
+def es_create_index_settings(options={}):
     new_settings = copy.deepcopy(ES_INDEX_SETTINGS)
-    new_settings["number_of_shards"] = options.es_shards
-    new_settings["number_of_replicas"] = options.es_replicas
+    new_settings["number_of_shards"] = options.get("number_of_shards", ES_INDEX_SETTINGS["number_of_shards"])
+    new_settings["number_of_replicas"] = options.get("number_of_replicas", ES_INDEX_SETTINGS["number_of_replicas"])
     return new_settings
 
 
@@ -241,7 +239,7 @@ def es_delete_index(es_client):
 def es_init_index(es_client, index, settings=None):
     LOG.debug("Creating new indices with mapping: {idx}_file and {idx}_dir".format(idx=index))
     for idx in es_client[1]:
-        resp = es_client[0].create_index(idx, mapping=ES_INDEX_MAPPING, settings=settings)
+        resp = es_client[0].create_index(idx, mapping=settings.get("mapping", ES_INDEX_MAPPING), settings=settings)
         LOG.debug("Create index response: %s" % resp)
         if resp.get("status", 200) not in [200]:
             if resp["error"]["type"] == "resource_already_exists_exception":
@@ -257,20 +255,20 @@ def es_init_index(es_client, index, settings=None):
             LOG.error(json.dumps(resp.get("error", {})))
 
 
-def es_start_processing(es_client, options):
+def es_start_processing(es_client, options={}):
     # When using Elasticsearch, set the index configuration to speed up bulk updates
     LOG.debug("Updating index settings")
-    body = ES_REFERSH_INTERVAL % options.es_bulk_refresh
+    body = ES_REFERSH_INTERVAL % options.get("bulk_refresh_interval", DEFAULT_ES_BULK_REFRESH_INTERVAL)
     for idx in es_client[1]:
         resp = es_client[0].update_index_settings(body_str=body, index_name=idx)
         if resp.get("status", 200) not in [200]:
             LOG.error(resp)
 
 
-def es_stop_processing(es_client, options):
+def es_stop_processing(es_client, options={}):
     # When using Elasticsearch, reset the index configuration after bulk updates and flush the index
     LOG.debug("Reset index settings, flush, and force merge")
-    body = ES_REFERSH_INTERVAL % "1s"
+    body = ES_REFERSH_INTERVAL % options.get("standard_refresh_interval", DEFAULT_ES_STANDARD_REFRESH_INTERVAL)
     for idx in es_client[1]:
         resp = es_client[0].update_index_settings(body_str=body, index_name=idx)
         if resp.get("status", 200) not in [200]:
