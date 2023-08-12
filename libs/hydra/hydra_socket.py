@@ -165,6 +165,7 @@ class HydraSocket(object):
         self.wait_list.append(self.remote_socket)
         self.last_keepalive_sent = time.time()
         self.thread_handler = threading.Thread(target=self._socket_processor, kwargs={})
+        self.thread_handler.daemon = True
         self.thread_handler.start()
         return True
 

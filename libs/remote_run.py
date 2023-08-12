@@ -116,6 +116,7 @@ class RemoteRun(object):
                     "thread_id": self.next_client_id,
                 },
             )
+            thread_handle.daemon = True
             self.remote_clients[self.next_client_id] = {
                 "thread_handle": thread_handle,
                 "client": client,

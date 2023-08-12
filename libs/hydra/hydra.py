@@ -138,6 +138,7 @@ class HydraServer(object):
             self._setup_server()
         if self.async_server:
             self.server_thread = threading.Thread(target=self._serve_forever, kwargs={})
+            self.server_thread.daemon = True
             self.server_thread.start()
             return self.server_thread
         self._serve_forever()

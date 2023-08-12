@@ -182,6 +182,7 @@ class ScanIt(threading.Thread):
         super(ScanIt, self).__init__(args=args, kwargs=kwargs)
         self.common_stats = self._create_stats_state()
         self.custom_state = {}
+        self.daemon = True
         # process_alive is set to -1 during initialization and then set to True after all threads are initialized
         self.process_alive = -1
         self.run_start = None
@@ -479,6 +480,7 @@ class ScanIt(threading.Thread):
                     "ptype": self.processing_type,
                 },
             )
+            thandle.daemon = True
             thread_instance["handle"] = thandle
             if self.handler_init_thread:
                 self.handler_init_thread(thread_id, self.custom_state, thread_instance["custom"])
