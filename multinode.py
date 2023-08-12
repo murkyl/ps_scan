@@ -93,6 +93,7 @@ class PSScanClient(object):
             server_port: int - Port to connect to the ps_scan server
             stats_interval: int - Time in seconds between each statistics update to the server
         """
+        self.client_config = {}
         self.dir_output_count = 0
         self.dir_output_interval = args.get("dir_output_interval", DEFAULT_DIR_OUTPUT_INTERVAL)
         self.dir_request_interval = args.get("dir_request_interval", DEFAULT_DIR_REQUEST_INTERVAL)
@@ -189,8 +190,8 @@ class PSScanClient(object):
         s.handler_init_thread = user_handlers.init_thread
         s.handler_file = self.scanner_file_handler
         # TODO: Change how the user handler is passed in and initialized
-        custom_state = s.get_custom_state()
-        user_handlers.init_custom_state(custom_state[0])
+        custom_state, custom_threads_state = s.get_custom_state()
+        user_handlers.init_custom_state(custom_state)
 
     def connect(self):
         LOG.info("Connecting to server at {svr}:{port}".format(svr=self.server_addr, port=self.server_port))
@@ -201,6 +202,8 @@ class PSScanClient(object):
         continue_running = True
         start_wall = time.time()
         self.scanner.start()
+        # Send initial empty stats block to the server
+        self._exec_send_status_stats(time.time())
 
         # Main client processing loop
         while continue_running:
@@ -214,32 +217,26 @@ class PSScanClient(object):
                     cmd = data.get("cmd")
                     LOG.debug("Command received: {cmd}".format(cmd=cmd))
                     if cmd == "closed":
-                        self.scanner.terminate()
-                        self.socket.disconnect()
-                        self.wait_list.remove(self.socket)
+                        self.disconnect()
                         continue_running = False
                         continue
                 elif msg_type == "data":
                     msg_data = data.get("data")
                     response = self.parse_message(msg_data, now)
                     if response.get("cmd") == PS_CMD_QUIT:
-                        self.scanner.terminate()
-                        self.socket.disconnect()
-                        self.wait_list.remove(self.socket)
+                        self.disconnect()
                         continue_running = False
                         continue
                 elif msg_type is None:
                     LOG.debug("Socket ready to read but no data was received. We should shutdown now.")
-                    self.scanner.terminate()
-                    self.socket.disconnect()
-                    self.wait_list.remove(self.socket)
+                    self.disconnect()
                     continue_running = False
                     continue
                 else:
                     LOG.debug("Unexpected message received: {data}".format(data=data))
             if xlist:
                 LOG.error("Socket encountered an error or was closed")
-                self.wait_list.remove(self.socket)
+                self.disconnect()
                 continue_running = False
                 break
 
@@ -269,11 +266,26 @@ class PSScanClient(object):
             ):
                 self.status = CLIENT_STATE_IDLE
                 self._exec_send_client_state_idle()
+                # Send a stats update whenever we go idle
+                self._exec_send_status_stats(now)
+
+    def disconnect(self):
+        custom_state, custom_threads_state = self.scanner.get_custom_state()
+        user_handlers.shutdown(custom_state, custom_threads_state)
+        if self.scanner:
+            self.scanner.terminate()
+            self.scanner = None
+        if self.socket in self.wait_list:
+            self.wait_list.remove(self.socket)
+        if self.socket:
+            self.socket.disconnect()
+            self.socket = None
 
     def dump_state(self):
         LOG.critical("\nDumping state\n" + "=" * 20)
         state = {}
         for member in [
+            "client_config",
             "dir_output_count",
             "dir_output_interval",
             "dir_request_interval",
@@ -297,6 +309,12 @@ class PSScanClient(object):
         ]:
             state[member] = str(getattr(self, member))
         LOG.critical(state)
+
+    def parse_config_update(self, cfg):
+        # TODO: Re-architect how config updates are sent to the user handler/plug-in
+        custom_state, custom_threads_state = self.scanner.get_custom_state()
+        user_handlers.update_config(custom_state, cfg)
+        self.client_config = cfg
 
     def parse_config_update_log_level(self, cfg):
         log_level = cfg.get("log_level")
@@ -359,6 +377,8 @@ class PSScanClient(object):
                 self.parse_config_update_logger(cfg)
             if "log_level" in cfg:
                 self.parse_config_update_log_level(cfg)
+            if "client_config" in cfg:
+                self.parse_config_update(cfg)
         elif msg_type == MSG_TYPE_DEBUG:
             dbg = msg.get("cmd")
             if "dump_state" in dbg:
@@ -419,6 +439,7 @@ class PSScanServer(Hydra.HydraServer):
         """
         args["async_server"] = True
         super(PSScanServer, self).__init__(args=args)
+        self.client_config = args.get("client_config", {})
         self.client_count = 0
         self.client_state = {}
         self.connect_addr = args.get("server_connect_addr", None)
@@ -457,12 +478,13 @@ class PSScanServer(Hydra.HydraServer):
             {
                 "type": MSG_TYPE_CONFIG_UPDATE,
                 "config": {
+                    "client_config": self.client_config,
                     "logger": {
                         "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s",
                         "destination": "file",
                         "filename": "log-{filename}-{pid}.txt",
                         "level": LOG.getEffectiveLevel(),
-                    }
+                    },
                 },
             },
         )
@@ -562,6 +584,7 @@ class PSScanServer(Hydra.HydraServer):
         self.msg_q.put({"type": MSG_TYPE_CLIENT_CONNECT, "client": client})
 
     def handler_signal_interrupt(self, signum, frame):
+        LOG.debug("SIGINT signal received. Quiting program.")
         self.msg_q.put({"type": MSG_TYPE_QUIT})
 
     def handler_signal_usr1(self, signum, frame):
@@ -597,11 +620,11 @@ class PSScanServer(Hydra.HydraServer):
         self.stats_fps_window.add_sample(new_files_processed - self.stats_last_files_processed)
         self.stats_last_files_processed = new_files_processed
         self.print_interim_statistics(
-           temp_stats,
-           now,
-           start_wall,
-           self.stats_fps_window,
-           self.stats_output_interval,
+            temp_stats,
+            now,
+            start_wall,
+            self.stats_fps_window,
+            self.stats_output_interval,
         )
 
     def output_statistics_final(self, now, total_time):
@@ -614,11 +637,10 @@ class PSScanServer(Hydra.HydraServer):
             cur_client = self.client_state.get(client_idx)
             data = msg["data"]
             cid = cur_client["id"]
-            LOG.debug("[Client {cid}] - Data: {data}".format(cid=cid, data=msg))
             data_type = data.get("type")
             if data_type == "cmd":
                 cmd = data.get("cmd")
-                LOG.debug("[Client {cid}] - Command: {cmd}".format(cid=cid, cmd=cmd))
+                LOG.debug("[client:{cid}] - Command: {cmd}".format(cid=cid, cmd=cmd))
                 if cmd == PS_CMD_QUIT:
                     return {"cmd": PS_CMD_QUIT}
                 elif cmd == PS_CMD_DUMPSTATE:
@@ -626,33 +648,40 @@ class PSScanServer(Hydra.HydraServer):
                 elif cmd == PS_CMD_TOGGLEDEBUG:
                     self._exec_toggle_debug()
                 else:
-                    LOG.error("[Client {cid}] - Unknown command: {cmd}".format(cid=cid, cmd=cmd))
+                    LOG.error("[client:{cid}] - Unknown command: {cmd}".format(cid=cid, cmd=cmd))
             elif data_type == MSG_TYPE_CLIENT_DIR_LIST:
+                LOG.debug("[client:{cid}] - returned_directories:{data}".format(cid=cid, data=len(data["work_item"])))
                 cur_client["sent_data"] = 0
                 cur_client["want_data"] = 0
                 # Extend directory work list with items returned by the client
                 self.work_list.extend(data["work_item"])
             elif data_type == MSG_TYPE_CLIENT_STATE_IDLE:
+                LOG.debug("[client:{cid}] - New state: {data}".format(cid=cid, data="IDLE"))
                 cur_client["status"] = CLIENT_STATE_IDLE
                 cur_client["want_data"] = now
             elif data_type == MSG_TYPE_CLIENT_STATE_RUNNING:
+                LOG.debug("[client:{cid}] - New state: {data}".format(cid=cid, data="RUNNING"))
                 cur_client["status"] = CLIENT_STATE_RUNNING
                 cur_client["want_data"] = 0
             elif data_type == MSG_TYPE_CLIENT_STATE_STOPPED:
+                LOG.debug("[client:{cid}] - New state: {data}".format(cid=cid, data="STOPPED"))
                 cur_client["status"] = CLIENT_STATE_STOPPED
                 cur_client["want_data"] = 0
             elif data_type == MSG_TYPE_CLIENT_STATUS_DIR_COUNT:
+                LOG.debug("[client:{cid}] - has_queued_directories:{data}".format(cid=cid, data=data["data"]))
                 cur_client["dir_count"] = data["data"]
             elif data_type == MSG_TYPE_CLIENT_STATUS_STATS:
+                LOG.debug("[client:{cid}] - Sent statistics".format(cid=cid))
                 cur_client["stats"] = data["data"]
                 cur_client["stats_time"] = now
             elif data_type == MSG_TYPE_CLIENT_REQ_DIR_LIST:
+                LOG.debug("[client:{cid}] - Requested directory list".format(cid=cid))
                 cur_client["want_data"] = now
             else:
-                LOG.error("[Client {cid}] - Unknown command: {cmd}".format(cid=cid, cmd=data_type))
+                LOG.error("[client:{cid}] - Unknown command: {cmd}".format(cid=cid, cmd=data_type))
         elif msg["type"] == MSG_TYPE_CLIENT_CLOSED:
             cur_client = self.client_state.get(msg["client"])
-            LOG.debug("[Client {cid}] - Socket closed: {data}".format(cid=cur_client["id"], data=msg))
+            LOG.debug("[client:{cid}] - Socket closed: {data}".format(cid=cur_client["id"], data=msg))
             cur_client["dir_count"] = 0
             cur_client["sent_data"] = 0
             cur_client["status"] = CLIENT_STATE_STOPPED
@@ -660,7 +689,7 @@ class PSScanServer(Hydra.HydraServer):
         elif msg["type"] == MSG_TYPE_CLIENT_CONNECT:
             client_idx = msg["client"]
             self.client_count += 1
-            LOG.debug("[Client {cid}] - Socket connected: {data}".format(cid=self.client_count, data=msg))
+            LOG.debug("[client:{cid}] - Socket connected: {data}".format(cid=self.client_count, data=msg))
             state_obj = {
                 "client": client_idx,
                 "dir_count": 0,
@@ -717,8 +746,8 @@ class PSScanServer(Hydra.HydraServer):
                 f_queued=stats.get("files_queued", 0),
                 f_skip=stats.get("files_skipped", 0),
                 fps=stats.get("files_processed", 0) / (now - start),
-                fps_buckets = ", ".join(buckets),
-                fps_per_bucket = " - ".join(fps_per_bucket),
+                fps_buckets=", ".join(buckets),
+                fps_per_bucket=" - ".join(fps_per_bucket),
                 runtime=int(now - start),
                 ts=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             ),
@@ -886,6 +915,23 @@ def get_script_path():
     return os.path.abspath(__file__)
 
 
+def read_es_cred_file(filename):
+    es_creds = {}
+    try:
+        with open(filename) as f:
+            lines = f.readlines()
+            es_creds["user"] = lines[0].strip()
+            es_creds["password"] = lines[1].strip()
+            if len(lines) > 2:
+                es_creds["index"] = lines[2].strip()
+            if len(lines) > 3:
+                es_creds["url"] = lines[3].strip()
+    except:
+        LOG.critical("Unable to open or read the credentials file: {file}".format(file=filename))
+        sys.exit(3)
+    return es_creds
+
+
 def set_resource_limits(min_memory=DEFAULT_ULIMIT_MEMORY, force=False):
     if not misc.is_onefs_os() and not force:
         return
@@ -954,41 +1000,80 @@ def main():
                 "endpoint": "5",
                 "type": "onefs",
             },
-            # {
-            #    "endpoint": "5",
-            #    "type": "onefs",
-            # },
+            {
+                "endpoint": "5",
+                "type": "onefs",
+            },
             {
                 "endpoint": "6",
                 "type": "onefs",
             },
-            # {
-            #    "endpoint": "6",
-            #    "type": "onefs",
-            # },
-            # {
-            #    "endpoint": "7",
-            #    "type": "onefs",
-            # },
-            # {
-            #    "endpoint": "7",
-            #    "type": "onefs",
-            # },
+            {
+                "endpoint": "6",
+                "type": "onefs",
+            },
+            {
+                "endpoint": "7",
+                "type": "onefs",
+            },
+            {
+                "endpoint": "7",
+                "type": "onefs",
+            },
         ]
+        es_init_index = True
+        es_reset_index = True
+        es_shards = 1
+        es_replicas = 0
+        es_send_threads = DEFAULT_ES_THREADS
+        es_cred_file = "/ifs/zx/ps_scan/cred.txt"
+        scan_paths = ["/ifs"]
+        # TODO: END of options
+
+        es_credentials = read_es_cred_file(es_cred_file)
         ps_scan_server_options = {
-            "scan_path": ["/ifs"],
+            "client_config": {},
+            "scan_path": scan_paths,
             "script_path": get_script_path(),
             "server_port": options.port,
             "server_addr": options.addr,
             "server_connect_addr": get_local_internal_addr(),
             "node_list": None,
         }
+        if es_credentials:
+            ps_scan_server_options["client_config"]["es_credentials"] = es_credentials
+            ps_scan_server_options["client_config"]["es_send_threads"] = es_send_threads
         if args[0] == "auto":
             # Setting the node list will cause the server to automatically launch clients
             ps_scan_server_options["node_list"] = node_list
         try:
+            es_client = None
+            if es_credentials:
+                es_client = elasticsearch_wrapper.es_create_connection(
+                    es_credentials["url"],
+                    es_credentials["user"],
+                    es_credentials["password"],
+                    es_credentials["index"],
+                )
+            if es_client and (es_init_index or es_reset_index):
+                if es_reset_index:
+                    elasticsearch_wrapper.es_delete_index(es_client)
+                LOG.debug("Initializing indices for Elasticsearch: {index}".format(index=es_credentials["index"]))
+                es_index_settings = elasticsearch_wrapper.es_create_index_settings(
+                    {
+                        "number_of_shards": es_shards,
+                        "number_of_replicas": es_replicas,
+                    }
+                )
+                elasticsearch_wrapper.es_init_index(es_client, es_credentials["index"], es_index_settings)
+            if es_client:
+                # TODO: replace options from CLI
+                elasticsearch_wrapper.es_start_processing(es_client, {})
             svr = PSScanServer(ps_scan_server_options)
             svr.serve()
+            if es_client:
+                # TODO: replace options from CLI
+                elasticsearch_wrapper.es_stop_processing(es_client, {})
         except Exception as e:
             LOG.exception("Unhandled exception in server.")
 
@@ -1001,6 +1086,10 @@ if __name__ == "__main__" or __file__ == None:
     log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
     LOG.addHandler(log_handler)
     LOG.setLevel(logging.DEBUG)
+    # Disable loggers for sub modules
+    for mod_name in ["libs.hydra"]:
+        module_logger = logging.getLogger(mod_name)
+        module_logger.setLevel(logging.WARN)
     # Support scripts built into executable on Windows
     try:
         mp.freeze_support()

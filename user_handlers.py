@@ -17,6 +17,7 @@ __all__ = [
     "file_handler_pscale",
     "init_custom_state",
     "init_thread",
+    "update_config",
 ]
 # fmt: on
 import datetime
@@ -24,8 +25,10 @@ import logging
 import os
 import queue
 import stat
+import threading
 import time
 
+import elasticsearch_wrapper
 import helpers.misc as misc
 from helpers.constants import *
 
@@ -100,13 +103,13 @@ def file_handler_basic(root, filename_list, stats, now, args={}):
         except Exception as e:
             skipped += 1
             LOG.exception(e)
-    if (result_list or result_dir_list) and send_to_es:
+    if (result_list or result_dir_list) and custom_state.get("es_send_q"):
         if result_list:
-            custom_state["send_q"].put([CMD_SEND, result_list])
+            custom_state["es_send_q"].put([CMD_SEND, result_list])
         if result_dir_list:
-            custom_state["send_q"].put([CMD_SEND_DIR, result_dir_list])
+            custom_state["es_send_q"].put([CMD_SEND_DIR, result_dir_list])
         for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
-            if custom_state["send_q"].qsize() > max_send_q_size:
+            if custom_state["es_send_q"].qsize() > max_send_q_size:
                 time.sleep(send_q_sleep)
             else:
                 break
@@ -334,13 +337,14 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 os.close(fd)
             except:
                 pass
-    if (result_list or result_dir_list) and send_to_es:
+    if (result_list or result_dir_list) and custom_state.get("es_send_q"):
         if result_list:
-            custom_state["send_q"].put([CMD_SEND, result_list])
+            custom_state["es_send_q"].put([CMD_SEND, result_list])
         if result_dir_list:
-            custom_state["send_q"].put([CMD_SEND_DIR, result_dir_list])
+            custom_state["es_send_q"].put([CMD_SEND_DIR, result_dir_list])
         for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
-            if custom_state["send_q"].qsize() > max_send_q_size:
+            if custom_state["es_send_q"].qsize() > max_send_q_size:
+                # TODO: Add statistic on how many times we had to wait
                 time.sleep(send_q_sleep)
             else:
                 break
@@ -400,7 +404,7 @@ def init_custom_state(custom_state, options={}):
     custom_state["no_acl"] = options.get("no_acl", DEFAULT_PARSE_SKIP_ACLS)
     custom_state["node_pool_translation"] = {}
     custom_state["phys_block_size"] = IFS_BLOCK_SIZE
-    custom_state["send_q"] = queue.Queue()
+    # custom_state["send_q"] = queue.Queue()
     custom_state["send_q_sleep"] = options.get("es_send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
     custom_state["send_to_es"] = options.get("es_user") and options.get("es_pass") and options.get("es_index")
     custom_state["user_attr"] = options.get("user_attr", DEFAULT_PARSE_USER_ATTR)
@@ -449,3 +453,55 @@ def translate_user_group_perms(full_path, file_info):
         file_info["perms_group"].replace("gid:", "")
     else:
         file_info["perms_group"] = file_info["perms_unix_gid"]
+
+
+def update_config(custom_state, new_config):
+    LOG.critical("CONFIG UPDATE IS: %s" % new_config)
+    client_config = new_config.get("client_config", {})
+    es_credentials = client_config.get("es_credentials")
+    if es_credentials:
+        if client_config.get("es_thread_handles") is not None:
+            # TODO: Add support for closing and reconnecting to a new ES instance
+            pass
+        if custom_state.get("es_send_q") is None:
+            custom_state["es_send_q"] = queue.Queue()
+        if custom_state.get("es_send_cmd_q") is None:
+            custom_state["es_send_cmd_q"] = queue.Queue()
+        es_threads = []
+        threads_to_start = client_config.get("es_send_threads", DEFAULT_ES_THREADS)
+        for i in range(threads_to_start):
+            es_thread_instance = threading.Thread(
+                target=elasticsearch_wrapper.es_data_sender,
+                args=(
+                    custom_state["es_send_q"],
+                    custom_state["es_send_cmd_q"],
+                    es_credentials["url"],
+                    es_credentials["user"],
+                    es_credentials["password"],
+                    es_credentials["index"],
+                ),
+            )
+            es_thread_instance.daemon = True
+            es_thread_instance.start()
+            es_threads.append(es_thread_instance)
+        custom_state["es_thread_handles"] = es_threads
+    custom_state["client_config"] = client_config
+
+
+def shutdown(custom_state, custom_threads_state):
+    if custom_state.get("es_thread_handles"):
+        # Scanner is done processing. Wait for all the data to be sent to Elasticsearch
+        LOG.debug("Waiting for send queue to empty")
+        send_start = time.time()
+        send_q = custom_state.get("es_send_q")
+        while not send_q.empty():
+            time.sleep(DEFAULT_CMD_POLL_INTERVAL)
+            es_send_q_time = time.time() - send_start
+            if es_send_q_time > DEFAULT_SEND_Q_WAIT_TIME:
+                LOG.info("Send Q was not empty after {time} seconds. Force quitting.".format(time=DEFAULT_SEND_Q_WAIT_TIME))
+                break
+        LOG.debug("Sending exit command to send queue")
+        for thread_handle in custom_state.get("es_thread_handles"):
+            custom_state.get("es_send_cmd_q").put([CMD_EXIT, None])
+        for thread_handle in custom_state.get("es_thread_handles"):
+            thread_handle.join()
