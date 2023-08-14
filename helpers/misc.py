@@ -28,6 +28,7 @@ import copy
 import platform
 import subprocess
 from constants import *
+
 try:
     import resource
 except:

@@ -28,11 +28,11 @@ import time
 import elasticsearch_wrapper
 import scanit
 import user_handlers
+import helpers.cli_parser as cli_parser
 import helpers.misc as misc
 import helpers.sliding_window_stats as sliding_window_stats
 import libs.hydra as Hydra
 import libs.remote_run as rr
-from helpers.cli_parser import *
 from helpers.constants import *
 
 
@@ -598,6 +598,7 @@ class PSScanServer(Hydra.HydraServer):
         run_cmd = [
             "python",
             self.script_path,
+            "--op",
             "client",
             "--port",
             str(self.server_port),
@@ -764,7 +765,7 @@ class PSScanServer(Hydra.HydraServer):
         Avg files/second: {a_fps:,.1f}
 """.format(
                 wall_tm=wall_time,
-                avg_q_tm=stats["q_wait_time"] / num_clients,
+                avg_q_tm=stats.get("q_wait_time", 0) / num_clients,
                 dht=stats.get("dir_handler_time", 0),
                 fht=stats.get("file_handler_time", 0),
                 p_dirs=stats.get("dirs_processed", 0),
@@ -920,28 +921,57 @@ def read_es_cred_file(filename):
 
 
 def main():
-    # TODO: Leverage ps_scan CLI parser and extend
-    parser = optparse.OptionParser()
-    parser.add_option("--port", action="store", type="int", default=Hydra.DEFAULT_SERVER_PORT)
-    parser.add_option("--addr", action="store", default=Hydra.DEFAULT_SERVER_ADDR)
-    parser.add_option("--cmd", action="append", type="str", default=[])
-    if len(sys.argv) < 2 or sys.argv[1] not in ("auto", "client", "command", "server"):
-        sys.stderr.write("{prog} [--port=#] [--addr=#] <auto|client|command|server>\n".format(prog=sys.argv[0]))
-        sys.exit(1)
-    (options, args) = parser.parse_args(sys.argv[1:])
-    mem_resource_limit = DEFAULT_ULIMIT_MEMORY
+    # Setup command line parser and parse agruments
+    (parser, options, args) = cli_parser.parse_cli(sys.argv, __version__, __date__)
 
-    old_limit, new_limit = misc.set_resource_limits(mem_resource_limit)
-    if new_limit:
-        LOG.debug("VMEM ulimit value set to: {val}".format(val=new_limit))
+    # Validate command line options
+    cmd_line_errors = []
+    if len(args) == 0 and options["op"] in (DEFAULT_OPERATION_TYPE_AUTO, DEFAULT_OPERATION_TYPE_SERVER):
+        cmd_line_errors.append("***** A minimum of 1 path to scan is required to be specified on the command line.")
+    if cmd_line_errors:
+        parser.print_help()
+        sys.stderr.write("\n" + "\n".join(cmd_line_errors) + "\n")
+        sys.exit(1)
+
+    es_credentials = {}
+    if options["es_cred_file"]:
+        es_credentials = read_es_cred_file(options["es_cred_file"])
+    elif options["es_index"] and options["es_user"] and options["es_pass"] and options["es_url"]:
+        es_credentials = {
+            "index": options["es_index"],
+            "password": options["es_pass"],
+            "url": options["es_url"],
+            "user": options["es_user"],
+        }
+
+    if options["type"] == DEFAULT_SCAN_TYPE_AUTO:
+        if misc.is_onefs_os():
+            options["type"] = DEFAULT_SCAN_TYPE_ONEFS
+        else:
+            options["type"] = DEFAULT_SCAN_TYPE_BASIC
+    if options["type"] == DEFAULT_SCAN_TYPE_ONEFS:
+        if not misc.is_onefs_os():
+            sys.stderr.write(
+                "Script is not running on a OneFS operation system. Invalid --type option, use 'basic' instead.\n"
+            )
+            sys.exit(2)
+        # Set resource limits
+        old_limit, new_limit = misc.set_resource_limits(options["ulimit_memory"])
+        if new_limit:
+            LOG.debug("VMEM ulimit value set to: {val}".format(val=new_limit))
+        else:
+            LOG.info("VMEM ulimit setting failed.")
+        file_handler = user_handlers.file_handler_pscale
     else:
-        LOG.info("VMEM ulimit setting failed.")
-    if args[0] == "client":
+        file_handler = user_handlers.file_handler_basic
+    LOG.debug("Parsed options:\n{opt}".format(opt=json.dumps(options, indent=2, sort_keys=True)))
+
+    if options["op"] == DEFAULT_OPERATION_TYPE_CLIENT:
         LOG.info("Starting client")
         client = PSScanClient(
             {
-                "server_port": options.port,
-                "server_addr": options.addr,
+                "server_port": options["port"],
+                "server_addr": options["addr"],
                 "scanner_file_handler": user_handlers.file_handler_pscale,
             }
         )
@@ -949,21 +979,20 @@ def main():
             client.connect()
         except Exception as e:
             LOG.exception("Unhandled exception in client.")
-    elif args[0] == "command":
+    elif options["op"] == "command":
         LOG.info("Sending command to server")
         client = PSScanCommandClient(
             {
-                "commands": options.cmd,
-                "server_port": options.port,
-                "server_addr": options.addr,
+                "commands": options["cmd"],
+                "server_port": options["port"],
+                "server_addr": options["addr"],
             }
         )
         try:
             client.send_command()
         except Exception as e:
             LOG.exception("Unhandled exception while sending command to server.")
-    elif args[0] in ("auto", "server"):
-        # TODO: Need to get this from config file or CLI options
+    elif options["op"] in (DEFAULT_OPERATION_TYPE_AUTO, DEFAULT_OPERATION_TYPE_SERVER):
         node_list = [
             {
                 "endpoint": "5",
@@ -993,31 +1022,23 @@ def main():
             },
 
         """
-        es_init_index = True
-        es_reset_index = True
-        es_shards = 1
-        es_replicas = 0
-        es_send_threads = DEFAULT_ES_THREADS
-        es_cred_file = "/ifs/zx/ps_scan/cred.txt"
-        scan_paths = ["/ifs/poc/2022/synciq/target"]
-        # TODO: END of options
-
-        es_credentials = read_es_cred_file(es_cred_file)
         ps_scan_server_options = {
+            "cli_options": options,
             "client_config": {},
-            "scan_path": scan_paths,
+            "scan_path": args,
             "script_path": get_script_path(),
-            "server_port": options.port,
-            "server_addr": options.addr,
+            "server_port": options["port"],
+            "server_addr": options["addr"],
             "server_connect_addr": misc.get_local_internal_addr() or DEFAULT_LOOPBACK_ADDR,
             "node_list": None,
         }
         if es_credentials:
             ps_scan_server_options["client_config"]["es_credentials"] = es_credentials
-            ps_scan_server_options["client_config"]["es_send_threads"] = es_send_threads
-        if args[0] == "auto":
+            ps_scan_server_options["client_config"]["es_send_threads"] = options["es_threads"]
+        if options["op"] == "auto" and node_list:
             # Setting the node list will cause the server to automatically launch clients
             ps_scan_server_options["node_list"] = node_list
+
         try:
             es_client = None
             if es_credentials:
@@ -1027,24 +1048,22 @@ def main():
                     es_credentials["password"],
                     es_credentials["index"],
                 )
-            if es_client and (es_init_index or es_reset_index):
-                if es_reset_index:
+            if es_client and (options["es_init_index"] or options["es_reset_index"]):
+                if options["es_reset_index"]:
                     elasticsearch_wrapper.es_delete_index(es_client)
                 LOG.debug("Initializing indices for Elasticsearch: {index}".format(index=es_credentials["index"]))
                 es_index_settings = elasticsearch_wrapper.es_create_index_settings(
                     {
-                        "number_of_shards": es_shards,
-                        "number_of_replicas": es_replicas,
+                        "number_of_shards": options["es_shards"],
+                        "number_of_replicas": options["es_replicas"],
                     }
                 )
                 elasticsearch_wrapper.es_init_index(es_client, es_credentials["index"], es_index_settings)
             if es_client:
-                # TODO: replace options from CLI
                 elasticsearch_wrapper.es_start_processing(es_client, {})
             svr = PSScanServer(ps_scan_server_options)
             svr.serve()
             if es_client:
-                # TODO: replace options from CLI
                 elasticsearch_wrapper.es_stop_processing(es_client, {})
         except Exception as e:
             LOG.exception("Unhandled exception in server.")

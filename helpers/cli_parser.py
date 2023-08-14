@@ -70,6 +70,8 @@ process.
 Example on a Bash shell where <pid> is replaced with the actual process ID:
 kill -SIGUSR1 <pid>
 
+Sending a SIGUSR2 to the coordinator process will cause all scanners to dump state to
+the configured log output.
 
 Return values
 ====================
@@ -85,12 +87,36 @@ def add_parser_options(parser):
         "-t",
         "--type",
         type="choice",
-        choices=("auto", "basic", "onefs"),
-        default="auto",
-        help="""Scan type to use.                                     
+        choices=(DEFAULT_SCAN_TYPE_AUTO, DEFAULT_SCAN_TYPE_BASIC, DEFAULT_SCAN_TYPE_ONEFS),
+        default=DEFAULT_SCAN_TYPE_AUTO,
+        help="""Scan type to use. Defaults to: auto                   
 auto: Use onefs when possible and fallback to basic   
 basic: Works on all file systems.                     
 onefs: Works on OneFS based file systems.             
+""",
+    ),
+    parser.add_option(
+        "--port",
+        action="store",
+        type="int",
+        default=DEFAULT_SERVER_PORT,
+        help="Port number for client/server connection",
+    )
+    parser.add_option(
+        "--addr",
+        action="store",
+        default=DEFAULT_SERVER_ADDR,
+        help="Server address (IP or FQDN)",
+    )
+    parser.add_option(
+        "--op",
+        type="choice",
+        choices=(DEFAULT_OPERATION_TYPE_AUTO, DEFAULT_OPERATION_TYPE_CLIENT, DEFAULT_OPERATION_TYPE_SERVER),
+        default=DEFAULT_OPERATION_TYPE_AUTO,
+        help="""Scan type to use. Defaults to: auto                   
+auto: Automatically launch server and clients         
+server: Launch a server instance.                     
+client: Launch a client to connect to a server.       
 """,
     )
     parser.add_option(
@@ -437,5 +463,5 @@ def parse_cli(argv, prog_ver, prog_date):
     )
     add_parser_options(parser)
     add_parser_options_advanced(parser, ("--advanced" not in argv))
-    (options, args) = parser.parse_args(argv[1:])
-    return (parser, options, args)
+    (raw_options, args) = parser.parse_args(argv[1:])
+    return (parser, raw_options.__dict__, args)
