@@ -6,13 +6,14 @@ PowerScale file scanner
 # fmt: off
 __title__         = "ps_scan"
 __version__       = "0.1.0"
-__date__          = "03 August 2023"
+__date__          = "12 August 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 # fmt: on
 import datetime
+import json
 import logging
 import multiprocessing as mp
 import optparse
@@ -21,25 +22,18 @@ import platform
 import queue
 import select
 import signal
-import subprocess
 import sys
 import time
-
-try:
-    import resource
-except:
-    pass
 
 import elasticsearch_wrapper
 import scanit
 import user_handlers
 import helpers.misc as misc
-from helpers.cli_parser import *
-from helpers.constants import *
-
 import helpers.sliding_window_stats as sliding_window_stats
 import libs.hydra as Hydra
-import libs.remote_run as RR
+import libs.remote_run as rr
+from helpers.cli_parser import *
+from helpers.constants import *
 
 
 LOG = logging.getLogger()
@@ -50,6 +44,7 @@ CLIENT_STATE_STARTING = "starting"
 CLIENT_STATE_RUNNING = "running"
 CLIENT_STATE_STOPPED = "stopped"
 DEFAULT_QUEUE_TIMEOUT = 1
+DEFAULT_LOOPBACK_ADDR = "127.0.0.1"
 PS_CMD_DUMPSTATE = "dumpstate"
 PS_CMD_QUIT = "quit"
 PS_CMD_TOGGLEDEBUG = "toggledebug"
@@ -308,7 +303,9 @@ class PSScanClient(object):
             "work_list_count",
         ]:
             state[member] = str(getattr(self, member))
-        LOG.critical(state)
+        state["dir_q_size"] = self.scanner.get_dir_queue_size()
+        state["file_q_size"] = self.scanner.get_file_queue_size()
+        LOG.critical(json.dumps(state, indent=2, sort_keys=True))
 
     def parse_config_update(self, cfg):
         # TODO: Re-architect how config updates are sent to the user handler/plug-in
@@ -349,7 +346,7 @@ class PSScanClient(object):
             if not work_items:
                 return
             self.scanner.add_scan_path(work_items)
-            self.state = CLIENT_STATE_RUNNING
+            self.status = CLIENT_STATE_RUNNING
             self.want_data = 0
             self.work_list_count = self.scanner.get_dir_queue_size()
             self._exec_send_client_state_running()
@@ -362,7 +359,9 @@ class PSScanClient(object):
         elif msg_type == MSG_TYPE_CLIENT_QUIT:
             return {"cmd": PS_CMD_QUIT}
         elif msg_type == MSG_TYPE_CLIENT_REQ_DIR_LIST:
-            dir_list = self.scanner.get_dir_queue_items(percentage=msg.get("pct", self.scanner_dir_request_percent))
+            dir_list = self.scanner.get_dir_queue_items(
+                num_items=1, percentage=msg.get("pct", self.scanner_dir_request_percent)
+            )
             if dir_list:
                 self._exec_send_dir_list(dir_list)
             LOG.debug(
@@ -568,7 +567,7 @@ class PSScanServer(Hydra.HydraServer):
         ]:
             state[member] = str(getattr(self, member))
         state["stats_fps_window"] = self.stats_fps_window.get_all_windows()
-        LOG.critical(state)
+        LOG.critical(json.dumps(state, indent=2, sort_keys=True))
 
     def handler_client_command(self, client, msg):
         """
@@ -610,7 +609,7 @@ class PSScanServer(Hydra.HydraServer):
                 if node.get("type") != "default":
                     node["cmd"] = run_cmd
             LOG.debug("Launching remote process with cmd: {cmd}".format(cmd=run_cmd))
-            self.remote_state = RR.RemoteRun({"callback": self.remote_callback})
+            self.remote_state = rr.RemoteRun({"callback": self.remote_callback})
             self.remote_state.connect(self.node_list)
         LOG.debug("All remote processes launched.")
 
@@ -732,7 +731,7 @@ class PSScanServer(Hydra.HydraServer):
         Dir scan time: {d_scan:,.1f}
         Dirs (Processed/Queued/Skipped): {d_proc:,d} / {d_queued:,d} / {d_skip:,d}
         Dir Q Size/Handler time: {d_q_size:,d} / {d_h_time:,.1f}
-    """.format(
+""".format(
                 d_proc=stats.get("dirs_processed", 0),
                 d_h_time=stats.get("dir_handler_time", 0),
                 d_q_size=stats.get("dir_q_size", 0),
@@ -763,7 +762,7 @@ class PSScanServer(Hydra.HydraServer):
         Processed/Queued/Skipped files: {p_files:,d} / {q_files:,d} / {s_files:,d}
         Total file size: {fsize:,d}
         Avg files/second: {a_fps:,.1f}
-    """.format(
+""".format(
                 wall_tm=wall_time,
                 avg_q_tm=stats["q_wait_time"] / num_clients,
                 dht=stats.get("dir_handler_time", 0),
@@ -899,18 +898,6 @@ class PSScanServer(Hydra.HydraServer):
         self.remote_state.terminate()
 
 
-def get_local_internal_addr():
-    # TODO: Add checks for running on OneFS and other OSes
-    subproc = subprocess.Popen(
-        ["isi_nodes", "-L", '"%{internal}"'],
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-    )
-    stdout, stderr = subproc.communicate()
-    addr = stdout.strip().replace('"', "")
-    return addr
-
-
 def get_script_path():
     return os.path.abspath(__file__)
 
@@ -932,29 +919,6 @@ def read_es_cred_file(filename):
     return es_creds
 
 
-def set_resource_limits(min_memory=DEFAULT_ULIMIT_MEMORY, force=False):
-    if not misc.is_onefs_os() and not force:
-        return
-    try:
-        LOG.debug("VMEM ulimit values: {val}".format(val=resource.getrlimit(resource.RLIMIT_VMEM)))
-    except Exception as e:
-        pass
-    try:
-        physmem = int(misc.sysctl("hw.physmem"))
-    except Exception as e:
-        LOG.info("Unable to query physical memory sysctl hw.physmem: {err}".format(err=e))
-        physmem = 0
-    try:
-        if physmem > min_memory or force:
-            resource.setrlimit(resource.RLIMIT_VMEM, (min_memory, min_memory))
-            LOG.info("Set VMEM ulimit to: {val} bytes".format(val=min_memory))
-        else:
-            LOG.info("Machine does not meet minimum physical memory size to increase memory limit automatically.")
-    except Exception as e:
-        LOG.info("Unable to set resource limit setting on this platform.")
-        LOG.debug("Exception: {msg}".format(msg=e))
-
-
 def main():
     # TODO: Leverage ps_scan CLI parser and extend
     parser = optparse.OptionParser()
@@ -965,8 +929,13 @@ def main():
         sys.stderr.write("{prog} [--port=#] [--addr=#] <auto|client|command|server>\n".format(prog=sys.argv[0]))
         sys.exit(1)
     (options, args) = parser.parse_args(sys.argv[1:])
+    mem_resource_limit = DEFAULT_ULIMIT_MEMORY
 
-    set_resource_limits()
+    old_limit, new_limit = misc.set_resource_limits(mem_resource_limit)
+    if new_limit:
+        LOG.debug("VMEM ulimit value set to: {val}".format(val=new_limit))
+    else:
+        LOG.info("VMEM ulimit setting failed.")
     if args[0] == "client":
         LOG.info("Starting client")
         client = PSScanClient(
@@ -1001,6 +970,12 @@ def main():
                 "type": "onefs",
             },
             {
+                "endpoint": "7",
+                "type": "onefs",
+            },
+        ]
+        """
+            {
                 "endpoint": "5",
                 "type": "onefs",
             },
@@ -1016,18 +991,15 @@ def main():
                 "endpoint": "7",
                 "type": "onefs",
             },
-            {
-                "endpoint": "7",
-                "type": "onefs",
-            },
-        ]
+
+        """
         es_init_index = True
         es_reset_index = True
         es_shards = 1
         es_replicas = 0
         es_send_threads = DEFAULT_ES_THREADS
         es_cred_file = "/ifs/zx/ps_scan/cred.txt"
-        scan_paths = ["/ifs"]
+        scan_paths = ["/ifs/poc/2022/synciq/target"]
         # TODO: END of options
 
         es_credentials = read_es_cred_file(es_cred_file)
@@ -1037,7 +1009,7 @@ def main():
             "script_path": get_script_path(),
             "server_port": options.port,
             "server_addr": options.addr,
-            "server_connect_addr": get_local_internal_addr(),
+            "server_connect_addr": misc.get_local_internal_addr() or DEFAULT_LOOPBACK_ADDR,
             "node_list": None,
         }
         if es_credentials:
