@@ -16,8 +16,10 @@ __all__ = [
     "acl_group_to_str",
     "acl_user_to_str",
     "chunk_list",
+    "get_local_internal_addr",
     "is_onefs_os",
     "merge_process_stats",
+    "set_resource_limits",
     "sysctl",
     "sysctl_raw",
 ]
@@ -25,6 +27,11 @@ __all__ = [
 import copy
 import platform
 import subprocess
+from constants import *
+try:
+    import resource
+except:
+    pass
 
 
 def ace_list_to_str_list(ace_list):
@@ -65,6 +72,19 @@ def chunk_list(list_data, chunks):
     return chunked_list
 
 
+def get_local_internal_addr():
+    if not is_onefs_os():
+        return None
+    subproc = subprocess.Popen(
+        ["isi_nodes", "-L", '"%{internal}"'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout, stderr = subproc.communicate()
+    addr = stdout.strip().replace('"', "")
+    return addr
+
+
 def is_onefs_os():
     return "OneFS" in platform.system()
 
@@ -84,6 +104,31 @@ def merge_process_stats(process_states):
                     continue
                 temp_stats[key] += state["stats"][key]
     return temp_stats
+
+
+def set_resource_limits(min_memory=DEFAULT_ULIMIT_MEMORY, force=False):
+    old_limit = None
+    new_limit = None
+    if not is_onefs_os() and not force:
+        return (None, None)
+    try:
+        old_limit = resource.getrlimit(resource.RLIMIT_VMEM)
+    except Exception as e:
+        pass
+    try:
+        physmem = int(sysctl("hw.physmem"))
+    except Exception as e:
+        physmem = 0
+    try:
+        if physmem >= min_memory or force:
+            if old_limit is None or min_memory > old_limit[1]:
+                resource.setrlimit(resource.RLIMIT_VMEM, (min_memory, min_memory))
+                new_limit = min_memory
+            else:
+                new_limit = old_limit
+    except Exception as e:
+        return (None, None)
+    return (old_limit, new_limit)
 
 
 def sysctl(name, newval=None):
