@@ -55,6 +55,11 @@ LOG = logging.getLogger(__name__)
 def custom_stats_handler(common_stats, custom_state, custom_threads_state, thread_state):
     # Access all the individual thread state dictionaries in the custom_threads_state array
     # These should be initialized in the init_thread routine
+    LOG.debug("DEBUG: Custom stats handler called!")
+    LOG.debug("DEBUG: Common stats: %s" % common_stats)
+    LOG.debug("DEBUG: Custom state: %s" % custom_state)
+    LOG.debug("DEBUG: Custom threads state: %s" % custom_threads_state)
+    LOG.debug("DEBUG: Thread state: %s" % thread_state)
     pass
 
 
@@ -75,7 +80,6 @@ def file_handler_basic(root, filename_list, stats, now, args={}):
     custom_tagging = custom_state.get("custom_tagging", None)
     max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
     send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
-    send_to_es = custom_state.get("send_to_es", False)
 
     processed = 0
     skipped = 0
@@ -138,7 +142,6 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     phys_block_size = custom_state.get("phys_block_size", IFS_BLOCK_SIZE)
     pool_translate = custom_state.get("node_pool_translation", {})
     send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
-    send_to_es = custom_state.get("send_to_es", False)
 
     processed = 0
     skipped = 0
@@ -346,6 +349,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             if custom_state["es_send_q"].qsize() > max_send_q_size:
                 # TODO: Add statistic on how many times we had to wait
                 time.sleep(send_q_sleep)
+                LOG.critical("DEBUG: PUSHREQUIRED - Had to wait to push data to ES queue")
             else:
                 break
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
@@ -400,13 +404,13 @@ def init_custom_state(custom_state, options={}):
     # custom_state["custom_tagging"] = lambda x: None
     custom_state["custom_stats"] = {}
     custom_state["extra_attr"] = options.get("extra", DEFAULT_PARSE_EXTRA_ATTR)
+    custom_state["es_send_q"] = None
+    custom_state["es_cmd_send_q"] = None
     custom_state["max_send_q_size"] = options.get("ex_max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
     custom_state["no_acl"] = options.get("no_acl", DEFAULT_PARSE_SKIP_ACLS)
     custom_state["node_pool_translation"] = {}
     custom_state["phys_block_size"] = IFS_BLOCK_SIZE
-    # custom_state["send_q"] = queue.Queue()
     custom_state["send_q_sleep"] = options.get("es_send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
-    custom_state["send_to_es"] = options.get("es_user") and options.get("es_pass") and options.get("es_index")
     custom_state["user_attr"] = options.get("user_attr", DEFAULT_PARSE_USER_ATTR)
     if misc.is_onefs_os():
         # Query the cluster for node pool name information
@@ -498,7 +502,9 @@ def shutdown(custom_state, custom_threads_state):
             time.sleep(DEFAULT_CMD_POLL_INTERVAL)
             es_send_q_time = time.time() - send_start
             if es_send_q_time > DEFAULT_SEND_Q_WAIT_TIME:
-                LOG.info("Send Q was not empty after {time} seconds. Force quitting.".format(time=DEFAULT_SEND_Q_WAIT_TIME))
+                LOG.info(
+                    "Send Q was not empty after {time} seconds. Force quitting.".format(time=DEFAULT_SEND_Q_WAIT_TIME)
+                )
                 break
         LOG.debug("Sending exit command to send queue")
         for thread_handle in custom_state.get("es_thread_handles"):
