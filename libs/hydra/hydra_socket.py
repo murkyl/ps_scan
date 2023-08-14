@@ -318,8 +318,15 @@ class HydraSocket(object):
         if self._get_socket_fd() == -1:
             return True
         self.wait_flush.clear()
-        self._socket_send_header(HYDRA_MSG_TYPE["flush"])
-        self.wait_flush.wait(DEFAULT_SHUTDOWN_WAIT_TIMEOUT)
+        try:
+            self._socket_send_header(HYDRA_MSG_TYPE["flush"])
+            self.wait_flush.wait(DEFAULT_SHUTDOWN_WAIT_TIMEOUT)
+        except IOError as ioe:
+            if e.errno in (errno.EBADF,):
+                # 9: Bad file descriptor
+                LOG.warning("Cannot flush socket. Socket not connected.")
+                return None
+            raise
 
     def send(self, msg):
         """
