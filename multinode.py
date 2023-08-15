@@ -82,13 +82,6 @@ def main():
     LOG.debug("Initial scan paths: {paths}".format(paths=", ".join(args)))
 
     if options["op"] == OPERATION_TYPE_CLIENT:
-        # DEBUG: START
-        import platform
-        log_filename = "init-%s-%s.txt"%(platform.node(), os.getpid())
-        log_handler = logging.FileHandler(log_filename)
-        LOG.addHandler(log_handler)
-        LOG.setLevel(logging.DEBUG)
-        # DEBUG: END
         LOG.info("Starting client")
         client = psc.PSScanClient(
             {

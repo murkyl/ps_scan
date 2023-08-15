@@ -21,6 +21,7 @@ __all__ = [
 ]
 # fmt: on
 import datetime
+import json
 import logging
 import os
 import queue
@@ -56,10 +57,22 @@ def custom_stats_handler(common_stats, custom_state, custom_threads_state, threa
     # Access all the individual thread state dictionaries in the custom_threads_state array
     # These should be initialized in the init_thread routine
     LOG.debug("DEBUG: Custom stats handler called!")
-    LOG.debug("DEBUG: Common stats: %s" % common_stats)
-    LOG.debug("DEBUG: Custom state: %s" % custom_state)
-    LOG.debug("DEBUG: Custom threads state: %s" % custom_threads_state)
-    LOG.debug("DEBUG: Thread state: %s" % thread_state)
+    LOG.debug(
+        "DEBUG: Common stats: %s"
+        % json.dumps(common_stats, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
+    )
+    LOG.debug(
+        "DEBUG: Custom state: %s"
+        % json.dumps(custom_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
+    )
+    LOG.debug(
+        "DEBUG: Custom threads state: %s"
+        % json.dumps(custom_threads_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
+    )
+    LOG.debug(
+        "DEBUG: Thread state: %s"
+        % json.dumps(thread_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
+    )
     pass
 
 

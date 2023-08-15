@@ -179,7 +179,7 @@ class PSScanServer(Hydra.HydraServer):
         ]:
             state[member] = str(getattr(self, member))
         state["stats_fps_window"] = self.stats_fps_window.get_all_windows()
-        LOG.critical(json.dumps(state, indent=2, sort_keys=True))
+        LOG.critical(json.dumps(state, indent=2, sort_keys=True, default=lambda o: "<not serializable>"))
 
     def handler_client_command(self, client, msg):
         """

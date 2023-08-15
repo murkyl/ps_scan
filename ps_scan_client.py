@@ -50,7 +50,7 @@ class PSScanClient(object):
             scanner_file_chunk: int -
             scanner_file_q_cutoff: int -
             scanner_file_q_min_cutoff: int -
-            scanner_threads: int - Number of threads the file scanner should use
+            scanner_num_threads: int - Number of threads the file scanner should use
             server_addr: str - IP/FQDN of the ps_scan server process
             server_port: int - Port to connect to the ps_scan server
             stats_interval: int - Time in seconds between each statistics update to the server
@@ -69,7 +69,7 @@ class PSScanClient(object):
         self.scanner_file_chunk = args.get("scanner_file_chunk", scanit.DEFAULT_QUEUE_FILE_CHUNK_SIZE)
         self.scanner_file_q_cutoff = args.get("scanner_file_q_cutoff", scanit.DEFAULT_FILE_QUEUE_CUTOFF)
         self.scanner_file_q_min_cutoff = args.get("scanner_file_q_min_cutoff", scanit.DEFAULT_FILE_QUEUE_MIN_CUTOFF)
-        self.scanner_threads = args.get("scanner_threads", DEFAULT_THREAD_COUNT)
+        self.scanner_num_threads = args.get("scanner_num_threads", DEFAULT_THREAD_COUNT)
         self.sent_data = 0
         self.server_addr = args.get("server_addr", Hydra.DEFAULT_SERVER_ADDR)
         self.server_port = args.get("server_port", Hydra.DEFAULT_SERVER_PORT)
@@ -142,10 +142,10 @@ class PSScanClient(object):
             "file_chunk",
             "file_q_cutoff",
             "file_q_min_cutoff",
+            "num_threads",
         ]:
             setattr(s, attrib, getattr(self, "scanner_" + attrib))
         s.exit_on_idle = False
-        s.num_threads = self.scanner_threads
         s.processing_type = scanit.PROCESS_TYPE_ADVANCED
         # TODO: Change how custom states, init and file handler work
         s.handler_custom_stats = user_handlers.custom_stats_handler
@@ -258,7 +258,7 @@ class PSScanClient(object):
             "scanner_file_chunk",
             "scanner_file_q_cutoff",
             "scanner_file_q_min_cutoff",
-            "scanner_threads",
+            "scanner_num_threads",
             "sent_data",
             "server_addr",
             "server_port",
@@ -272,7 +272,7 @@ class PSScanClient(object):
             state[member] = str(getattr(self, member))
         state["dir_q_size"] = self.scanner.get_dir_queue_size()
         state["file_q_size"] = self.scanner.get_file_queue_size()
-        LOG.critical(json.dumps(state, indent=2, sort_keys=True))
+        LOG.critical(json.dumps(state, indent=2, sort_keys=True, default=lambda o: "<not serializable>"))
 
     def parse_config_update(self, cfg):
         # TODO: Re-architect how config updates are sent to the user handler/plug-in
@@ -354,4 +354,9 @@ class PSScanClient(object):
         return {}
 
     def stats_merge(self, now):
-        return self.scanner.get_stats()
+        scanner_stats = {}
+        try:
+            scanner_stats = self.scanner.get_stats()
+        except Exception as e:
+            LOG.exception("Unable to get scanner stats.")
+        return scanner_stats
