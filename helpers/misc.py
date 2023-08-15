@@ -86,6 +86,19 @@ def get_local_internal_addr():
     return addr
 
 
+def get_local_node_number():
+    if not is_onefs_os():
+        return None
+    subproc = subprocess.Popen(
+        ["isi_nodes", "-L", '"%{lnn}"'],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+    )
+    stdout, stderr = subproc.communicate()
+    lnn = stdout.strip().replace('"', "")
+    return lnn
+
+
 def is_onefs_os():
     return "OneFS" in platform.system()
 
@@ -107,36 +120,12 @@ def merge_process_stats(process_states):
     return temp_stats
 
 
-def parse_node_list(node_str):
-    """
-    {
-        "endpoint": "5",
-        "type": "onefs",
-    },
-    {
-        "endpoint": "6",
-        "type": "onefs",
-    },
-    {
-        "endpoint": "6",
-        "type": "onefs",
-    },
-    {
-        "endpoint": "7",
-        "type": "onefs",
-    },
-
-    """
-    return [
-        {
-            "endpoint": "5",
-            "type": "onefs",
-        },
-        {
-            "endpoint": "7",
-            "type": "onefs",
-        },
-    ]
+def parse_node_list(node_str, min_node_list=[]):
+    lnn_list = split_numeric_range_list(node_str)
+    if not lnn_list:
+        lnn_list = min_node_list
+    node_list = [{"endpoint": lnn, "type": "onefs"} for lnn in lnn_list]
+    return node_list
 
 
 def read_es_cred_file(filename):
@@ -178,6 +167,14 @@ def set_resource_limits(min_memory=DEFAULT_ULIMIT_MEMORY, force=False):
     except Exception as e:
         return (None, None)
     return (old_limit, new_limit)
+
+
+def split_numeric_range_list(range_list):
+    if not range_list:
+        return []
+    groups = [ri.split("-") for ri in range_list.split(",")]
+    flat_list = sorted(sum([list(range(int(x[0]), int(x[-1]) + 1)) for x in groups], []))
+    return flat_list
 
 
 def sysctl(name, newval=None):

@@ -95,7 +95,6 @@ def main():
         except Exception as e:
             LOG.exception("Unhandled exception in client.")
     elif options["op"] in (OPERATION_TYPE_AUTO, OPERATION_TYPE_SERVER):
-        node_list = misc.parse_node_list(options["nodes"])
         ps_scan_server_options = {
             "cli_options": options,
             "client_config": {},
@@ -109,9 +108,17 @@ def main():
         if es_credentials:
             ps_scan_server_options["client_config"]["es_credentials"] = es_credentials
             ps_scan_server_options["client_config"]["es_send_threads"] = options["es_threads"]
-        if options["op"] == "auto" and node_list:
-            # Setting the node list will cause the server to automatically launch clients
-            ps_scan_server_options["node_list"] = node_list
+        if options["op"] == "auto":
+            if options["type"] == SCAN_TYPE_ONEFS:
+                local_lnn = misc.get_local_node_number()
+                # If there is no node list from the CLI and we are set to auto and running on OneFS, automatically set
+                # the node list to the local machine and run 1 client. Otherwise parse the nodes parameter and return
+                # a node list to run clients on.
+                node_list = misc.parse_node_list(options["nodes"], min_node_list=[local_lnn])
+                # Setting the node list will cause the server to automatically launch clients
+                print(node_list)
+                ps_scan_server_options["node_list"] = node_list
+                sys.exit(99)
 
         try:
             es_client = None
