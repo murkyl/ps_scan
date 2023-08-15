@@ -377,7 +377,7 @@ class PSScanServer(Hydra.HydraServer):
         Avg files/second: {a_fps:,.1f}
 """.format(
                 wall_tm=wall_time,
-                avg_q_tm=stats.get("q_wait_time", 0) / num_clients,
+                avg_q_tm=stats.get("q_wait_time", 0) / (num_clients or 1),
                 dht=stats.get("dir_handler_time", 0),
                 fht=stats.get("file_handler_time", 0),
                 p_dirs=stats.get("dirs_processed", 0),
