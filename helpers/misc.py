@@ -107,6 +107,54 @@ def merge_process_stats(process_states):
     return temp_stats
 
 
+def parse_node_list(node_str):
+    """
+    {
+        "endpoint": "5",
+        "type": "onefs",
+    },
+    {
+        "endpoint": "6",
+        "type": "onefs",
+    },
+    {
+        "endpoint": "6",
+        "type": "onefs",
+    },
+    {
+        "endpoint": "7",
+        "type": "onefs",
+    },
+
+    """
+    return [
+        {
+            "endpoint": "5",
+            "type": "onefs",
+        },
+        {
+            "endpoint": "7",
+            "type": "onefs",
+        },
+    ]
+
+
+def read_es_cred_file(filename):
+    es_creds = {}
+    try:
+        with open(filename) as f:
+            lines = f.readlines()
+            es_creds["user"] = lines[0].strip()
+            es_creds["password"] = lines[1].strip()
+            if len(lines) > 2:
+                es_creds["index"] = lines[2].strip()
+            if len(lines) > 3:
+                es_creds["url"] = lines[3].strip()
+    except:
+        return None
+    return es_creds
+
+
 def set_resource_limits(min_memory=DEFAULT_ULIMIT_MEMORY, force=False):
     old_limit = None
     new_limit = None

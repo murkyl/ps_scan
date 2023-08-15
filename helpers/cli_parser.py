@@ -84,11 +84,22 @@ Return values
 
 def add_parser_options(parser):
     parser.add_option(
+        "--op",
+        type="choice",
+        choices=(OPERATION_TYPE_AUTO, OPERATION_TYPE_CLIENT, OPERATION_TYPE_SERVER),
+        default=OPERATION_TYPE_AUTO,
+        help="""Scan type to use. Defaults to: auto                   
+auto: Automatically launch server and clients         
+server: Launch a server instance.                     
+client: Launch a client to connect to a server.       
+""",
+    )
+    parser.add_option(
         "-t",
         "--type",
         type="choice",
-        choices=(DEFAULT_SCAN_TYPE_AUTO, DEFAULT_SCAN_TYPE_BASIC, DEFAULT_SCAN_TYPE_ONEFS),
-        default=DEFAULT_SCAN_TYPE_AUTO,
+        choices=(SCAN_TYPE_AUTO, SCAN_TYPE_BASIC, SCAN_TYPE_ONEFS),
+        default=SCAN_TYPE_AUTO,
         help="""Scan type to use. Defaults to: auto                   
 auto: Use onefs when possible and fallback to basic   
 basic: Works on all file systems.                     
@@ -96,11 +107,19 @@ onefs: Works on OneFS based file systems.
 """,
     ),
     parser.add_option(
-        "--port",
+        "--nodes",
         action="store",
-        type="int",
-        default=DEFAULT_SERVER_PORT,
-        help="Port number for client/server connection",
+        default="",
+        help="""On a PowerScale cluster, the nodes that perform the   
+actual file scan. This is a comma separated list of   
+node numbers and node ranges. To run more than one    
+process on a node, include the node multiple times.   
+Examples:                                             
+1,2,3,7,8,9
+1-9
+1-9,1-9
+1,2,3,10-12,10-12,15,16,17
+""",
     )
     parser.add_option(
         "--addr",
@@ -109,15 +128,11 @@ onefs: Works on OneFS based file systems.
         help="Server address (IP or FQDN)",
     )
     parser.add_option(
-        "--op",
-        type="choice",
-        choices=(DEFAULT_OPERATION_TYPE_AUTO, DEFAULT_OPERATION_TYPE_CLIENT, DEFAULT_OPERATION_TYPE_SERVER),
-        default=DEFAULT_OPERATION_TYPE_AUTO,
-        help="""Scan type to use. Defaults to: auto                   
-auto: Automatically launch server and clients         
-server: Launch a server instance.                     
-client: Launch a client to connect to a server.       
-""",
+        "--port",
+        action="store",
+        type="int",
+        default=DEFAULT_SERVER_PORT,
+        help="Port number for client/server connection",
     )
     parser.add_option(
         "--no-acl",
@@ -159,16 +174,6 @@ Default: %default
         type="int",
         default=DEFAULT_THREAD_COUNT,
         help="""Number of file scanning threads.                      
-Default: %default
-""",
-    )
-    group.add_option(
-        "--threads-per-proc",
-        action="store",
-        type="int",
-        default=DEFAULT_THREADS_PER_PROC_COUNT,
-        help="""File scan threads per process.                        
-Number of processes = Threads / ThreadsPerProc        
 Default: %default
 """,
     )
