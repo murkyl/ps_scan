@@ -322,7 +322,7 @@ class HydraSocket(object):
             self._socket_send_header(HYDRA_MSG_TYPE["flush"])
             self.wait_flush.wait(DEFAULT_SHUTDOWN_WAIT_TIMEOUT)
         except IOError as ioe:
-            if e.errno in (errno.EBADF,):
+            if ioe.errno in (errno.EBADF,):
                 # 9: Bad file descriptor
                 LOG.warning("Cannot flush socket. Socket not connected.")
                 return None
