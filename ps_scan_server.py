@@ -508,4 +508,5 @@ class PSScanServer(Hydra.HydraServer):
 
     def shutdown(self):
         super(PSScanServer, self).shutdown()
-        self.remote_state.terminate()
+        if self.remote_state:
+            self.remote_state.terminate()

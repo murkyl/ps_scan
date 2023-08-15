@@ -116,10 +116,7 @@ def main():
                 # a node list to run clients on.
                 node_list = misc.parse_node_list(options["nodes"], min_node_list=[local_lnn])
                 # Setting the node list will cause the server to automatically launch clients
-                print(node_list)
                 ps_scan_server_options["node_list"] = node_list
-                sys.exit(99)
-
         try:
             es_client = None
             if es_credentials:
