@@ -36,6 +36,19 @@ except:
 
 
 def ace_list_to_str_list(ace_list):
+    """Convert a list of ACEs into a list of strings representing the ACEs in the form:
+    type: entity[user|group] permission_type[allow|deny] permissions flags
+    
+    Parameters
+    ----------
+    ace_list: list of dict - List of ACE dictionaries
+    
+    Returns
+    ----------
+    list of str - A list of ACE strings.
+    
+    An empty list is returned on invalid input.
+    """
     ace_strs = []
     if not ace_list:
         return ace_strs
@@ -52,12 +65,38 @@ def ace_list_to_str_list(ace_list):
 
 
 def acl_group_to_str(acl):
+    """Convert an ACL into a string representing the group ownership in the form:
+    type[gid|sid]: entity
+    
+    Parameters
+    ----------
+    acl: dict - Dictionary containing an ACL
+    
+    Returns
+    ----------
+    str - A string for the group ownership.
+    
+    An empty string is returned on invalid input.
+    """
     if not acl:
         return ""
     return "{gtype}:{group}".format(gtype=acl.get("group_type"), group=acl.get("group"))
 
 
 def acl_user_to_str(acl):
+    """Convert an ACL into a string representing the user ownership in the form:
+    type[uid|sid]: entity
+    
+    Parameters
+    ----------
+    acl: dict - Dictionary containing an ACL
+    
+    Returns
+    ----------
+    str - A string for the user ownership.
+    
+    An empty string is returned on invalid input.
+    """
     if not acl:
         return ""
     return "{utype}:{user}".format(utype=acl.get("user_type"), user=acl.get("user"))
@@ -74,6 +113,18 @@ def chunk_list(list_data, chunks):
 
 
 def get_local_internal_addr():
+    """Return the preferred system internal backend network IP address.
+    Works only on a OneFS cluster.
+    
+    Parameters
+    ----------
+    None
+    
+    Returns
+    ----------
+    str|None - String with the preferred IP address in dotted decimal notation. e.g. 1.2.3.4
+        If the platform the script is running on is not OneFS
+    """
     if not is_onefs_os():
         return None
     subproc = subprocess.Popen(
@@ -87,6 +138,18 @@ def get_local_internal_addr():
 
 
 def get_local_node_number():
+    """Return the preferred system internal backend network IP address.
+    Works only on a OneFS cluster.
+    
+    Parameters
+    ----------
+    None
+    
+    Returns
+    ----------
+    int|None - The logical node number of the node running the script
+        If the platform the script is running on is not OneFS
+    """
     if not is_onefs_os():
         return None
     subproc = subprocess.Popen(
