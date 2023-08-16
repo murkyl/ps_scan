@@ -93,8 +93,7 @@ class HydraSocket(object):
         try:
             return self.remote_socket.fileno()
         except Exception as e:
-            if e.errno not in (errno.EBADF,):
-                # 9: Bad file descriptor
+            if e.errno not in (errno.EBADF,):  # 9: Bad file descriptor
                 LOG.error("Unknown exception when checking for socket fileno: {err}".format(err=e))
             # Python 2.7 doesn't support fileno() on closed sockets. Return -1 like Python 3
             return -1
@@ -151,12 +150,30 @@ class HydraSocket(object):
         bytes_data = pickle.dumps(data, pickle.HIGHEST_PROTOCOL)
         data_len = len(bytes_data)
         header_len = self._socket_send_header(HYDRA_MSG_TYPE["data"], data_len)
-        self.remote_socket.sendall(bytes_data)
+        try:
+            self.remote_socket.sendall(bytes_data)
+        except IOError as ioe:
+            if ioe.errno in (
+                errno.EBADF,  # 9: Bad file descriptor
+                errno.EPIPE,  # 32: Bad pipe
+            ):
+                LOG.warning("Cannot send data. Socket not connected.")
+                return 0
+            raise
         return header_len + data_len
 
     def _socket_send_header(self, header_type, data_len=0):
         header = struct.pack(HYDRA_HEADER_FORMAT, HYDRA_MAGIC, HYDRA_PROTOCOL_VER, header_type, data_len)
-        self.remote_socket.sendall(header)
+        try:
+            self.remote_socket.sendall(header)
+        except IOError as ioe:
+            if ioe.errno in (
+                errno.EBADF,  # 9: Bad file descriptor
+                errno.EPIPE,  # 32: Bad pipe
+            ):
+                LOG.warning("Cannot send header. Socket not connected.")
+                return 0
+            raise
         return HYDRA_HEADER_LEN
 
     def _start(self):
@@ -217,11 +234,12 @@ class HydraSocket(object):
             if ioe.errno in (errno.EBADF,):
                 # 9: Bad file descriptor
                 LOG.debug("Socket closed while waiting in select")
-            elif ioe.errno in (errno.EPIPE, errno.EXFULL, errno.ECONNRESET, errno.ENOTCONN):
-                # 32: Broken pipe
-                # 54: Exchange full
-                # 104: Connection reset by peer
-                # 107: Transport not connected
+            elif ioe.errno in (
+                errno.EPIPE,  # 32: Broken pipe
+                errno.EXFULL,  # 54: Exchange full
+                errno.ECONNRESET,  # 104: Connection reset by peer
+                errno.ENOTCONN,  # 107: Transport not connected
+            ):
                 LOG.debug("Connection closed for: {sock} - {err}".format(err=ioe, sock=self.remote_socket))
             else:
                 LOG.info("Unexpected IOError reading socket: {sock} - {err}".format(err=ioe, sock=self.remote_socket))
@@ -318,15 +336,8 @@ class HydraSocket(object):
         if self._get_socket_fd() == -1:
             return True
         self.wait_flush.clear()
-        try:
-            self._socket_send_header(HYDRA_MSG_TYPE["flush"])
-            self.wait_flush.wait(DEFAULT_SHUTDOWN_WAIT_TIMEOUT)
-        except IOError as ioe:
-            if ioe.errno in (errno.EBADF,):
-                # 9: Bad file descriptor
-                LOG.warning("Cannot flush socket. Socket not connected.")
-                return None
-            raise
+        self._socket_send_header(HYDRA_MSG_TYPE["flush"])
+        self.wait_flush.wait(DEFAULT_SHUTDOWN_WAIT_TIMEOUT)
 
     def send(self, msg):
         """
@@ -335,7 +346,11 @@ class HydraSocket(object):
         if not self.remote_socket:
             LOG.warning("Cannot send message. Socket not connected.")
             return False
-        self.pipe_remote.send(msg)
+        try:
+            self.pipe_remote.send(msg)
+        except IOError as ioe:
+            if ioe.errno in (errno.EPIPE,):  # 32: Bad pipe
+                LOG.info("Cannot sent message. Pipe to send messages has been closed.")
         return True
 
     def recv(self):
