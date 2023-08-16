@@ -75,18 +75,18 @@ def custom_stats_handler(common_stats, custom_state, custom_threads_state, threa
     #    "DEBUG: Common stats: %s"
     #    % json.dumps(common_stats, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
     # )
-    LOG.debug(
-        "DEBUG: Custom state: %s"
-        % json.dumps(custom_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
-    )
+    # LOG.debug(
+    #    "DEBUG: Custom state: %s"
+    #    % json.dumps(custom_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
+    # )
     # LOG.debug(
     #    "DEBUG: Custom threads state: %s"
     #    % json.dumps(custom_threads_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
     # )
-    LOG.debug(
-        "DEBUG: Thread state: %s"
-        % json.dumps(thread_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
-    )
+    # LOG.debug(
+    #    "DEBUG: Thread state: %s"
+    #    % json.dumps(thread_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
+    # )
     num_threads = len(thread_state) or 1
     custom_stats = custom_state["custom_stats"]
     for field in CUSTOM_STATS_FIELDS:
@@ -360,7 +360,6 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             if lstat_required:
                 thread_stats["lstat_required"] += 1
                 thread_stats["lstat_time"] += time.time() - lstat_start
-                
 
             if fstats["di_mode"] & 0o040000:
                 file_info["_scan_time"] = now
@@ -490,8 +489,21 @@ def init_custom_state(custom_state, options={}):
 
 
 def init_thread(tid, custom_state, thread_custom_state):
+    """Called by scanit.py for each scanning thread to store thread specific state
+    
+    Parameters
+    ----------
+    tid: int - Numeric identifier for a thread
+    custom_state: dict - Dictionary initialized by user_handlers.init_custom_state
+    thread_custom_state: dict - Empty dictionary to store any thread specific state
+    
+    Returns
+    ----------
+    Nothing
+    """
     # Add any custom stats counters or values in the thread_custom_state dictionary
-    # and access this inside each file handler
+    # and access this inside each file handler in the args["thread_state"]["custom"]
+    # parameter
     thread_custom_state["thread_name"] = tid
     thread_custom_state["stats"] = {}
     for field in CUSTOM_STATS_FIELDS:
@@ -499,19 +511,10 @@ def init_thread(tid, custom_state, thread_custom_state):
 
 
 def print_statistics(output_type, log, stats, custom_stats, num_clients, now, start_time, wall_time, output_interval):
-    sys.stdout.write("===== Custom stats =====\n")
-    sys.stdout.write(json.dumps(custom_stats, indent=2, sort_keys=True) + "\n")
-    #sys.stdout.write(
-    #    "NUM CLIENTS: %s\nNow: %s\nStart: %s\nWall: %s\nOutput Interval: %s\nCommon stats: %s"
-    #    % (
-    #        num_clients,
-    #        now,
-    #        start_time,
-    #        wall_time,
-    #        output_interval,
-    #        stats,
-    #    )
-    #)
+    # TODO: Overhaul the stats output code
+    output_string = "===== Custom stats =====\n" + json.dumps(custom_stats, indent=2, sort_keys=True) + "\n"
+    LOG.info(output_string)
+    sys.stdout.write(output_string)
 
 
 def translate_user_group_perms(full_path, file_info):

@@ -368,8 +368,7 @@ class PSScanServer(Hydra.HydraServer):
         return {}
 
     def print_statistics_final(self, stats, num_clients, wall_time):
-        sys.stdout.write(
-            """Final statistics
+        output_string = """Final statistics
         Wall time (s): {wall_tm:,.2f}
         Average Q wait time (s): {avg_q_tm:,.2f}
         Total time spent in dir/file handler routines across all clients (s): {dht:,.2f} / {fht:,.2f}
@@ -378,26 +377,26 @@ class PSScanServer(Hydra.HydraServer):
         Total file size: {fsize:,d}
         Avg files/second: {a_fps:,.1f}
 """.format(
-                wall_tm=wall_time,
-                avg_q_tm=stats.get("q_wait_time", 0) / (num_clients or 1),
-                dht=stats.get("dir_handler_time", 0),
-                fht=stats.get("file_handler_time", 0),
-                p_dirs=stats.get("dirs_processed", 0),
-                q_dirs=stats.get("dirs_queued", 0),
-                s_dirs=stats.get("dirs_skipped", 0),
-                p_files=stats.get("files_processed", 0),
-                q_files=stats.get("files_queued", 0),
-                s_files=stats.get("files_skipped", 0),
-                fsize=stats.get("file_size_total", 0),
-                a_fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / wall_time,
-            ),
+            wall_tm=wall_time,
+            avg_q_tm=stats.get("q_wait_time", 0) / (num_clients or 1),
+            dht=stats.get("dir_handler_time", 0),
+            fht=stats.get("file_handler_time", 0),
+            p_dirs=stats.get("dirs_processed", 0),
+            q_dirs=stats.get("dirs_queued", 0),
+            s_dirs=stats.get("dirs_skipped", 0),
+            p_files=stats.get("files_processed", 0),
+            q_files=stats.get("files_queued", 0),
+            s_files=stats.get("files_skipped", 0),
+            fsize=stats.get("file_size_total", 0),
+            a_fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / wall_time,
         )
+        LOG.info(output_string)
+        sys.stdout.write(output_string)
 
     def print_statistics_interim(self, stats, now, start, fps_window, interval):
         buckets = [str(x) for x in fps_window.get_window_sizes()]
         fps_per_bucket = ["{fps:,.1f}".format(fps=x / interval) for x in fps_window.get_all_windows()]
-        sys.stdout.write(
-            """{ts} - Statistics:
+        output_string = """{ts} - Statistics:
         Current run time (s): {runtime:,d}
         FPS overall / recent ({fps_buckets}) intervals: {fps:,.1f} / {fps_per_bucket}
         Total file bytes processed: {f_bytes:,d}
@@ -407,25 +406,26 @@ class PSScanServer(Hydra.HydraServer):
         Dirs (Processed/Queued/Skipped): {d_proc:,d} / {d_queued:,d} / {d_skip:,d}
         Dir Q Size/Handler time: {d_q_size:,d} / {d_h_time:,.1f}
 """.format(
-                d_proc=stats.get("dirs_processed", 0),
-                d_h_time=stats.get("dir_handler_time", 0),
-                d_q_size=stats.get("dir_q_size", 0),
-                d_queued=stats.get("dirs_queued", 0),
-                d_scan=stats.get("dir_scan_time", 0),
-                d_skip=stats.get("dirs_skipped", 0),
-                f_bytes=stats.get("file_size_total", 0),
-                f_h_time=stats.get("file_handler_time", 0),
-                f_proc=stats.get("files_processed", 0),
-                f_q_size=stats.get("file_q_size", 0),
-                f_queued=stats.get("files_queued", 0),
-                f_skip=stats.get("files_skipped", 0),
-                fps=stats.get("files_processed", 0) / (now - start),
-                fps_buckets=", ".join(buckets),
-                fps_per_bucket=" - ".join(fps_per_bucket),
-                runtime=int(now - start),
-                ts=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            ),
+            d_proc=stats.get("dirs_processed", 0),
+            d_h_time=stats.get("dir_handler_time", 0),
+            d_q_size=stats.get("dir_q_size", 0),
+            d_queued=stats.get("dirs_queued", 0),
+            d_scan=stats.get("dir_scan_time", 0),
+            d_skip=stats.get("dirs_skipped", 0),
+            f_bytes=stats.get("file_size_total", 0),
+            f_h_time=stats.get("file_handler_time", 0),
+            f_proc=stats.get("files_processed", 0),
+            f_q_size=stats.get("file_q_size", 0),
+            f_queued=stats.get("files_queued", 0),
+            f_skip=stats.get("files_skipped", 0),
+            fps=stats.get("files_processed", 0) / (now - start),
+            fps_buckets=", ".join(buckets),
+            fps_per_bucket=" - ".join(fps_per_bucket),
+            runtime=int(now - start),
+            ts=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
+        LOG.info(output_string)
+        sys.stdout.write(output_string)
 
     def remote_callback(self, client, client_id, msg=None):
         self.msg_q.put({"type": MSG_TYPE_REMOTE_CALLBACK, "data": msg, "client_id": client_id, "client": client})

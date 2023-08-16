@@ -83,12 +83,13 @@ def main():
 
     if options["op"] == OPERATION_TYPE_CLIENT:
         # DEBUG: START This code allows outputting initial script startup
-        # import platform
+        import platform
+
         #
-        # log_handler = logging.FileHandler("init-%s-%s.txt" % (platform.node(), os.getpid()))
-        # log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
-        # LOG.addHandler(log_handler)
-        # LOG.setLevel(logging.DEBUG)
+        log_handler = logging.FileHandler("init-%s-%s.txt" % (platform.node(), os.getpid()))
+        log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
+        LOG.addHandler(log_handler)
+        LOG.setLevel(logging.DEBUG)
         # DEBUG: END
         LOG.info("Starting client")
         client = psc.PSScanClient(
@@ -158,7 +159,8 @@ def main():
 
 if __name__ == "__main__" or __file__ == None:
     DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s"
-    log_handler = logging.StreamHandler()
+    # log_handler = logging.StreamHandler()
+    log_handler = logging.FileHandler("debug_server.txt")
     log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
     LOG.addHandler(log_handler)
     LOG.setLevel(logging.DEBUG)
