@@ -355,7 +355,12 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 file_info["user_tags"] = custom_tagging(file_info)
                 thread_stats["get_custom_tagging_time"] += time.time() - time_start
 
-            translate_user_group_perms(full_path, file_info)
+            time_start = time.time()
+            lstat_required = translate_user_group_perms(full_path, file_info)
+            if lstat_required:
+                thread_stats["lstat_required"] += 1
+                thread_stats["lstat_time"] += time.time() - lstat_start
+                
 
             if fstats["di_mode"] & 0o040000:
                 file_info["_scan_time"] = now
@@ -510,10 +515,12 @@ def print_statistics(output_type, log, stats, custom_stats, num_clients, now, st
 
 
 def translate_user_group_perms(full_path, file_info):
+    lstat_required = False
     # Populate the perms_user and perms_group fields from the avaialble SID and UID/GID data
     # Translate the numeric values into human readable user name and group names if possible
     # TODO: Add translation to names from SID/UID/GID values
     if file_info["perms_unix_uid"] == 0xFFFFFFFF or file_info["perms_unix_gid"] == 0xFFFFFFFF:
+        lstat_required = True
         LOG.debug("File requires standard lstat for UID/GID: {filename}".format(filename=full_path))
         # If the UID/GID is set to 0xFFFFFFFF then on cluster, the UID/GID is generated
         # by the cluster.
@@ -535,6 +542,7 @@ def translate_user_group_perms(full_path, file_info):
         file_info["perms_group"].replace("gid:", "")
     else:
         file_info["perms_group"] = file_info["perms_unix_gid"]
+    return lstat_required
 
 
 def update_config(custom_state, new_config):
