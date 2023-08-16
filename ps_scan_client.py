@@ -205,17 +205,23 @@ class PSScanClient(object):
             # Determine if we should send a statistics update
             cur_stats_count = (now - start_wall) // self.stats_output_interval
             if cur_stats_count > self.stats_output_count:
+                LOG.debug("DEBUG: Sending stats update")
                 self.stats_output_count = cur_stats_count
                 self._exec_send_status_stats(now)
 
             # Determine if we should send a directory queue count update
             cur_dir_count = (now - start_wall) // self.dir_output_interval
             if cur_dir_count > self.dir_output_count:
+                LOG.debug("DEBUG: Sending dir count update: %s" % cur_dir_count)
                 self.dir_output_count = cur_dir_count
                 self._exec_send_status_dir_count()
 
             # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
             if (self.work_list_count == 0) and (now - self.want_data > self.dir_request_interval):
+                LOG.debug(
+                    "DEBUG: Asking server for more work: DQ/FQ: %s/%s"
+                    % (self.work_list_count, self.scanner.get_file_queue_size())
+                )
                 self.want_data = now
                 self._exec_send_req_dir_list()
 
@@ -226,6 +232,7 @@ class PSScanClient(object):
                 and not self.scanner.is_processing()
                 and self.status != CLIENT_STATE_IDLE
             ):
+                LOG.debug("DEBUG: SCANNER GOING IDLE")
                 self.status = CLIENT_STATE_IDLE
                 self._exec_send_client_state_idle()
                 # Send a stats update whenever we go idle
@@ -312,6 +319,7 @@ class PSScanClient(object):
             work_items = msg.get("work_item")
             if not work_items:
                 return
+            LOG.debug("DEBUG: SCANNER GOING RUNNING AFTER GETTING WORK ITEMS")
             self.scanner.add_scan_path(work_items)
             self.status = CLIENT_STATE_RUNNING
             self.want_data = 0
