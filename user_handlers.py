@@ -15,9 +15,12 @@ __all__ = [
     "custom_stats_handler",
     "file_handler_basic",
     "file_handler_pscale",
+    "get_file_stat",
     "init_custom_state",
     "init_thread",
     "print_statistics",
+    "shutdown",
+    "translate_user_group_perms",
     "update_config",
 ]
 # fmt: on
@@ -63,6 +66,7 @@ CUSTOM_STATS_FIELDS = [
     "get_dinode_time",
     "get_extra_attr_time",
     "get_user_attr_time",
+    "lstat_required",
     "lstat_time",
 ]
 
@@ -203,7 +207,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                     LOG.debug("File %s is not allowed to call os.open, use os.lstat instead." % full_path)
                     time_start = time.time()
                     file_info = get_file_stat(root, filename, IFS_BLOCK_SIZE)
-                    thread_stats["lstat_time"] += time.time() - lstat_start
+                    thread_stats["lstat_time"] += time.time() - time_start
                     if custom_tagging:
                         time_start = time.time()
                         file_info["user_tags"] = custom_tagging(file_info)
@@ -359,7 +363,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             lstat_required = translate_user_group_perms(full_path, file_info)
             if lstat_required:
                 thread_stats["lstat_required"] += 1
-                thread_stats["lstat_time"] += time.time() - lstat_start
+                thread_stats["lstat_time"] += time.time() - time_start
 
             if fstats["di_mode"] & 0o040000:
                 file_info["_scan_time"] = now
@@ -461,11 +465,11 @@ def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE):
 
 
 def init_custom_state(custom_state, options={}):
-    # TODO: Parse the custom tag input file and produce a parser
     # Add any common parameters that each processing thread should have access to
     # by adding values to the custom_state dictionary
-    # custom_state["custom_tagging"] = lambda x: None
+
     custom_state["custom_stats"] = {}
+    # custom_state["custom_tagging"] = lambda x: None # TODO: Parse the custom tag input file and produce a parser
     custom_state["extra_attr"] = options.get("extra", DEFAULT_PARSE_EXTRA_ATTR)
     custom_state["es_send_q"] = None
     custom_state["es_cmd_send_q"] = None
@@ -489,21 +493,23 @@ def init_custom_state(custom_state, options={}):
 
 
 def init_thread(tid, custom_state, thread_custom_state):
-    """Called by scanit.py for each scanning thread to store thread specific state
-    
+    """Initialize each scanning thread to store thread specific state
+
+    This function is called by scanit.py when it initializes each scanning thread.
+    Add any custom stats counters or values in the thread_custom_state dictionary
+    and access this inside each file handler in the args["thread_state"]["custom"]
+    parameter.
+
     Parameters
     ----------
     tid: int - Numeric identifier for a thread
     custom_state: dict - Dictionary initialized by user_handlers.init_custom_state
     thread_custom_state: dict - Empty dictionary to store any thread specific state
-    
+
     Returns
     ----------
     Nothing
     """
-    # Add any custom stats counters or values in the thread_custom_state dictionary
-    # and access this inside each file handler in the args["thread_state"]["custom"]
-    # parameter
     thread_custom_state["thread_name"] = tid
     thread_custom_state["stats"] = {}
     for field in CUSTOM_STATS_FIELDS:
@@ -515,6 +521,27 @@ def print_statistics(output_type, log, stats, custom_stats, num_clients, now, st
     output_string = "===== Custom stats =====\n" + json.dumps(custom_stats, indent=2, sort_keys=True) + "\n"
     LOG.info(output_string)
     sys.stdout.write(output_string)
+
+
+def shutdown(custom_state, custom_threads_state):
+    if custom_state.get("es_thread_handles"):
+        # Scanner is done processing. Wait for all the data to be sent to Elasticsearch
+        LOG.debug("Waiting for send queue to empty")
+        send_start = time.time()
+        send_q = custom_state.get("es_send_q")
+        while not send_q.empty():
+            time.sleep(DEFAULT_CMD_POLL_INTERVAL)
+            es_send_q_time = time.time() - send_start
+            if es_send_q_time > DEFAULT_SEND_Q_WAIT_TIME:
+                LOG.info(
+                    "Send Q was not empty after {time} seconds. Force quitting.".format(time=DEFAULT_SEND_Q_WAIT_TIME)
+                )
+                break
+        LOG.debug("Sending exit command to send queue")
+        for thread_handle in custom_state.get("es_thread_handles"):
+            custom_state.get("es_send_cmd_q").put([CMD_EXIT, None])
+        for thread_handle in custom_state.get("es_thread_handles"):
+            thread_handle.join()
 
 
 def translate_user_group_perms(full_path, file_info):
@@ -579,24 +606,3 @@ def update_config(custom_state, new_config):
             es_threads.append(es_thread_instance)
         custom_state["es_thread_handles"] = es_threads
     custom_state["client_config"] = client_config
-
-
-def shutdown(custom_state, custom_threads_state):
-    if custom_state.get("es_thread_handles"):
-        # Scanner is done processing. Wait for all the data to be sent to Elasticsearch
-        LOG.debug("Waiting for send queue to empty")
-        send_start = time.time()
-        send_q = custom_state.get("es_send_q")
-        while not send_q.empty():
-            time.sleep(DEFAULT_CMD_POLL_INTERVAL)
-            es_send_q_time = time.time() - send_start
-            if es_send_q_time > DEFAULT_SEND_Q_WAIT_TIME:
-                LOG.info(
-                    "Send Q was not empty after {time} seconds. Force quitting.".format(time=DEFAULT_SEND_Q_WAIT_TIME)
-                )
-                break
-        LOG.debug("Sending exit command to send queue")
-        for thread_handle in custom_state.get("es_thread_handles"):
-            custom_state.get("es_send_cmd_q").put([CMD_EXIT, None])
-        for thread_handle in custom_state.get("es_thread_handles"):
-            thread_handle.join()
