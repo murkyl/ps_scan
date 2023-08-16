@@ -83,12 +83,12 @@ def main():
 
     if options["op"] == OPERATION_TYPE_CLIENT:
         # DEBUG: START This code allows outputting initial script startup
-        #import platform
+        # import platform
         #
-        #log_handler = logging.FileHandler("init-%s-%s.txt" % (platform.node(), os.getpid()))
-        #log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
-        #LOG.addHandler(log_handler)
-        #LOG.setLevel(logging.DEBUG)
+        # log_handler = logging.FileHandler("init-%s-%s.txt" % (platform.node(), os.getpid()))
+        # log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
+        # LOG.addHandler(log_handler)
+        # LOG.setLevel(logging.DEBUG)
         # DEBUG: END
         LOG.info("Starting client")
         client = psc.PSScanClient(
@@ -106,12 +106,13 @@ def main():
         ps_scan_server_options = {
             "cli_options": options,
             "client_config": {},
+            "node_list": None,
             "scan_path": args,
             "script_path": os.path.abspath(__file__),
-            "server_port": options["port"],
             "server_addr": options["addr"],
             "server_connect_addr": misc.get_local_internal_addr() or DEFAULT_LOOPBACK_ADDR,
-            "node_list": None,
+            "server_port": options["port"],
+            "stats_handler": user_handlers.print_statistics,
         }
         if es_credentials:
             ps_scan_server_options["client_config"]["es_credentials"] = es_credentials
@@ -156,9 +157,7 @@ def main():
 
 
 if __name__ == "__main__" or __file__ == None:
-    DEFAULT_LOG_FORMAT = (
-        "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s"
-    )
+    DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s"
     log_handler = logging.StreamHandler()
     log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
     LOG.addHandler(log_handler)

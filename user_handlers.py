@@ -17,6 +17,7 @@ __all__ = [
     "file_handler_pscale",
     "init_custom_state",
     "init_thread",
+    "print_statistics",
     "update_config",
 ]
 # fmt: on
@@ -26,6 +27,7 @@ import logging
 import os
 import queue
 import stat
+import sys
 import threading
 import time
 
@@ -51,29 +53,51 @@ except:
 
 
 LOG = logging.getLogger(__name__)
+CUSTOM_STATS_FIELDS = [
+    "es_queue_time",
+    "es_queue_wait_count",
+    "file_not_found",
+    "get_access_time_time",
+    "get_acl_time",
+    "get_custom_tagging_time",
+    "get_dinode_time",
+    "get_extra_attr_time",
+    "get_user_attr_time",
+    "lstat_time",
+]
 
 
 def custom_stats_handler(common_stats, custom_state, custom_threads_state, thread_state):
     # Access all the individual thread state dictionaries in the custom_threads_state array
     # These should be initialized in the init_thread routine
     LOG.debug("DEBUG: Custom stats handler called!")
-    LOG.debug(
-        "DEBUG: Common stats: %s"
-        % json.dumps(common_stats, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
-    )
+    # LOG.debug(
+    #    "DEBUG: Common stats: %s"
+    #    % json.dumps(common_stats, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
+    # )
     LOG.debug(
         "DEBUG: Custom state: %s"
         % json.dumps(custom_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
     )
-    LOG.debug(
-        "DEBUG: Custom threads state: %s"
-        % json.dumps(custom_threads_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
-    )
+    # LOG.debug(
+    #    "DEBUG: Custom threads state: %s"
+    #    % json.dumps(custom_threads_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
+    # )
     LOG.debug(
         "DEBUG: Thread state: %s"
         % json.dumps(thread_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
     )
-    pass
+    num_threads = len(thread_state) or 1
+    custom_stats = custom_state["custom_stats"]
+    for field in CUSTOM_STATS_FIELDS:
+        custom_stats[field] = 0
+    for thread in thread_state:
+        thread_custom_stats = thread["custom"]["stats"]
+        for field in CUSTOM_STATS_FIELDS:
+            custom_stats[field] += thread_custom_stats[field]
+    for field in CUSTOM_STATS_FIELDS:
+        custom_stats[field + "_avg"] = custom_stats[field] / num_threads
+    return custom_stats
 
 
 def file_handler_basic(root, filename_list, stats, now, args={}):
@@ -146,6 +170,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     start_time = args.get("start_time", time.time())
     thread_custom_state = args.get("thread_custom_state", {})
     thread_state = args.get("thread_state", {})
+    thread_stats = thread_state["custom"]["stats"]
 
     custom_tagging = custom_state.get("custom_tagging", None)
     extra_attr = custom_state.get("extra_attr", False)
@@ -169,14 +194,20 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             try:
                 fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
             except FileNotFoundError:
+                thread_stats["file_not_found"] += 1
                 LOG.debug("File %s is not found." % (full_path))
                 continue
             except Exception as e:
                 if e.errno == 45:
+                    thread_stats["lstat_required"] += 1
                     LOG.debug("File %s is not allowed to call os.open, use os.lstat instead." % full_path)
+                    time_start = time.time()
                     file_info = get_file_stat(root, filename, IFS_BLOCK_SIZE)
+                    thread_stats["lstat_time"] += time.time() - lstat_start
                     if custom_tagging:
+                        time_start = time.time()
                         file_info["user_tags"] = custom_tagging(file_info)
+                        thread_stats["get_custom_tagging_time"] += time.time() - time_start
                     if file_info["file_type"] == "dir":
                         file_info["_scan_time"] = now
                         result_dir_list.append(file_info)
@@ -191,9 +222,13 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                     continue
                 LOG.exception("Error found when calling os.open on %s. Error: %s" % (full_path, str(e)))
                 continue
+            time_start = time.time()
             fstats = attr.get_dinode(fd)
+            thread_stats["get_dinode_time"] += time.time() - time_start
             # atime call can return empty if the file does not have an atime or atime tracking is disabled
+            time_start = time.time()
             atime = attr.get_access_time(fd)
+            thread_stats["get_access_time_time"] += time.time() - time_start
             if atime:
                 atime = atime[0]
             else:
@@ -274,7 +309,9 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 "ssd_status_name": SSD_STATUS[fstats["di_la_ssd_status"]],
             }
             if not no_acl:
+                time_start = time.time()
                 acl = onefs_acl.get_acl_dict(fd)
+                thread_stats["get_acl_time"] += time.time() - time_start
                 file_info["perms_acl_aces"] = misc.ace_list_to_str_list(acl.get("aces"))
                 file_info["perms_acl_group"] = misc.acl_group_to_str(acl)
                 file_info["perms_acl_user"] = misc.acl_user_to_str(acl)
@@ -285,7 +322,9 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 # Do we want inode locations? how many on SSD and spinning disk?
                 #   - Get data from estats["ge_iaddrs"], e.g. ge_iaddrs: [(1, 13, 1098752, 512)]
                 # Extended attributes/custom attributes?
+                time_start = time.time()
                 estats = attr.get_expattr(fd)
+                thread_stats["get_extra_attr_time"] += time.time() - time_start
                 # Add up all the inode sizes
                 metadata_size = 0
                 for inode in estats["ge_iaddrs"]:
@@ -305,12 +344,16 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                     file_info["file_coalescer"] = "coalescer off, ec off"
             if user_attr:
                 extended_attr = {}
+                time_start = time.time()
                 keys = uattr.userattr_list(fd)
                 for key in keys:
                     extended_attr[key] = uattr.userattr_get(fd, key)
+                thread_stats["get_user_attr_time"] += time.time() - time_start
                 file_info["user_attributes"] = extended_attr
             if custom_tagging:
+                time_start = time.time()
                 file_info["user_tags"] = custom_tagging(file_info)
+                thread_stats["get_custom_tagging_time"] += time.time() - time_start
 
             translate_user_group_perms(full_path, file_info)
 
@@ -354,17 +397,20 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             except:
                 pass
     if (result_list or result_dir_list) and custom_state.get("es_send_q"):
+        time_start = time.time()
         if result_list:
             custom_state["es_send_q"].put([CMD_SEND, result_list])
         if result_dir_list:
             custom_state["es_send_q"].put([CMD_SEND_DIR, result_dir_list])
         for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
             if custom_state["es_send_q"].qsize() > max_send_q_size:
+                thread_stats["es_queue_wait_count"] += 1
                 # TODO: Add statistic on how many times we had to wait
                 time.sleep(send_q_sleep)
                 LOG.critical("DEBUG: PUSHREQUIRED - Had to wait to push data to ES queue")
             else:
                 break
+        thread_stats["es_queue_time"] += time.time() - time_start
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
@@ -442,6 +488,25 @@ def init_thread(tid, custom_state, thread_custom_state):
     # Add any custom stats counters or values in the thread_custom_state dictionary
     # and access this inside each file handler
     thread_custom_state["thread_name"] = tid
+    thread_custom_state["stats"] = {}
+    for field in CUSTOM_STATS_FIELDS:
+        thread_custom_state["stats"][field] = 0
+
+
+def print_statistics(output_type, log, stats, custom_stats, num_clients, now, start_time, wall_time, output_interval):
+    sys.stdout.write("===== Custom stats =====\n")
+    sys.stdout.write(json.dumps(custom_stats, indent=2, sort_keys=True) + "\n")
+    #sys.stdout.write(
+    #    "NUM CLIENTS: %s\nNow: %s\nStart: %s\nWall: %s\nOutput Interval: %s\nCommon stats: %s"
+    #    % (
+    #        num_clients,
+    #        now,
+    #        start_time,
+    #        wall_time,
+    #        output_interval,
+    #        stats,
+    #    )
+    #)
 
 
 def translate_user_group_perms(full_path, file_info):

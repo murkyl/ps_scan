@@ -40,15 +40,26 @@ class PSScanServer(Hydra.HydraServer):
         Parameters
         ----------
         args: dictionary
+            cli_options: dict - All command line options
+            client_config: dict -
             node_list: list - List of clients to auto-start. Format of each entry is in remote_run module
+            poll_interval: int - Seconds between select polls. Smaller numbers result in faster server shutdown
             queue_timeout: int - Number of seconds to wait for new messages before continuing with the processing loop
             request_work_interval: int - Number of seconds between requests to a client to return work
             scan_path: list - List of paths to scan
             script_path: str - Full path to script to run on clients
+            server_addr: str - IP address to listen for clients on
             server_connect_addr:str - FQDN/IP that clients should use to connect
+            server_port: int - Port number for server to listen on
+            socket_listen_queue: int - Number of pending clients for a socket
             stats_interval: int - Number of seconds between each statistics update
+            stats_handler: function - Function to call to output final statistics
         """
         args["async_server"] = True
+        # The super class consumes the following arguments:
+        # server_addr
+        # server_port
+        # socket_listen_queue
         super(PSScanServer, self).__init__(args=args)
         self.client_config = args.get("client_config", {})
         self.client_count = 0
@@ -62,6 +73,7 @@ class PSScanServer(Hydra.HydraServer):
         self.request_work_percentage = args.get("request_work_percentage", DEFAULT_DIRQ_REQUEST_PERCENTAGE)
         self.script_path = args.get("script_path", None)
         self.stats_fps_window = sliding_window_stats.SlidingWindowStats(STATS_FPS_BUCKETS)
+        self.stats_handler = args.get("stats_handler", lambda *x: None)  # TODO: Temporary until stats are moved
         self.stats_last_files_processed = 0
         self.stats_output_count = 0
         self.stats_output_interval = args.get("stats_interval", DEFAULT_STATS_OUTPUT_INTERVAL)
@@ -91,7 +103,7 @@ class PSScanServer(Hydra.HydraServer):
                 "config": {
                     "client_config": self.client_config,
                     "logger": {
-                        "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - (%(process)d|%(threadName)s) %(message)s",
+                        "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s",
                         "destination": "file",
                         "filename": "log-{filename}-{pid}.txt",
                         "level": LOG.getEffectiveLevel(),
@@ -227,21 +239,45 @@ class PSScanServer(Hydra.HydraServer):
         LOG.debug("All remote processes launched.")
 
     def output_statistics(self, now, start_wall):
+        # TODO: Some external function should do all stats output including custom stats
         temp_stats = misc.merge_process_stats(self.client_state) or {}
         new_files_processed = temp_stats.get("files_processed", self.stats_last_files_processed)
         self.stats_fps_window.add_sample(new_files_processed - self.stats_last_files_processed)
         self.stats_last_files_processed = new_files_processed
-        self.print_interim_statistics(
+        self.print_statistics_interim(
             temp_stats,
             now,
             start_wall,
             self.stats_fps_window,
             self.stats_output_interval,
         )
+        self.stats_handler(
+            "interim",
+            LOG,
+            temp_stats,
+            temp_stats.get("custom", {}),
+            self.client_count,
+            now,
+            start_wall,
+            0,
+            self.stats_output_interval,
+        )
 
     def output_statistics_final(self, now, total_time):
+        # TODO: Some external function should do all stats output including custom stats
         temp_stats = misc.merge_process_stats(self.client_state) or {}
-        self.print_final_statistics(temp_stats, self.client_count, total_time)
+        self.print_statistics_final(temp_stats, self.client_count, total_time)
+        self.stats_handler(
+            "final",
+            LOG,
+            temp_stats,
+            temp_stats.get("custom", {}),
+            self.client_count,
+            now,
+            0,
+            total_time,
+            self.stats_output_interval,
+        )
 
     def parse_message(self, msg, now):
         if msg["type"] == MSG_TYPE_CLIENT_DATA:
@@ -331,7 +367,33 @@ class PSScanServer(Hydra.HydraServer):
             LOG.debug("Unhandled message received: {data}".format(data=msg))
         return {}
 
-    def print_interim_statistics(self, stats, now, start, fps_window, interval):
+    def print_statistics_final(self, stats, num_clients, wall_time):
+        sys.stdout.write(
+            """Final statistics
+        Wall time (s): {wall_tm:,.2f}
+        Average Q wait time (s): {avg_q_tm:,.2f}
+        Total time spent in dir/file handler routines across all clients (s): {dht:,.2f} / {fht:,.2f}
+        Processed/Queued/Skipped dirs: {p_dirs:,d} / {q_dirs:,d} / {s_dirs:,d}
+        Processed/Queued/Skipped files: {p_files:,d} / {q_files:,d} / {s_files:,d}
+        Total file size: {fsize:,d}
+        Avg files/second: {a_fps:,.1f}
+""".format(
+                wall_tm=wall_time,
+                avg_q_tm=stats.get("q_wait_time", 0) / (num_clients or 1),
+                dht=stats.get("dir_handler_time", 0),
+                fht=stats.get("file_handler_time", 0),
+                p_dirs=stats.get("dirs_processed", 0),
+                q_dirs=stats.get("dirs_queued", 0),
+                s_dirs=stats.get("dirs_skipped", 0),
+                p_files=stats.get("files_processed", 0),
+                q_files=stats.get("files_queued", 0),
+                s_files=stats.get("files_skipped", 0),
+                fsize=stats.get("file_size_total", 0),
+                a_fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / wall_time,
+            ),
+        )
+
+    def print_statistics_interim(self, stats, now, start, fps_window, interval):
         buckets = [str(x) for x in fps_window.get_window_sizes()]
         fps_per_bucket = ["{fps:,.1f}".format(fps=x / interval) for x in fps_window.get_all_windows()]
         sys.stdout.write(
@@ -362,32 +424,6 @@ class PSScanServer(Hydra.HydraServer):
                 fps_per_bucket=" - ".join(fps_per_bucket),
                 runtime=int(now - start),
                 ts=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            ),
-        )
-
-    def print_final_statistics(self, stats, num_clients, wall_time):
-        sys.stdout.write(
-            """Final statistics
-        Wall time (s): {wall_tm:,.2f}
-        Average Q wait time (s): {avg_q_tm:,.2f}
-        Total time spent in dir/file handler routines across all clients (s): {dht:,.2f} / {fht:,.2f}
-        Processed/Queued/Skipped dirs: {p_dirs:,d} / {q_dirs:,d} / {s_dirs:,d}
-        Processed/Queued/Skipped files: {p_files:,d} / {q_files:,d} / {s_files:,d}
-        Total file size: {fsize:,d}
-        Avg files/second: {a_fps:,.1f}
-""".format(
-                wall_tm=wall_time,
-                avg_q_tm=stats.get("q_wait_time", 0) / (num_clients or 1),
-                dht=stats.get("dir_handler_time", 0),
-                fht=stats.get("file_handler_time", 0),
-                p_dirs=stats.get("dirs_processed", 0),
-                q_dirs=stats.get("dirs_queued", 0),
-                s_dirs=stats.get("dirs_skipped", 0),
-                p_files=stats.get("files_processed", 0),
-                q_files=stats.get("files_queued", 0),
-                s_files=stats.get("files_skipped", 0),
-                fsize=stats.get("file_size_total", 0),
-                a_fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / wall_time,
             ),
         )
 
