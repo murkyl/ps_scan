@@ -244,12 +244,6 @@ before creating a new one. This option implies the
         help="Full path and file name for log output.  If not set, no log output to file will be generated",
     )
     group.add_option(
-        "--console-log",
-        action="store_true",
-        default=False,
-        help="When this flag is set, log output to console",
-    )
-    group.add_option(
         "--quiet",
         action="store_true",
         default=False,
