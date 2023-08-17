@@ -307,10 +307,9 @@ def get_acl_dict(fd, detailed=True):
     sacl_aces = match.group("sacltrustees")
     if sacl_aces:
         acl_dict["sacl_aces"] = trustees_txt_to_aces(sacl_aces)
-    if acl_dict["aces"]:
-        for ace in acl_dict["aces"]:
-            ace["flags_list"] = flags_to_text_list(ace["flags"])
-            ace["perms_list"] = perms_to_text_list(ace["perms"], detailed)
+    for ace in acl_dict.get("aces", []):
+        ace["flags_list"] = flags_to_text_list(ace["flags"])
+        ace["perms_list"] = perms_to_text_list(ace["perms"], detailed)
     return acl_dict
 
 
@@ -359,9 +358,7 @@ def perms_to_text_list(perms, detailed=True):
 
 def trustees_txt_to_aces(trustee_str):
     aces = []
-    if not trustee_str:
-        return aces
-    if not trustee_str.startswith("::trustee:"):
+    if not trustee_str or not trustee_str.startswith("::trustee:"):
         return aces
     trustee_list = trustee_str[10:].split("::trustee:")
     for trustee in trustee_list:
