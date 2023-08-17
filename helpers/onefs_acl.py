@@ -29,8 +29,8 @@ SD_ACL_REGEX = (
     r"header:(revision:\d+)::(control:\d+)"
     r"::(owner:(?P<utype>UID|SID):(?P<user>\d+|S(-\d+)+))"
     r"::(group:(?P<gtype>GID|SID):(?P<group>\d+|S(-\d+)+))"
-    r"::->dacl<-:(?P<dacl>(rev:(?P<daclrev>\d+)::)?(?P<dacltrustees>::trustee.*))?"
-    r"::->sacl<-:(?P<sacl>(rev:(?P<saclrev>\d+)::)?(?P<sacltrustees>::trustee.*))?"
+    r"::->dacl<-:(rev:(?P<daclrev>\d+)::)?(?P<dacltrustees>::trustee.*)?"
+    r"::->sacl<-:(rev:(?P<saclrev>\d+)::)?(?P<sacltrustees>::trustee.*)?"
 )
 # fmt: off
 """ Mask bits for the trustee fields"""
@@ -307,9 +307,10 @@ def get_acl_dict(fd, detailed=True):
     sacl_aces = match.group("sacltrustees")
     if sacl_aces:
         acl_dict["sacl_aces"] = trustees_txt_to_aces(sacl_aces)
-    for ace in acl_dict["aces"]:
-        ace["flags_list"] = flags_to_text_list(ace["flags"])
-        ace["perms_list"] = perms_to_text_list(ace["perms"], detailed)
+    if acl_dict["aces"]:
+        for ace in acl_dict["aces"]:
+            ace["flags_list"] = flags_to_text_list(ace["flags"])
+            ace["perms_list"] = perms_to_text_list(ace["perms"], detailed)
     return acl_dict
 
 
@@ -358,7 +359,9 @@ def perms_to_text_list(perms, detailed=True):
 
 def trustees_txt_to_aces(trustee_str):
     aces = []
-    if trustee_str and not trustee_str.startswith("::trustee:"):
+    if not trustee_str:
+        return aces
+    if not trustee_str.startswith("::trustee:"):
         return aces
     trustee_list = trustee_str[10:].split("::trustee:")
     for trustee in trustee_list:
