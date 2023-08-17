@@ -56,12 +56,14 @@ class PSScanClient(object):
             stats_interval: int - Time in seconds between each statistics update to the server
         """
         self.client_config = {}
+        self.debug_count = args.get("debug", 0)
         self.dir_output_count = 0
         self.dir_output_interval = args.get("dir_output_interval", DEFAULT_DIR_OUTPUT_INTERVAL)
         self.dir_request_interval = args.get("dir_request_interval", DEFAULT_DIR_REQUEST_INTERVAL)
         self.poll_interval = args.get("poll_interval", DEFAULT_CMD_POLL_INTERVAL)
         self.scanner = scanit.ScanIt()
         # TODO: Change how file handler is called
+        # TODO: Fix the args.get to match CLI options
         self.scanner_file_handler = args.get("scanner_file_handler", user_handlers.file_handler_basic)
         self.scanner_dir_chunk = args.get("scanner_dir_chunk", scanit.DEFAULT_QUEUE_DIR_CHUNK_SIZE)
         self.scanner_dir_priority_count = args.get("scanner_dir_priority_count", scanit.DEFAULT_DIR_PRIORITY_COUNT)
@@ -255,6 +257,7 @@ class PSScanClient(object):
         state = {}
         for member in [
             "client_config",
+            "debug_count",
             "dir_output_count",
             "dir_output_interval",
             "dir_request_interval",
@@ -286,6 +289,7 @@ class PSScanClient(object):
         custom_state, custom_threads_state = self.scanner.get_custom_state()
         user_handlers.update_config(custom_state, cfg)
         self.client_config = cfg
+        self.debug_count = cfg.get("debug", 0)
 
     def parse_config_update_log_level(self, cfg):
         log_level = cfg.get("log_level")
@@ -295,19 +299,23 @@ class PSScanClient(object):
         LOG.setLevel(log_level)
 
     def parse_config_update_logger(self, cfg):
-        format_string_vars = {
-            "filename": platform.node(),
-            "pid": os.getpid(),
-        }
         try:
             logger_block = cfg.get("logger")
             if logger_block["destination"] == "file":
+                format_string_vars = {
+                    "hostname": platform.node(),
+                    "pid": os.getpid(),
+                    "prefix": logger_block["prefix"],
+                    "suffix": logger_block["suffix"],
+                }
                 log_filename = logger_block["filename"].format(**format_string_vars)
                 log_handler = logging.FileHandler(log_filename)
-                log_handler.setFormatter(logging.Formatter(logger_block["format"]))
-                LOG.handlers[:] = []
-                LOG.addHandler(log_handler)
-                LOG.setLevel(logger_block["level"])
+            else:
+                log_handler = logging.StreamHandler()
+            log_handler.setFormatter(logging.Formatter(logger_block["format"]))
+            LOG.handlers[:] = []
+            LOG.addHandler(log_handler)
+            LOG.setLevel(logger_block["level"])
         except KeyError as ke:
             sys.stderr.write("ERROR: Logger filename string is invalid: {txt}\n".format(txt=str(ke)))
         except Exception as e:

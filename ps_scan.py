@@ -16,6 +16,7 @@ import json
 import logging
 import multiprocessing as mp
 import os
+import platform
 import sys
 
 import elasticsearch_wrapper
@@ -28,6 +29,7 @@ import ps_scan_server as pss
 import user_handlers
 
 
+DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s"
 LOG = logging.getLogger()
 
 
@@ -43,6 +45,8 @@ def main():
         parser.print_help()
         sys.stderr.write("\n" + "\n".join(cmd_line_errors) + "\n")
         sys.exit(1)
+
+    setup_logger(options)
 
     es_credentials = {}
     if options["es_cred_file"]:
@@ -82,23 +86,11 @@ def main():
     LOG.debug("Initial scan paths: {paths}".format(paths=", ".join(args)))
 
     if options["op"] == OPERATION_TYPE_CLIENT:
-        # DEBUG: START This code allows outputting initial script startup
-        import platform
-
-        #
-        log_handler = logging.FileHandler("init-%s-%s.txt" % (platform.node(), os.getpid()))
-        log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
-        LOG.addHandler(log_handler)
-        LOG.setLevel(logging.DEBUG)
-        # DEBUG: END
         LOG.info("Starting client")
-        client = psc.PSScanClient(
-            {
-                "server_port": options["port"],
-                "server_addr": options["addr"],
-                "scanner_file_handler": user_handlers.file_handler_pscale,
-            }
-        )
+        options["scanner_file_handler"] = user_handlers.file_handler_pscale
+        options["server_addr"] = options["addr"]
+        options["server_port"] = options["port"]
+        client = psc.PSScanClient(options)
         try:
             client.connect()
         except Exception as e:
@@ -157,17 +149,33 @@ def main():
             LOG.exception("Unhandled exception in server.")
 
 
-if __name__ == "__main__" or __file__ == None:
-    DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s"
-    # log_handler = logging.StreamHandler()
-    log_handler = logging.FileHandler("debug_server.txt")
+def setup_logger(options):
+    if options.get("log"):
+        base, ext = os.path.splitext(options.get("log", DEFAULT_LOG_FILE_PREFIX + DEFAULT_LOG_FILE_SUFFIX))
+        format_string_vars = {
+            "hostname": platform.node(),
+            "pid": os.getpid(),
+            "prefix": base,
+            "suffix": ext,
+        }
+        log_handler = logging.FileHandler(DEFAULT_LOG_FILE_FORMAT.format(**format_string_vars))
+    else:
+        log_handler = logging.StreamHandler()
+    debug_count = options.get("debug", 0)
     log_handler.setFormatter(logging.Formatter(DEFAULT_LOG_FORMAT))
     LOG.addHandler(log_handler)
-    LOG.setLevel(logging.DEBUG)
-    # Disable loggers for sub modules
-    for mod_name in ["libs.hydra"]:
-        module_logger = logging.getLogger(mod_name)
-        module_logger.setLevel(logging.WARN)
+    if debug_count:
+        LOG.setLevel(logging.DEBUG)
+    else:
+        LOG.setLevel(logging.INFO)
+    if debug_count < 3:
+        # Disable loggers for hydra sub modules
+        for mod_name in ["libs.hydra"]:
+            module_logger = logging.getLogger(mod_name)
+            module_logger.setLevel(logging.WARN)
+
+
+if __name__ == "__main__" or __file__ == None:
     # Support scripts built into executable on Windows
     try:
         mp.freeze_support()

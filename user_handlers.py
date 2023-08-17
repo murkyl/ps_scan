@@ -415,10 +415,14 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 thread_stats["es_queue_wait_count"] += 1
                 # TODO: Add statistic on how many times we had to wait
                 time.sleep(send_q_sleep)
-                LOG.critical("DEBUG: PUSHREQUIRED - Had to wait to push data to ES queue")
+                LOG.critical("DEBUG: PUSHREQUIRED - Had to wait to push data to ES queue. Count: %s" % i)
             else:
                 break
         thread_stats["es_queue_time"] += time.time() - time_start
+    LOG.critical(
+        "DEBUG: Finished with 1 directory - Processed: %s, Skipped: %s, Num dirs: %s"
+        % (processed, skipped, len(dir_list))
+    )
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
