@@ -23,6 +23,7 @@ import json
 import logging
 import queue
 import socket
+import time
 
 import elasticsearch_lite
 import scanit
@@ -135,77 +136,6 @@ ES_REFERSH_INTERVAL = """{"index":{"refresh_interval":"%s"}}"""
 LOG = logging.getLogger(__name__)
 
 
-def es_data_sender(send_q, cmd_q, url, username, password, index_name, poll_interval=scanit.DEFAULT_POLL_INTERVAL):
-    es_client = elasticsearch_lite.ElasticsearchLite()
-    es_client.username = username
-    es_client.password = password
-    es_client.endpoint = url
-    file_idx = index_name + "_file"
-    dir_idx = index_name + "_dir"
-
-    while True:
-        # Process our command queue
-        try:
-            cmd_item = cmd_q.get(block=False)
-            cmd = cmd_item[0]
-            if cmd == CMD_EXIT:
-                break
-        except queue.Empty:
-            pass
-        except Exception as e:
-            LOG.exception(e)
-        # Process send queue
-        try:
-            cmd_item = send_q.get(block=True, timeout=poll_interval)
-            cmd = cmd_item[0]
-            if cmd == CMD_EXIT:
-                break
-            elif cmd & (CMD_SEND | CMD_SEND_DIR):
-                # TODO: Optimize this section by using a byte buffer and writing directly into the buffer?
-                bulk_data = []
-                work_items = cmd_item[1]
-                for i in range(len(work_items)):
-                    try:
-                        body_text = json.dumps(work_items[i])
-                    except UnicodeDecodeError as ude:
-                        LOG.info("JSON dumps encountered unicode decoding error. Trying latin-1 re-code to UTF-8")
-                        try:
-                            temp_text = json.dumps(work_items[i], encoding="latin-1")
-                            body_text = body_text.decode("latin-1").encode("utf-8", errors="backslashreplace")
-                        except Exception as e:
-                            LOG.info("latin-1 backup decode failed. Dropping data.")
-                            LOG.debug("latin-1 exception: %s" % e)
-                            LOG.debug("Work item dump:\n%s" % work_items[i])
-                            body_text = None
-                    except Exception as e:
-                        LOG.info("JSON dumps encountered an exception converting to text")
-                        LOG.debug("Work item dump:\n%s" % work_items[i])
-                    if body_text:
-                        bulk_data.append(json.dumps({"index": {"_id": work_items[i]["inode"]}}))
-                        bulk_data.append(body_text)
-                    work_items[i] = None
-                if bulk_data:
-                    bulk_str = "\n".join(bulk_data)
-                    resp = es_client.bulk(bulk_str, index_name=file_idx if cmd == CMD_SEND else dir_idx)
-                    if resp.get("error", False):
-                        LOG.error(resp["error"])
-                    if resp.get("errors", False):
-                        for item in resp.get("items"):
-                            if item["index"]["status"] < 200 or item["index"]["status"] > 299:
-                                LOG.error(json.dumps(item["index"]["error"]))
-                del bulk_str
-                del bulk_data
-                del cmd_item
-        except queue.Empty:
-            pass
-        except socket.gaierror as gaie:
-            LOG.critical("Elasticsearch URL is invalid")
-            break
-        except Exception as e:
-            LOG.exception(e)
-            LOG.debug("Work items triggering exception:\n%s" % work_items[i])
-
-
 def es_create_connection(url, username, password, index):
     if index[-1] == "_":
         index = index[0:-1]
@@ -223,6 +153,76 @@ def es_create_index_settings(options={}):
     return new_settings
 
 
+def es_data_sender(
+    send_q,
+    cmd_q,
+    url,
+    username,
+    password,
+    index_name,
+    poll_interval=scanit.DEFAULT_POLL_INTERVAL,
+    bulk_count=50,
+):
+    # TODO: Change the bulk_count and max_wait time to variables
+    es_client = elasticsearch_lite.ElasticsearchLite()
+    es_client.username = username
+    es_client.password = password
+    es_client.endpoint = url
+    file_idx = index_name + "_file"
+    dir_idx = index_name + "_dir"
+    state_idx = index_name + "_state"
+    bulk_data = []
+    max_wait_time = 30
+    start_time = time.time()
+
+    while True:
+        flush = False
+        cmd = None
+        # Read commands from command queue.
+        # If the command is exit we check if there is a flush argument and set the flush flag
+        try:
+            cmd_item = cmd_q.get(block=False)
+            cmd = cmd_item[0]
+            if cmd == CMD_EXIT:
+                flush = (cmd_item[1] or {}).get("flush", False)
+        except queue.Empty:
+            pass
+        except Exception as e:
+            LOG.exception("Unable to get command from the ES command queue")
+
+        # Read the data queue
+        # This loop should run quickly and rapidly accumulate data to bulk send
+        try:
+            data_item = send_q.get(block=True, timeout=poll_interval)
+            data_cmd = data_item[0]
+            if data_cmd & (CMD_SEND | CMD_SEND_DIR | CMD_SEND_STATS):
+                bulk_data.append([data_cmd, data_item[1]])
+            elif data_cmd == CMD_EXIT:
+                cmd = CMD_EXIT
+                flush = True
+        except queue.Empty:
+            # If there is no data in the data queue and there are no items in our accumulation list, reset the start
+            # time so we always wait up to the max_wait_time seconds to accumulate data
+            if not bulk_data:
+                start_time = time.time()
+        except Exception as e:
+            LOG.exception("Unable to get data from the ES queue")
+
+        # If we have enough items in the bulk_data array or after a certain period of time has elapsed, send all the
+        # data to Elastic by setting the flush flag to True
+        if (len(bulk_data) >= bulk_count) or (time.time() - start_time >= max_wait_time):
+            flush = True
+        if flush:
+            try:
+                es_data_flush(bulk_data, es_client, file_idx, dir_idx, state_idx)
+            except Exception:
+                LOG.exception("Elastic search send failed.")
+            start_time = time.time()
+            bulk_data[:] = []
+        if cmd == CMD_EXIT:
+            break
+
+
 def es_delete_index(es_client):
     LOG.debug("Delete existing indices")
     for idx in es_client[1]:
@@ -234,6 +234,61 @@ def es_delete_index(es_client):
     if resp.get("status", 200) not in [200, 404]:
         LOG.error(json.dumps(resp.get("error", {})))
     LOG.debug("Delete index (%s) response: %s" % (es_client[2], resp))
+
+
+def es_data_flush(bulk_data, es_client, file_idx, dir_idx, state_idx):
+    for chunk in bulk_data:
+        bulk_file = []
+        bulk_dir = []
+        bulk_state = []
+        chunk_type = chunk[0]
+        chunk_data = chunk[1]
+        # Each chunk_data represents a number of items
+        # For each subitem in the chunk_data, encode the data as JSON and save it to the bulk_file or bulk_dir lists
+        for idx in range(len(chunk_data)):
+            body_text = None
+            try:
+                body_text = json.dumps(chunk_data[idx])
+            except UnicodeDecodeError as ude:
+                LOG.info("JSON dumps encountered unicode decoding error. Trying latin-1 re-code to UTF-8")
+                try:
+                    temp_text = json.dumps(chunk_data[idx], encoding="latin-1")
+                    body_text = temp_text.decode("latin-1").encode("utf-8", errors="backslashreplace")
+                except Exception as e:
+                    LOG.warn("latin-1 backup decode failed. Dropping data.")
+                    LOG.debug("latin-1 exception: %s" % e)
+                    LOG.debug("Work item dump:\n%s" % chunk_data[idx])
+            except Exception as e:
+                LOG.warn("JSON dumps encountered an exception converting to text")
+                LOG.debug("Work item dump:\n%s" % chunk_data[idx])
+            if body_text:
+                if chunk_type == CMD_SEND:
+                    bulk_list = bulk_file
+                elif chunk_type == CMD_SEND_DIR:
+                    bulk_list = bulk_dir
+                elif chunk_type == CMD_SEND_STATS:
+                    bulk_list = bulk_state
+                bulk_list.append(json.dumps({"index": {"_id": chunk_data[idx]["inode"]}}))
+                bulk_list.append(body_text)
+        # For each bulk list, take all the entries and join them together with a \n and send them to the ES into the
+        # appropriate index
+        for bulk_list in [bulk_file, bulk_dir, bulk_state]:
+            if not bulk_list:
+                continue
+            if bulk_list is bulk_file:
+                idx = file_idx
+            elif bulk_list is bulk_dir:
+                idx = dir_idx
+            else:
+                idx = state_idx
+            bulk_str = "\n".join(bulk_list)
+            resp = es_client.bulk(bulk_str, index_name=idx)
+            if resp.get("error", False):
+                LOG.error(resp["error"])
+            if resp.get("errors", False):
+                for item in resp.get("items"):
+                    if item["index"]["status"] < 200 or item["index"]["status"] > 299:
+                        LOG.error(json.dumps(item["index"]["error"]))
 
 
 def es_init_index(es_client, index, settings=None):

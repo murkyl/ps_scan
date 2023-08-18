@@ -25,6 +25,7 @@ __all__ = [
 ]
 # fmt: on
 import datetime
+import errno
 import json
 import logging
 import os
@@ -202,7 +203,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 LOG.debug("File %s is not found." % (full_path))
                 continue
             except Exception as e:
-                if e.errno == 45:
+                if e.errno in (errno.ENOTSUP, errno.EACCES): # 45: Not supported, 13: No access
                     thread_stats["lstat_required"] += 1
                     LOG.debug("File %s is not allowed to call os.open, use os.lstat instead." % full_path)
                     time_start = time.time()
@@ -385,16 +386,16 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             processed += 1
         except IOError as ioe:
             skipped += 1
-            if ioe.errno == 13:
-                LOG.info("Permission error scanning: {file}".format(file=full_path))
+            if ioe.errno == errno.EACCES: # 13: No access
+                LOG.warn("Permission error scanning: {file}".format(file=full_path))
             else:
                 LOG.exception(ioe)
         except FileNotFoundError as fnfe:
             skipped += 1
-            LOG.info("File not found: {filename}".format(filename=filename))
+            LOG.warn("File not found: {filename}".format(filename=filename))
         except PermissionError as pe:
             skipped += 1
-            LOG.info("Permission error scanning: {file}".format(file=full_path))
+            LOG.warn("Permission error scanning: {file}".format(file=full_path))
             LOG.exception(pe)
         except Exception as e:
             skipped += 1
@@ -413,7 +414,6 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
         for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
             if custom_state["es_send_q"].qsize() > max_send_q_size:
                 thread_stats["es_queue_wait_count"] += 1
-                # TODO: Add statistic on how many times we had to wait
                 time.sleep(send_q_sleep)
                 LOG.critical("DEBUG: PUSHREQUIRED - Had to wait to push data to ES queue. Count: %s" % i)
             else:
@@ -529,23 +529,26 @@ def print_statistics(output_type, log, stats, custom_stats, num_clients, now, st
 
 def shutdown(custom_state, custom_threads_state):
     if custom_state.get("es_thread_handles"):
-        # Scanner is done processing. Wait for all the data to be sent to Elasticsearch
-        LOG.debug("Waiting for send queue to empty")
-        send_start = time.time()
-        send_q = custom_state.get("es_send_q")
-        while not send_q.empty():
-            time.sleep(DEFAULT_CMD_POLL_INTERVAL)
-            es_send_q_time = time.time() - send_start
-            if es_send_q_time > DEFAULT_SEND_Q_WAIT_TIME:
-                LOG.info(
-                    "Send Q was not empty after {time} seconds. Force quitting.".format(time=DEFAULT_SEND_Q_WAIT_TIME)
-                )
+        LOG.debug("Waiting for Elastic Search send threads to complete and become idle.")
+        for thread_handle in custom_state.get("es_thread_handles"):
+            custom_state.get("es_send_cmd_q").put([CMD_EXIT, {"flush": True}])
+        # Wait for up to 120 seconds for all the ES threads to terminate after sending an exit command
+        wait_for_threads = list(custom_state.get("es_thread_handles"))
+        # TODO: Change this to a variable time
+        flush_time = 120
+        for i in range(flush_time):
+            for thread in wait_for_threads[::-1]:
+                if not thread.is_alive():
+                    wait_for_threads.remove(thread)
+            if not wait_for_threads:
                 break
-        LOG.debug("Sending exit command to send queue")
-        for thread_handle in custom_state.get("es_thread_handles"):
-            custom_state.get("es_send_cmd_q").put([CMD_EXIT, None])
-        for thread_handle in custom_state.get("es_thread_handles"):
-            thread_handle.join()
+            time.sleep(1)
+        if wait_for_threads:
+            LOG.warn(
+                "{num_threads} threads did not finish sending data after {time} seconds. Possible data loss.".format(
+                    num_threads=len(wait_for_threads), time=flush_time
+                )
+            )
 
 
 def translate_user_group_perms(full_path, file_info):
