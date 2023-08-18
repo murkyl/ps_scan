@@ -574,7 +574,7 @@ class ScanIt(threading.Thread):
     def run(self):
         LOG.debug("Starting main thread")
         try:
-            self.run_start = time.time()
+            self.run_start = self.run_start or time.time()
             # Save the current time to have all the threads have the same reference time
             # Invoke custom init handler
             if self.handler_init:

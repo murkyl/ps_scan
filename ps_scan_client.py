@@ -126,7 +126,8 @@ class PSScanClient(object):
                 "data": stats_data,
             }
         )
-        LOG.debug("DEBUG: LOCAL STATS: {stats}".format(stats=stats_data))
+        if self.debug_count > 1:
+            LOG.debug("Local statistics: {stats}".format(stats=stats_data))
 
     def _exec_send_status_dir_count(self):
         self.socket.send(
@@ -207,23 +208,26 @@ class PSScanClient(object):
             # Determine if we should send a statistics update
             cur_stats_count = (now - start_wall) // self.stats_output_interval
             if cur_stats_count > self.stats_output_count:
-                LOG.debug("DEBUG: Sending stats update")
+                if self.debug_count > 1:
+                    LOG.debug("Sending stats update")
                 self.stats_output_count = cur_stats_count
                 self._exec_send_status_stats(now)
 
             # Determine if we should send a directory queue count update
             cur_dir_count = (now - start_wall) // self.dir_output_interval
             if cur_dir_count > self.dir_output_count:
-                LOG.debug("DEBUG: Sending dir count update: %s" % cur_dir_count)
+                if self.debug_count > 1:
+                    LOG.debug("Sending dir count update: {dir_count}".format(dir_count=cur_dir_count))
                 self.dir_output_count = cur_dir_count
                 self._exec_send_status_dir_count()
 
             # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
             if (self.work_list_count == 0) and (now - self.want_data > self.dir_request_interval):
-                LOG.debug(
-                    "DEBUG: Asking server for more work: DQ/FQ: %s/%s"
-                    % (self.work_list_count, self.scanner.get_file_queue_size())
-                )
+                if self.debug_count > 1:
+                    LOG.debug(
+                        "Asking server for more work: DQ/FQ: %s/%s"
+                        % (self.work_list_count, self.scanner.get_file_queue_size())
+                    )
                 self.want_data = now
                 self._exec_send_req_dir_list()
 
@@ -235,7 +239,9 @@ class PSScanClient(object):
                 and self.status != CLIENT_STATE_IDLE
             ):
                 LOG.debug(
-                    "State change {old_state} -> {new_state}".format(new_state=CLIENT_STATE_IDLE, old_state=self.status)
+                    "old_state:{old_state}, new_state:{new_state}".format(
+                        new_state=CLIENT_STATE_IDLE, old_state=self.status
+                    )
                 )
                 self.status = CLIENT_STATE_IDLE
                 self._exec_send_client_state_idle()
@@ -318,6 +324,7 @@ class PSScanClient(object):
             LOG.handlers[:] = []
             LOG.addHandler(log_handler)
             LOG.setLevel(logger_block["level"])
+            self.debug_count = logger_block.get("debug_count", 0)
         except KeyError as ke:
             sys.stderr.write("ERROR: Logger filename string is invalid: {txt}\n".format(txt=str(ke)))
         except Exception as e:
@@ -329,24 +336,23 @@ class PSScanClient(object):
             work_items = msg.get("work_item")
             if not work_items:
                 return
-            LOG.debug("DEBUG: SCANNER GETTING WORK ITEMS")
-            self.scanner.add_scan_path(work_items)
-            self.want_data = 0
-            self.work_list_count = self.scanner.get_dir_queue_size()
-            if self.status != CLIENT_STATE_RUNNING:
-                LOG.debug(
-                    "State change {old_state} -> {new_state}".format(
-                        new_state=CLIENT_STATE_RUNNING, old_state=self.status
-                    )
-                )
-                self.status = CLIENT_STATE_RUNNING
-                self._exec_send_client_state_running()
             LOG.debug(
                 "{cmd}: Received {count} work items to process".format(
                     cmd=msg_type,
                     count=len(work_items),
                 )
             )
+            self.scanner.add_scan_path(work_items)
+            self.want_data = 0
+            self.work_list_count = self.scanner.get_dir_queue_size()
+            if self.status != CLIENT_STATE_RUNNING:
+                LOG.debug(
+                    "old_state:{old_state}, new_state:{new_state}".format(
+                        new_state=CLIENT_STATE_RUNNING, old_state=self.status
+                    )
+                )
+                self.status = CLIENT_STATE_RUNNING
+                self._exec_send_client_state_running()
         elif msg_type == MSG_TYPE_CLIENT_QUIT:
             return {"cmd": PS_CMD_QUIT}
         elif msg_type == MSG_TYPE_CLIENT_REQ_DIR_LIST:

@@ -104,7 +104,7 @@ class PSScanServer(Hydra.HydraServer):
             base, ext = os.path.splitext(self.cli_options.get("log", DEFAULT_LOG_FILE_PREFIX + DEFAULT_LOG_FILE_SUFFIX))
             client_logger = {
                 "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s",
-                "debug_level": self.cli_options.get("debug", 0),
+                "debug_count": self.cli_options.get("debug", 0),
                 "destination": "file",
                 "filename": self.cli_options.get("log_file_format", DEFAULT_LOG_FILE_FORMAT),
                 "level": LOG.getEffectiveLevel(),
@@ -342,14 +342,17 @@ class PSScanServer(Hydra.HydraServer):
                 cur_client["status"] = CLIENT_STATE_STOPPED
                 cur_client["want_data"] = 0
             elif data_type == MSG_TYPE_CLIENT_STATUS_DIR_COUNT:
-                LOG.debug("[client:{cid}] - has_queued_directories:{data}".format(cid=cid, data=data["data"]))
+                if self.debug_count > 1:
+                    LOG.debug("[client:{cid}] - has_queued_directories:{data}".format(cid=cid, data=data["data"]))
                 cur_client["dir_count"] = data["data"]
             elif data_type == MSG_TYPE_CLIENT_STATUS_STATS:
-                LOG.debug("[client:{cid}] - stats_update:1".format(cid=cid))
+                if self.debug_count > 1:
+                    LOG.debug("[client:{cid}] - stats_update:1".format(cid=cid))
                 cur_client["stats"] = data["data"]
                 cur_client["stats_time"] = now
             elif data_type == MSG_TYPE_CLIENT_REQ_DIR_LIST:
-                LOG.debug("[client:{cid}] - Requested directory list".format(cid=cid))
+                if self.debug_count > 1:
+                    LOG.debug("[client:{cid}] - Requested directory list".format(cid=cid))
                 cur_client["want_data"] = now
             else:
                 LOG.error("[client:{cid}] - unknown_command:{cmd}".format(cid=cid, cmd=data_type))
@@ -528,7 +531,8 @@ class PSScanServer(Hydra.HydraServer):
 
                 # Send out our directories to all processes that want work if we have work to send
                 if want_work_clients and self.work_list:
-                    LOG.debug("DEBUG: Server has work and has clients that want work")
+                    if self.debug_count > 1:
+                        LOG.debug("Server has work items and has clients that want work")
                     got_work_clients = []
                     len_dir_list = len(self.work_list)
                     len_want_work_procs = len(want_work_clients)
@@ -550,19 +554,29 @@ class PSScanServer(Hydra.HydraServer):
 
                 # If processes want work and we know some processes have work, request those processes return work
                 if want_work_clients and have_dirs_clients:
-                    LOG.debug(
-                        "DEBUG: WANT WORK PROCS & HAVE DIR PROCS: %s / %s"
-                        % (
-                            ",".join([str(self.client_state[x]["id"]) for x in want_work_clients]),
-                            ",".join([str(self.client_state[x]["id"]) for x in have_dirs_clients]),
+                    if self.debug_count > 1:
+                        LOG.debug(
+                            "want_work_procs / have_dir_procs: {want_procs} / {have_procs}".format(
+                                want_procs=",".join(
+                                    sorted([str(self.client_state[x]["id"]) for x in want_work_clients])
+                                ),
+                                have_procs=",".join(
+                                    sorted([str(self.client_state[x]["id"]) for x in have_dirs_clients])
+                                ),
+                            )
                         )
-                    )
                     for client_key in have_dirs_clients:
                         client = self.client_state[client_key]
-                        LOG.debug("DEBUG: client:%s has dirs, evaluating if we should send message" % client["id"])
+                        if self.debug_count > 1:
+                            LOG.debug(
+                                "client:{cid} has queued dirs, evaluating if we should send message".format(
+                                    cid=client["id"]
+                                )
+                            )
                         # Limit the number of times we request data from each client to request_work_interval seconds
                         if (now - client["sent_data"]) > self.request_work_interval:
-                            LOG.debug("DEBUG: ACTUALLY SENDING CMD_REQ_DIR to client:%s" % client["id"])
+                            if self.debug_count > 1:
+                                LOG.debug("Sending CMD_REQ_DIR to client:{cid}".format(cid=client["id"]))
                             self._exec_send_req_dir_list(client_key)
                             client["sent_data"] = now
             except Exception as e:

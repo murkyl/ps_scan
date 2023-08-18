@@ -75,7 +75,7 @@ CUSTOM_STATS_FIELDS = [
 def custom_stats_handler(common_stats, custom_state, custom_threads_state, thread_state):
     # Access all the individual thread state dictionaries in the custom_threads_state array
     # These should be initialized in the init_thread routine
-    LOG.debug("DEBUG: Custom stats handler called!")
+    # LOG.debug("DEBUG: Custom stats handler called!")
     # LOG.debug(
     #    "DEBUG: Common stats: %s"
     #    % json.dumps(common_stats, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
@@ -203,7 +203,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 LOG.debug("File %s is not found." % (full_path))
                 continue
             except Exception as e:
-                if e.errno in (errno.ENOTSUP, errno.EACCES): # 45: Not supported, 13: No access
+                if e.errno in (errno.ENOTSUP, errno.EACCES):  # 45: Not supported, 13: No access
                     thread_stats["lstat_required"] += 1
                     LOG.debug("File %s is not allowed to call os.open, use os.lstat instead." % full_path)
                     time_start = time.time()
@@ -386,7 +386,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             processed += 1
         except IOError as ioe:
             skipped += 1
-            if ioe.errno == errno.EACCES: # 13: No access
+            if ioe.errno == errno.EACCES:  # 13: No access
                 LOG.warn("Permission error scanning: {file}".format(file=full_path))
             else:
                 LOG.exception(ioe)
@@ -415,14 +415,9 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             if custom_state["es_send_q"].qsize() > max_send_q_size:
                 thread_stats["es_queue_wait_count"] += 1
                 time.sleep(send_q_sleep)
-                LOG.critical("DEBUG: PUSHREQUIRED - Had to wait to push data to ES queue. Count: %s" % i)
             else:
                 break
         thread_stats["es_queue_time"] += time.time() - time_start
-    LOG.critical(
-        "DEBUG: Finished with 1 directory - Processed: %s, Skipped: %s, Num dirs: %s"
-        % (processed, skipped, len(dir_list))
-    )
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
