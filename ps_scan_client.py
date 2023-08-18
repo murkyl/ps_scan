@@ -234,7 +234,9 @@ class PSScanClient(object):
                 and not self.scanner.is_processing()
                 and self.status != CLIENT_STATE_IDLE
             ):
-                LOG.debug("DEBUG: SCANNER GOING IDLE")
+                LOG.debug(
+                    "State change {old_state} -> {new_state}".format(new_state=CLIENT_STATE_IDLE, old_state=self.status)
+                )
                 self.status = CLIENT_STATE_IDLE
                 self._exec_send_client_state_idle()
                 # Send a stats update whenever we go idle
@@ -327,12 +329,18 @@ class PSScanClient(object):
             work_items = msg.get("work_item")
             if not work_items:
                 return
-            LOG.debug("DEBUG: SCANNER GOING RUNNING AFTER GETTING WORK ITEMS")
+            LOG.debug("DEBUG: SCANNER GETTING WORK ITEMS")
             self.scanner.add_scan_path(work_items)
-            self.status = CLIENT_STATE_RUNNING
             self.want_data = 0
             self.work_list_count = self.scanner.get_dir_queue_size()
-            self._exec_send_client_state_running()
+            if self.status != CLIENT_STATE_RUNNING:
+                LOG.debug(
+                    "State change {old_state} -> {new_state}".format(
+                        new_state=CLIENT_STATE_RUNNING, old_state=self.status
+                    )
+                )
+                self.status = CLIENT_STATE_RUNNING
+                self._exec_send_client_state_running()
             LOG.debug(
                 "{cmd}: Received {count} work items to process".format(
                     cmd=msg_type,

@@ -38,15 +38,15 @@ except:
 def ace_list_to_str_list(ace_list):
     """Convert a list of ACEs into a list of strings representing the ACEs in the form:
     type: entity[user|group] permission_type[allow|deny] permissions flags
-    
+
     Parameters
     ----------
     ace_list: list of dict - List of ACE dictionaries
-    
+
     Returns
     ----------
     list of str - A list of ACE strings.
-    
+
     An empty list is returned on invalid input.
     """
     ace_strs = []
@@ -67,15 +67,15 @@ def ace_list_to_str_list(ace_list):
 def acl_group_to_str(acl):
     """Convert an ACL into a string representing the group ownership in the form:
     type[gid|sid]: entity
-    
+
     Parameters
     ----------
     acl: dict - Dictionary containing an ACL
-    
+
     Returns
     ----------
     str - A string for the group ownership.
-    
+
     An empty string is returned on invalid input.
     """
     if not acl:
@@ -86,15 +86,15 @@ def acl_group_to_str(acl):
 def acl_user_to_str(acl):
     """Convert an ACL into a string representing the user ownership in the form:
     type[uid|sid]: entity
-    
+
     Parameters
     ----------
     acl: dict - Dictionary containing an ACL
-    
+
     Returns
     ----------
     str - A string for the user ownership.
-    
+
     An empty string is returned on invalid input.
     """
     if not acl:
@@ -115,11 +115,11 @@ def chunk_list(list_data, chunks):
 def get_local_internal_addr():
     """Return the preferred system internal backend network IP address.
     Works only on a OneFS cluster.
-    
+
     Parameters
     ----------
     None
-    
+
     Returns
     ----------
     str|None - String with the preferred IP address in dotted decimal notation. e.g. 1.2.3.4
@@ -140,11 +140,11 @@ def get_local_internal_addr():
 def get_local_node_number():
     """Return the preferred system internal backend network IP address.
     Works only on a OneFS cluster.
-    
+
     Parameters
     ----------
     None
-    
+
     Returns
     ----------
     int|None - The logical node number of the node running the script
@@ -241,6 +241,17 @@ def split_numeric_range_list(range_list):
 
 
 def sysctl(name, newval=None):
+    """Set or get the value of a sysctl and return the results as a UTF-8 string
+
+    Parameters
+    ----------
+    name: str - Sysctl name in full dot notation. e.g. efs.bam.ec.mode
+    newval: str|None - String value to set the sysctl. Use None to read a value
+
+    Returns
+    ----------
+    str - Result of the sysctl command
+    """
     sysctl_out = sysctl_raw(name, newval)
     data = sysctl_out.decode("UTF-8")
     kv = data.split(": ", 1)

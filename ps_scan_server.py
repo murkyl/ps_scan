@@ -310,7 +310,7 @@ class PSScanServer(Hydra.HydraServer):
                 elif cmd == PS_CMD_TOGGLEDEBUG:
                     self._exec_toggle_debug()
                 else:
-                    LOG.error("[client:{cid}] - Unknown command: {cmd}".format(cid=cid, cmd=cmd))
+                    LOG.error("[client:{cid}] - unknown_command:{cmd}".format(cid=cid, cmd=cmd))
             elif data_type == MSG_TYPE_CLIENT_DIR_LIST:
                 LOG.debug("[client:{cid}] - returned_directories:{data}".format(cid=cid, data=len(data["work_item"])))
                 cur_client["sent_data"] = 0
@@ -318,29 +318,41 @@ class PSScanServer(Hydra.HydraServer):
                 # Extend directory work list with items returned by the client
                 self.work_list.extend(data["work_item"])
             elif data_type == MSG_TYPE_CLIENT_STATE_IDLE:
-                LOG.debug("[client:{cid}] - New state: {data}".format(cid=cid, data="IDLE"))
+                LOG.debug(
+                    "[client:{cid}] - old_state:{old_state}, new_state:{new_state}".format(
+                        cid=cid, new_state=CLIENT_STATE_IDLE, old_state=cur_client["status"]
+                    )
+                )
                 cur_client["status"] = CLIENT_STATE_IDLE
                 cur_client["want_data"] = now
             elif data_type == MSG_TYPE_CLIENT_STATE_RUNNING:
-                LOG.debug("[client:{cid}] - New state: {data}".format(cid=cid, data="RUNNING"))
+                LOG.debug(
+                    "[client:{cid}] - old_state:{old_state}, new_state:{new_state}".format(
+                        cid=cid, new_state=CLIENT_STATE_RUNNING, old_state=cur_client["status"]
+                    )
+                )
                 cur_client["status"] = CLIENT_STATE_RUNNING
                 cur_client["want_data"] = 0
             elif data_type == MSG_TYPE_CLIENT_STATE_STOPPED:
-                LOG.debug("[client:{cid}] - New state: {data}".format(cid=cid, data="STOPPED"))
+                LOG.debug(
+                    "[client:{cid}] - old_state:{old_state}, new_state:{new_state}".format(
+                        cid=cid, new_state=CLIENT_STATE_STOPPED, old_state=cur_client["status"]
+                    )
+                )
                 cur_client["status"] = CLIENT_STATE_STOPPED
                 cur_client["want_data"] = 0
             elif data_type == MSG_TYPE_CLIENT_STATUS_DIR_COUNT:
                 LOG.debug("[client:{cid}] - has_queued_directories:{data}".format(cid=cid, data=data["data"]))
                 cur_client["dir_count"] = data["data"]
             elif data_type == MSG_TYPE_CLIENT_STATUS_STATS:
-                LOG.debug("[client:{cid}] - Sent statistics".format(cid=cid))
+                LOG.debug("[client:{cid}] - stats_update:1".format(cid=cid))
                 cur_client["stats"] = data["data"]
                 cur_client["stats_time"] = now
             elif data_type == MSG_TYPE_CLIENT_REQ_DIR_LIST:
                 LOG.debug("[client:{cid}] - Requested directory list".format(cid=cid))
                 cur_client["want_data"] = now
             else:
-                LOG.error("[client:{cid}] - Unknown command: {cmd}".format(cid=cid, cmd=data_type))
+                LOG.error("[client:{cid}] - unknown_command:{cmd}".format(cid=cid, cmd=data_type))
         elif msg["type"] == MSG_TYPE_CLIENT_CLOSED:
             cur_client = self.client_state.get(msg["client"])
             LOG.debug("[client:{cid}] - Socket closed: {data}".format(cid=cur_client["id"], data=msg))
@@ -496,10 +508,10 @@ class PSScanServer(Hydra.HydraServer):
                     if client["status"] in (CLIENT_STATE_IDLE, CLIENT_STATE_STOPPED):
                         idle_clients += 1
                     # Check if we need to request or send any directories to existing processes
-                    if client["want_data"]:
+                    if client["want_data"] and not client["dir_count"]:
                         want_work_clients.append(key)
                     # Any processes that have directories are checked
-                    if client["dir_count"] > 1:
+                    if client["dir_count"]:
                         have_dirs_clients.append(key)
                 if not continue_running and self.work_list:
                     # If there are no connected clients and there is work to do then continue running
