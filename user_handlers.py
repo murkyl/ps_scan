@@ -30,6 +30,7 @@ import json
 import logging
 import os
 import queue
+import re
 import stat
 import sys
 import threading
@@ -70,6 +71,7 @@ CUSTOM_STATS_FIELDS = [
     "lstat_required",
     "lstat_time",
 ]
+RE_STRIP_SNAPSHOT = r"/\.snapshot(?:/$|/[^/]*)"
 
 
 def custom_stats_handler(common_stats, custom_state, custom_threads_state, thread_state):
@@ -119,9 +121,10 @@ def file_handler_basic(root, filename_list, stats, now, args={}):
     thread_custom_state = args.get("thread_custom_state", {})
     thread_state = args.get("thread_state", {})
 
-    custom_tagging = custom_state.get("custom_tagging", None)
-    max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
-    send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
+    custom_tagging = custom_state["custom_tagging"]
+    max_send_q_size = custom_state["max_send_q_size"]
+    send_q_sleep = custom_state["send_q_sleep"]
+    strip_dot_snapshot = custom_state["strip_dot_snapshot"]
 
     processed = 0
     skipped = 0
@@ -131,7 +134,7 @@ def file_handler_basic(root, filename_list, stats, now, args={}):
 
     for filename in filename_list:
         try:
-            file_info = get_file_stat(root, filename)
+            file_info = get_file_stat(root, filename, strip_dot_snapshot=strip_dot_snapshot)
             if custom_tagging:
                 file_info["user_tags"] = custom_tagging(file_info)
             if file_info["file_type"] == "dir":
@@ -177,14 +180,16 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     thread_state = args.get("thread_state", {})
     thread_stats = thread_state["custom"]["stats"]
 
-    custom_tagging = custom_state.get("custom_tagging", None)
-    extra_attr = custom_state.get("extra_attr", False)
-    user_attr = custom_state.get("user_attr", False)
-    max_send_q_size = custom_state.get("max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
-    no_acl = custom_state.get("no_acl", None)
-    phys_block_size = custom_state.get("phys_block_size", IFS_BLOCK_SIZE)
-    pool_translate = custom_state.get("node_pool_translation", {})
-    send_q_sleep = custom_state.get("send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
+    # Custom state values are guaranteed to exist due to the init routine
+    custom_tagging = custom_state["custom_tagging"]
+    extra_attr = custom_state["extra_attr"]
+    user_attr = custom_state["user_attr"]
+    max_send_q_size = custom_state["max_send_q_size"]
+    no_acl = custom_state["no_acl"]
+    phys_block_size = custom_state["phys_block_size"]
+    pool_translate = custom_state["node_pool_translation"]
+    send_q_sleep = custom_state["send_q_sleep"]
+    strip_dot_snapshot = custom_state["strip_dot_snapshot"]
 
     processed = 0
     skipped = 0
@@ -193,6 +198,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     result_dir_list = []
 
     for filename in filename_list:
+        LOG.critical("DEBUG: FILENAME: %s" % filename)
         try:
             full_path = os.path.join(root, filename)
             fd = None
@@ -207,7 +213,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                     thread_stats["lstat_required"] += 1
                     LOG.debug("File %s is not allowed to call os.open, use os.lstat instead." % full_path)
                     time_start = time.time()
-                    file_info = get_file_stat(root, filename, IFS_BLOCK_SIZE)
+                    file_info = get_file_stat(root, filename, IFS_BLOCK_SIZE, strip_dot_snapshot=strip_dot_snapshot)
                     thread_stats["lstat_time"] += time.time() - time_start
                     if custom_tagging:
                         time_start = time.time()
@@ -245,6 +251,11 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             comp_blocks = logical_blocks - fstats["di_shadow_refs"]
             compressed_file = True if (di_data_blocks and comp_blocks) else False
             stubbed_file = (fstats["di_flags"] & IFLAG_COMBO_STUBBED) > 0
+            if strip_dot_snapshot:
+                file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
+            else:
+                file_path = root
+            LOG.critical("DEBUG: FILE PATH: %s" % file_path)
             file_info = {
                 # ========== Timestamps ==========
                 "atime": atime,
@@ -256,7 +267,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 "mtime": fstats["di_mtime"],
                 "mtime_date": datetime.date.fromtimestamp(fstats["di_mtime"]).isoformat(),
                 # ========== File and path strings ==========
-                "file_path": root,
+                "file_path": file_path,
                 "file_name": filename,
                 "file_ext": os.path.splitext(filename)[1],
                 # ========== File attributes ==========
@@ -421,9 +432,13 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
-def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE):
+def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE, strip_dot_snapshot=True):
     full_path = os.path.join(root, filename)
     fstats = os.lstat(full_path)
+    if strip_dot_snapshot:
+        file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
+    else:
+        file_path = root
     file_info = {
         # ========== Timestamps ==========
         "atime": fstats.st_atime,
@@ -435,7 +450,7 @@ def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE):
         "mtime": fstats.st_mtime,
         "mtime_date": datetime.date.fromtimestamp(fstats.st_mtime).isoformat(),
         # ========== File and path strings ==========
-        "file_path": root,
+        "file_path": file_path,
         "file_name": filename,
         "file_ext": os.path.splitext(filename),
         # ========== File attributes ==========
@@ -468,7 +483,7 @@ def init_custom_state(custom_state, options={}):
     # by adding values to the custom_state dictionary
 
     custom_state["custom_stats"] = {}
-    # custom_state["custom_tagging"] = lambda x: None # TODO: Parse the custom tag input file and produce a parser
+    custom_state["custom_tagging"] = None  # lambda x: None
     custom_state["extra_attr"] = options.get("extra", DEFAULT_PARSE_EXTRA_ATTR)
     custom_state["es_send_q"] = None
     custom_state["es_cmd_send_q"] = None
@@ -477,6 +492,7 @@ def init_custom_state(custom_state, options={}):
     custom_state["node_pool_translation"] = {}
     custom_state["phys_block_size"] = IFS_BLOCK_SIZE
     custom_state["send_q_sleep"] = options.get("es_send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
+    custom_state["strip_dot_snapshot"] = options.get("strip_dot_snapshot", DEFAULT_STRIP_DOT_SNAPSHOT)
     custom_state["user_attr"] = options.get("user_attr", DEFAULT_PARSE_USER_ATTR)
     if misc.is_onefs_os():
         # Query the cluster for node pool name information

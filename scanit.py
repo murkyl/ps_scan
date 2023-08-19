@@ -19,10 +19,12 @@ __all__ = [
 ]
 # fmt: on
 import copy
+import glob
 import logging
 import multiprocessing
 import os
 import queue
+import re
 import stat
 import threading
 import time
@@ -304,6 +306,20 @@ class ScanIt(threading.Thread):
             return self.dir_q
         return self.file_q
 
+    def _glob_paths(self, paths):
+        # Copy paths so we can manipulate it without altering the source list
+        paths = list(paths)
+        expanded_paths = []
+        for p in paths:
+            # If a path ends with .snapshot/some_dir then we create 2 glob patterns with * and .* appended so we can
+            # avoid scanning the .snapshot/<snapshot_name> directory itself
+            if re.match(r".*?/\.snapshot/[^/]*/?$", p):
+                paths.append(os.path.join(p, "*"))
+                paths.append(os.path.join(p, ".*"))
+                continue
+            expanded_paths.extend(glob.glob(p))
+        return expanded_paths
+
     def _incr_dir_q_thread_count(self):
         self.dir_q_lock.acquire()
         self.dir_q_threads_count += 1
@@ -507,10 +523,12 @@ class ScanIt(threading.Thread):
             paths = [paths]
         elif isinstance(paths[0], list):
             # We have case 3 with a list of tuples/lists
+            temp_paths = []
             for path_set in paths:
-                self._enqueue_chunks(path_set[0], path_set[1], self.dir_chunk, self.dir_q, CMD_PROC_DIR)
-                self.common_stats["dirs_queued"] += len(path_set[1])
-            return
+                for entry in path_set[1]:
+                    temp_paths = os.join(path_set[0], entry)
+            paths = temp_paths
+        paths = self._glob_paths(paths)
         for p in paths:
             if p.endswith("/"):
                 p = p[0:-1]
