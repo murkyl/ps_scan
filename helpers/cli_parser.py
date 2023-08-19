@@ -21,8 +21,26 @@ from helpers.constants import *
 
 USAGE = "usage: %prog [OPTION...] PATH... [PATH..]"
 EPILOG = """
+Description
+====================
+The path parameter(s) to specify the scan paths supports standard UNIX globbing.
+e.g. /ifs/path/dir*
+
+Scans can be done against a snapshot. The script will automatically strip the
+.snapshot/<snapshotname> portion of the path away when it is present.
+
+
 Quickstart
 ====================
+Run on a cluster:
+python ps_scan.py --es-cred=credentials.txt --es-reset-index --nodes=1-3 /ifs
+
+This command will cause the script to do the following:
+  * Read ElasticSearch credentials from the file credentials.txt
+  * Clear any old ES index and create a new ES index
+  * Run 1 scanner process on nodes 1, 2, and 3
+  * Start scanning from the path: /ifs
+
 The --es-cred-file or the --es-url, the --es-index, --es-user and --es-pass need to
 be present for the script to send output to an Elasticsearch endpoint.
 
@@ -36,7 +54,9 @@ If you specify the URL you must specify the index as well.
 This es-cred-file is sensitive information and should be properly secured. Remove read
 permissions for any user that should not have access to this file.
 
+
 Command line options
+====================
 Some options can significantly impact scan speed. The following options may cause scan
 speeds to impacted:
   * --no-acl
@@ -72,6 +92,7 @@ kill -SIGUSR1 <pid>
 
 Sending a SIGUSR2 to the coordinator process will cause all scanners to dump state to
 the configured log output.
+
 
 Return values
 ====================
