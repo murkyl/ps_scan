@@ -217,7 +217,7 @@ class PSScanClient(object):
             cur_dir_count = (now - start_wall) // self.dir_output_interval
             if cur_dir_count > self.dir_output_count:
                 if self.debug_count > 1:
-                    LOG.debug("Sending dir count update: {dir_count}".format(dir_count=cur_dir_count))
+                    LOG.debug("Sending dir count update #{dir_count:,d}".format(dir_count=cur_dir_count))
                 self.dir_output_count = cur_dir_count
                 self._exec_send_status_dir_count()
 
@@ -225,8 +225,9 @@ class PSScanClient(object):
             if (self.work_list_count == 0) and (now - self.want_data > self.dir_request_interval):
                 if self.debug_count > 1:
                     LOG.debug(
-                        "Asking server for more work: DQ/FQ: %s/%s"
-                        % (self.work_list_count, self.scanner.get_file_queue_size())
+                        "Asking server for more work: file_queue_size:{fq_size}".format(
+                            fq_size=self.scanner.get_file_queue_size()
+                        )
                     )
                 self.want_data = now
                 self._exec_send_req_dir_list()
