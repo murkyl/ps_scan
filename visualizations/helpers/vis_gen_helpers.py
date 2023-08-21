@@ -13,9 +13,11 @@ __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 __all__           = [
     "clear_access_zone_filter",
+    "clear_local_storagepool_usage",
     "clear_vis_file_categories",
     "generate_access_zone_filter_ndjson",
     "generate_file_category_ndjson",
+    "generate_local_storagepool_usage_ndjson",
     "get_dict_value_and_path",
     "get_ps_access_zone_list",
     "update_lens_access_zone_filter",
@@ -33,6 +35,7 @@ import helpers.papi_lite as papi_lite
 
 
 URI_ACCESS_ZONE_LIST = "/zones"
+URI_STORAGEPOOL_NODEPOOLS = "/storagepool/nodepools"
 
 
 def _get_utc_now():
@@ -54,6 +57,25 @@ def clear_access_zone_filter_ndjson(template_array):
             ndjson.append(json.dumps(json_data, sort_keys=True))
         except Exception as e:
             raise Exception("Exception generating access zone overview: {err}\n".format(err=traceback.format_exc()))
+            ndjson.append(line)
+    return ndjson
+
+
+def clear_local_storagepool_usage(template_array):
+    ndjson = []
+    for line in template_array:
+        try:
+            json_data = json.loads(line)
+            if json_data.get("type") != "lens":
+                ndjson.append(line)
+                continue
+            # Update the lens state with a new set of filters
+            visState_dict = json_data["attributes"]["state"]
+            update_lens_local_storagepool_usage(visState_dict, [], add_other=False)
+            # Encode the updated dictionary into JSON
+            ndjson.append(json.dumps(json_data, sort_keys=True))
+        except Exception as e:
+            raise Exception("Exception generating local storagepool usage: {err}\n".format(err=traceback.format_exc()))
             ndjson.append(line)
     return ndjson
 
@@ -114,6 +136,26 @@ def generate_file_category_ndjson(template_array, categories_dict):
             ndjson.append(json.dumps(json_data, sort_keys=True))
         except Exception as e:
             raise Exception("Exception generating file categories: {err}\n".format(err=traceback.format_exc()))
+            ndjson.append(line)
+    return ndjson
+
+
+def generate_local_storagepool_usage_ndjson(template_array):
+    ndjson = []
+    nodepool_list = get_nodepool_list()
+    for line in template_array:
+        try:
+            json_data = json.loads(line)
+            if json_data.get("type") != "lens":
+                ndjson.append(line)
+                continue
+            # Update the lens state with a new set of filters
+            visState_dict = json_data["attributes"]["state"]
+            update_lens_local_storagepool_usage(visState_dict, nodepool_list)
+            # Encode the updated dictionary into JSON
+            ndjson.append(json.dumps(json_data, sort_keys=True))
+        except Exception as e:
+            raise Exception("Exception generating local storagepool usage: {err}\n".format(err=traceback.format_exc()))
             ndjson.append(line)
     return ndjson
 
@@ -208,6 +250,18 @@ def get_ps_access_zone_list():
     return zone_list
 
 
+def get_nodepool_list():
+    nodepool_list = []
+    papi = papi_lite.papi_lite()
+    data = papi.rest_call(URI_STORAGEPOOL_NODEPOOLS, "GET")
+    if data[0] != 200:
+        raise Exception("Error in PAPI request to {url}:\n{err}".format(err=str(data), url=URI_STORAGEPOOL_NODEPOOLS))
+    for pool in data[2].get("nodepools"):
+        nodepool_list.append({"name": pool["name"]})
+    nodepool_list = sorted(nodepool_list, key=lambda x: x["name"])
+    return nodepool_list
+
+
 def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, sort=True):
     value, path = get_dict_value_and_path(
         visState_dict, "datasourceStates/formBased/layers/*/columns/*/operationType/=filters"
@@ -240,6 +294,32 @@ def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, sort=
                 "query": "file_path :/ifs/* and not {not_paths}".format(not_paths=" and not ".join(all_paths)),
             },
             "label": "System (excluding all other access zones)",
+        }
+        filters.append(entry)
+    cur_obj = visState_dict
+    for key in path:
+        cur_obj = cur_obj[key]
+    cur_obj["filters"] = filters
+    return visState_dict
+
+
+def update_lens_local_storagepool_usage(visState_dict, nodepool_list, sort=True):
+    value, path = get_dict_value_and_path(
+        visState_dict, "datasourceStates/formBased/layers/*/columns/*/operationType/=filters"
+    )
+    if not value and not path:
+        raise ValueError('Could not find a section with "operationType=filters" in the passed in dictionary')
+    # Fix up the returned path and discard the last 2 parts and replace it with the section to perform the replacement
+    path = path[0:-2]
+    path.append("params")
+    filters = []
+    for pool in nodepool_list:
+        entry = {
+            "input": {
+                "language": "kuery",
+                "query": 'pool_target_data_name : "{pool}" and file_is_smartlinked : false'.format(pool=pool["name"]),
+            },
+            "label": pool["name"],
         }
         filters.append(entry)
     cur_obj = visState_dict
