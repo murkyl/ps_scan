@@ -198,7 +198,6 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     result_dir_list = []
 
     for filename in filename_list:
-        LOG.critical("DEBUG: FILENAME: %s" % filename)
         try:
             full_path = os.path.join(root, filename)
             fd = None
@@ -255,7 +254,6 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
             else:
                 file_path = root
-            LOG.critical("DEBUG: FILE PATH: %s" % file_path)
             file_info = {
                 # ========== Timestamps ==========
                 "atime": atime,
@@ -594,7 +592,6 @@ def translate_user_group_perms(full_path, file_info):
 
 
 def update_config(custom_state, new_config):
-    LOG.critical("CONFIG UPDATE IS: %s" % new_config)
     client_config = new_config.get("client_config", {})
     es_credentials = client_config.get("es_credentials")
     if es_credentials:
