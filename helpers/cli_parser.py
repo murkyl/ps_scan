@@ -215,6 +215,15 @@ will automatically be appended to this prefix
 """,
     )
     group.add_option(
+        "--es-type",
+        type="choice",
+        choices=(ES_TYPE_PS_SCAN, ES_TYPE_DISKOVER),
+        default=ES_TYPE_PS_SCAN,
+        help="""ElasticSearch endpoint type. Options: ps_scan, diskover     
+Default: ps_scan                                      
+""",
+    )
+    group.add_option(
         "--es-user",
         action="store",
         default=None,
@@ -227,13 +236,21 @@ will automatically be appended to this prefix
         help="Elasticsearch password",
     )
     group.add_option(
-        "--es-cred-file",
+        "--es-options-file",
         action="store",
         default=None,
         help="""File holding at a minimum the user name and password, 
 on individual lines, for Elasticsearch. Additionally  
 you can specify the index name and the URL for the    
 Elasticsearch on the following 2 lines.               
+""",
+    )
+    group.add_option(
+        "--es-cred-file",
+        dest="es_options_file",
+        action="store",
+        default=None,
+        help="""Deprecated option. Alias for --es-options-file.       
 """,
     )
     group.add_option(
