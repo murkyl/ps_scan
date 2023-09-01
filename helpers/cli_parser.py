@@ -218,7 +218,7 @@ will automatically be appended to this prefix
         "--es-type",
         type="choice",
         choices=(ES_TYPE_PS_SCAN, ES_TYPE_DISKOVER),
-        default=ES_TYPE_PS_SCAN,
+        default=None,
         help="""ElasticSearch endpoint type. Options: ps_scan, diskover     
 Default: ps_scan                                      
 """,

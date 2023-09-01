@@ -613,7 +613,7 @@ def update_config(custom_state, new_config):
                         es_options["url"],
                         es_options["user"],
                         es_options["password"],
-                        es_options["index"],
+                        client_config["es_cmd_idx"],
                     ),
                 )
                 es_thread_instance.daemon = True

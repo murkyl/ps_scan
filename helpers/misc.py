@@ -225,9 +225,7 @@ def parse_node_list(node_str, min_node_list=[]):
 
 
 def read_es_options_file(filename):
-    es_creds = {
-        "es_type": ES_TYPE_PS_SCAN,
-    }
+    es_creds = {}
     try:
         with open(filename) as f:
             lines = f.readlines()
@@ -241,9 +239,8 @@ def read_es_options_file(filename):
             if len(lines) > 4:
                 es_type = lines[4].strip()
                 if es_type:
-                    es_creds["es_type"] = es_type
+                    es_creds["type"] = es_type
     except Exception as e:
-        print(e)
         return None
     return es_creds
 
