@@ -62,9 +62,9 @@ def main():
             elif es_options.get(key):
                 options[key] = es_options[key[3:]]
         # Fix default for es_type parameter if neither the file nor CLI has this parameter
-        if not es_options.get("es_type"):
+        if not es_options.get("type"):
             es_options["type"] = ES_TYPE_PS_SCAN
-            options["es_type"] = ES_TYPE_PS_SCAN
+        options["es_type"] = es_options["type"]
     elif (
         options["es_index"] is not None
         and options["es_user"] is not None
