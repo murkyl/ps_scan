@@ -292,7 +292,7 @@ def es_create_index_settings(options={}):
 
 def es_create_start_options(options={}):
     es_options = {}
-    if options.get("type") == ES_TYPE_DISKOVER:
+    if options.get("es_type") == ES_TYPE_DISKOVER:
         storage_usage_stats = {}
         if misc.is_onefs_os():
             storage_usage_stats = misc.get_local_storage_usage_stats()
@@ -326,7 +326,7 @@ def es_create_start_options(options={}):
 
 def es_create_stop_options(options={}):
     es_options = {}
-    if options.get("type") == ES_TYPE_DISKOVER:
+    if options.get("es_type") == ES_TYPE_DISKOVER:
         root_path = options.get("path", "/ifs")
         es_options = {
             "diskover": {
@@ -523,15 +523,15 @@ def es_start_processing(es_client, es_cmd_idx, start_options={}, options={}):
         resp = es_client.update_index_settings(body_str=body, index_name=index_name)
         if resp.get("status", 200) not in [200]:
             LOG.error(resp)
-        LOG.debug("Creating Diskover spaceinfo document.")
         body = diskover_options.get("spaceinfo")
         if body:
+            LOG.debug("Creating Diskover spaceinfo document.")
             resp = es_client.post_document(body, index_name=index_name)
             if resp.get("status", 200) not in [200]:
                 LOG.error(resp)
-        LOG.debug("Creating Diskover start indexinfo document.")
         body = diskover_options.get("indexinfo_start")
         if body:
+            LOG.debug("Creating Diskover start indexinfo document.")
             resp = es_client.post_document(body, index_name=index_name)
             if resp.get("status", 200) not in [200]:
                 LOG.error(resp)
@@ -549,11 +549,10 @@ def es_stop_processing(es_client, es_cmd_idx, stop_options={}, options={}):
         raise Exception("Unknown ElasticSearch type: {es_type}. Could not stop processing.".format(es_type=es_type))
     if es_type == ES_TYPE_DISKOVER:
         diskover_options = stop_options.get("diskover", {})
-        index_names = [es_cmd_idx[CMD_SEND]]
-        LOG.debug("Creating Diskover stop indexinfo document.")
         body = diskover_options.get("indexinfo_stop")
         if body:
-            resp = es_client.post_document(body, index_name=index_name)
+            LOG.debug("Creating Diskover stop indexinfo document.")
+            resp = es_client.post_document(body, index_name=index_names[0])
             if resp.get("status", 200) not in [200]:
                 LOG.error(resp)
     # When using Elasticsearch, reset the index configuration after bulk updates and flush the index
