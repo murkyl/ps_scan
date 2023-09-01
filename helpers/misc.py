@@ -17,22 +17,32 @@ __all__ = [
     "acl_user_to_str",
     "chunk_list",
     "get_local_internal_addr",
+    "get_local_node_number",
+    "get_local_storage_usage_stats",
     "is_onefs_os",
     "merge_process_stats",
+    "parse_node_list",
+    "read_es_options_file",
     "set_resource_limits",
+    "split_numeric_range_list",
     "sysctl",
     "sysctl_raw",
 ]
 # fmt: on
 import copy
 import platform
-import subprocess
-from constants import *
 
 try:
     import resource
 except:
     pass
+import subprocess
+
+from .constants import *
+import helpers.papi_lite as papi_lite
+
+
+URI_STATISTICS_KEY = "/statistics/current"
 
 
 def ace_list_to_str_list(ace_list):
@@ -133,7 +143,7 @@ def get_local_internal_addr():
         stderr=subprocess.PIPE,
     )
     stdout, stderr = subproc.communicate()
-    addr = stdout.strip().replace('"', "")
+    addr = (stdout.decode("UTF-8")).strip().replace('"', "")
     return addr
 
 
@@ -158,8 +168,31 @@ def get_local_node_number():
         stderr=subprocess.PIPE,
     )
     stdout, stderr = subproc.communicate()
-    lnn = stdout.strip().replace('"', "")
+    lnn = (stdout.decode("UTF-8")).strip().replace('"', "")
     return lnn
+
+
+def get_local_storage_usage_stats():
+    stats = {}
+    stats_keys = [
+        "ifs.bytes.avail",
+        "ifs.percent.avail",
+        "ifs.bytes.free",
+        "ifs.percent.free",
+        "ifs.bytes.total",
+        "ifs.bytes.used",
+    ]
+    papi = papi_lite.papi_lite()
+    data = papi.rest_call(
+        URI_STATISTICS_KEY,
+        "GET",
+        query_args={"keys": ",".join(stats_keys)},
+    )
+    if data[0] != 200:
+        raise Exception("Error in PAPI request to {url}:\n{err}".format(err=str(data), url=URI_STATISTICS_KEY))
+    for item in data[2].get("stats"):
+        stats[item["key"]] = item["value"]
+    return stats
 
 
 def is_onefs_os():
@@ -191,8 +224,10 @@ def parse_node_list(node_str, min_node_list=[]):
     return node_list
 
 
-def read_es_cred_file(filename):
-    es_creds = {}
+def read_es_options_file(filename):
+    es_creds = {
+        "es_type": ES_TYPE_PS_SCAN,
+    }
     try:
         with open(filename) as f:
             lines = f.readlines()
@@ -202,7 +237,13 @@ def read_es_cred_file(filename):
                 es_creds["index"] = lines[2].strip()
             if len(lines) > 3:
                 es_creds["url"] = lines[3].strip()
-    except:
+            # Optional 5th parameter, the type of ES index. Normally ps_scan or diskover
+            if len(lines) > 4:
+                es_type = lines[4].strip()
+                if es_type:
+                    es_creds["es_type"] = es_type
+    except Exception as e:
+        print(e)
         return None
     return es_creds
 
@@ -264,9 +305,9 @@ def sysctl_raw(name, newval=None):
         cmd_line.append("=")
         cmd_line.append(newval)
     proc = subprocess.Popen(cmd_line, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    output, errors = proc.communicate()
-    if errors:
-        raise Exception(errors)
-    if not output.decode("UTF-8").startswith(name):
-        raise Exception(output)
-    return output
+    stdout, stderr = proc.communicate()
+    if stderr:
+        raise Exception(stderr.decode("UTF-8"))
+    if not stdout.decode("UTF-8").startswith(name):
+        raise Exception(stdout.decode("UTF-8"))
+    return stdout

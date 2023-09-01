@@ -62,7 +62,7 @@ class ElasticsearchLite:
         return json.loads(resp.read())
 
     def bulk(self, body_str, index_name=None):
-        if body_str[-1] != "\n":
+        if body_str and body_str[-1] != "\n":
             body_str += "\n"
         return self._simple_es_request("_bulk", op="POST", body_str=body_str, index_name=index_name)
 
@@ -112,10 +112,19 @@ class ElasticsearchLite:
     def info(self):
         return self._simple_es_request("_xpack")
 
+    def post_document(self, body_str, index_name=None, query=None):
+        if isinstance(body_str, dict):
+            body_str = json.dumps(body_str)
+        return self._simple_es_request("_doc", op="POST", body_str=body_str, index_name=index_name, query=query)
+
     def search(self, body_str, index_name=None):
+        if isinstance(body_str, dict):
+            body_str = json.dumps(body_str)
         return self._simple_es_request("_search", body_str=body_str, index_name=index_name)
 
     def update_index_settings(self, body_str, index_name=None, query=None):
+        if isinstance(body_str, dict):
+            body_str = json.dumps(body_str)
         return self._simple_es_request("_settings", op="PUT", body_str=body_str, index_name=index_name, query=query)
 
     def validate_options(self):

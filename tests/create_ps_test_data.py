@@ -53,10 +53,10 @@ DEFAULT_SIZE_DIST = [
 ]
 DEFAULT_THREAD_COUNT = 10
 DEFAULT_USER_DIST = [
-    [2017, 1800], # ftpuser3
-    [2018, 1800], # ftpuser4
-    [12002, 12000], # isilon.com\sally
-    [20002, 11000], # isilon.com\devops1
+    [2017, 1800],  # ftpuser3
+    [2018, 1800],  # ftpuser4
+    [12002, 12000],  # isilon.com\sally
+    [20002, 11000],  # isilon.com\devops1
 ]
 EXTENSIONS = [
     "cpp",

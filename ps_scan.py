@@ -48,18 +48,27 @@ def main():
 
     setup_logger(options)
 
-    es_credentials = {}
-    if options["es_cred_file"]:
-        es_credentials = misc.read_es_cred_file(options["es_cred_file"])
-        if es_credentials is None:
-            LOG.critical("Unable to open or read the credentials file: {file}".format(file=filename))
+    es_options = {}
+    if options["es_options_file"]:
+        es_options = misc.read_es_options_file(options["es_options_file"])
+        # Merge file options into CLI options if they exist
+        for key in es_options.keys():
+            options[key] = es_options[key]
+        if es_options is None:
+            LOG.critical("Unable to open or read the credentials file: {file}".format(file=options["es_cred_file"]))
             sys.exit(3)
-    elif options["es_index"] and options["es_user"] and options["es_pass"] and options["es_url"]:
-        es_credentials = {
+    elif (
+        options["es_index"] is not None
+        and options["es_user"] is not None
+        and options["es_pass"] is not None
+        and options["es_url"] is not None
+    ):
+        es_options = {
             "index": options["es_index"],
             "password": options["es_pass"],
             "url": options["es_url"],
             "user": options["es_user"],
+            "es_type": options["es_type"],
         }
 
     if options["type"] == SCAN_TYPE_AUTO:
@@ -107,8 +116,8 @@ def main():
             "server_port": options["port"],
             "stats_handler": user_handlers.print_statistics,
         }
-        if es_credentials:
-            ps_scan_server_options["client_config"]["es_credentials"] = es_credentials
+        if es_options:
+            ps_scan_server_options["client_config"]["es_options"] = es_options
             ps_scan_server_options["client_config"]["es_send_threads"] = options["es_threads"]
         if options["op"] == "auto":
             if options["type"] == SCAN_TYPE_ONEFS:
@@ -121,30 +130,34 @@ def main():
                 ps_scan_server_options["node_list"] = node_list
         try:
             es_client = None
-            if es_credentials:
+            if es_options:
                 es_client = elasticsearch_wrapper.es_create_connection(
-                    es_credentials["url"],
-                    es_credentials["user"],
-                    es_credentials["password"],
-                    es_credentials["index"],
+                    es_options["url"],
+                    es_options["user"],
+                    es_options["password"],
+                    es_options["index"],
+                    es_options["es_type"],
                 )
             if es_client and (options["es_init_index"] or options["es_reset_index"]):
                 if options["es_reset_index"]:
                     elasticsearch_wrapper.es_delete_index(es_client)
-                LOG.debug("Initializing indices for Elasticsearch: {index}".format(index=es_credentials["index"]))
+                LOG.debug("Initializing indices for Elasticsearch: {index}".format(index=es_options["index"]))
                 es_index_settings = elasticsearch_wrapper.es_create_index_settings(
                     {
                         "number_of_shards": options["es_shards"],
                         "number_of_replicas": options["es_replicas"],
+                        "es_type": es_options["es_type"],
                     }
                 )
-                elasticsearch_wrapper.es_init_index(es_client, es_credentials["index"], es_index_settings)
+                elasticsearch_wrapper.es_init_index(es_client, es_options["index"], es_index_settings, options)
             if es_client:
-                elasticsearch_wrapper.es_start_processing(es_client, {})
+                start_options = elasticsearch_wrapper.es_create_start_options(options)
+                elasticsearch_wrapper.es_start_processing(es_client, start_options, options)
             svr = pss.PSScanServer(ps_scan_server_options)
             svr.serve()
             if es_client:
-                elasticsearch_wrapper.es_stop_processing(es_client, {})
+                stop_options = elasticsearch_wrapper.es_create_stop_options(options)
+                elasticsearch_wrapper.es_stop_processing(es_client, stop_options, options)
         except Exception as e:
             LOG.exception("Unhandled exception in server.")
 
@@ -170,7 +183,7 @@ def setup_logger(options):
         LOG.setLevel(logging.INFO)
     if debug_count < 3:
         # Disable loggers for hydra sub modules
-        for mod_name in ["libs.hydra"]:
+        for mod_name in ["libs.hydra", "helpers.papi_lite"]:
             module_logger = logging.getLogger(mod_name)
             module_logger.setLevel(logging.WARN)
 

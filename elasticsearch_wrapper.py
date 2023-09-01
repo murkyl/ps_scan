@@ -11,7 +11,9 @@ __email__         = "andrew.chung@dell.com"
 __all__ = [
     "es_data_sender",
     "es_create_connection",
-    "es_create_settings",
+    "es_create_index_settings",
+    "es_create_start_options_diskover",
+    "es_create_stop_options_diskover",
     "es_delete_index",
     "es_init_index",
     "es_start_processing",
@@ -22,12 +24,14 @@ import copy
 import json
 import logging
 import queue
+import re
 import socket
 import time
 
-import elasticsearch_lite
+import helpers.elasticsearch_lite as es_lite
 import scanit
 from helpers.constants import *
+import helpers.misc as misc
 
 ES_INDEX_MAPPING = {
     "properties": {
@@ -127,30 +131,218 @@ ES_INDEX_MAPPING = {
         "user_tags": {"type": "keyword"},
     }
 }
+ES_INDEX_MAPPING_DISKOVER = {
+    "properties": {
+        "name": {
+            "type": "keyword",
+            "fields": {
+                "text": {"type": "text", "analyzer": "filename_analyzer"},
+            },
+        },
+        "parent_path": {
+            "type": "keyword",
+            "fields": {
+                "text": {"type": "text", "analyzer": "path_analyzer"},
+            },
+        },
+        "size": {"type": "long"},
+        "size_norecurs": {"type": "long"},
+        "size_du": {"type": "long"},
+        "size_du_norecurs": {"type": "long"},
+        "file_count": {"type": "long"},
+        "file_count_norecurs": {"type": "long"},
+        "dir_count": {"type": "long"},
+        "dir_count_norecurs": {"type": "long"},
+        "dir_depth": {"type": "integer"},
+        "owner": {"type": "keyword"},
+        "group": {"type": "keyword"},
+        "mtime": {"type": "date"},
+        "atime": {"type": "date"},
+        "ctime": {"type": "date"},
+        "nlink": {"type": "integer"},
+        "ino": {"type": "keyword"},
+        "tags": {"type": "keyword"},
+        "costpergb": {
+            "type": "scaled_float",
+            "scaling_factor": 100,
+        },
+        "extension": {"type": "keyword"},
+        "path": {"type": "keyword"},
+        "total": {"type": "long"},
+        "used": {"type": "long"},
+        "free": {"type": "long"},
+        "free_percent": {"type": "float"},
+        "available": {"type": "long"},
+        "available_percent": {"type": "float"},
+        "file_size": {"type": "long"},
+        "file_size_du": {"type": "long"},
+        "file_count": {"type": "long"},
+        "dir_count": {"type": "long"},
+        "start_at": {"type": "date"},
+        "end_at": {"type": "date"},
+        "crawl_time": {"type": "float"},
+        "diskover_ver": {"type": "keyword"},
+        "type": {"type": "keyword"},
+        "pscale": {
+            "type": "object",
+            "properties": copy.deepcopy(ES_INDEX_MAPPING["properties"]),
+        },
+    }
+}
 ES_INDEX_SETTINGS = {
     "number_of_shards": 1,
     "max_regex_length": 4096,
     "number_of_replicas": 0,
 }
+ES_INDEX_SETTINGS_DISKOVER = {
+    "index": {
+        "number_of_shards": 1,
+        "number_of_replicas": 0,
+        "codec": "default",
+    },
+    "analysis": {
+        "tokenizer": {
+            "filename_tokenizer": {
+                "type": "char_group",
+                "tokenize_on_chars": ["whitespace", "punctuation", "-", "_"],
+            },
+            "path_tokenizer": {
+                "type": "char_group",
+                "tokenize_on_chars": ["whitespace", "punctuation", "/", "-", "_"],
+            },
+        },
+        "analyzer": {
+            "filename_analyzer": {
+                "tokenizer": "filename_tokenizer",
+                "filter": ["word_filter", "lowercase"],
+            },
+            "path_analyzer": {
+                "tokenizer": "path_tokenizer",
+                "filter": ["word_filter", "lowercase"],
+            },
+        },
+        "filter": {
+            "word_filter": {
+                "type": "word_delimiter_graph",
+                "generate_number_parts": "false",
+                "stem_english_possessive": "false",
+                "split_on_numerics": "false",
+                "catenate_all": "true",
+                "preserve_original": "true",
+            }
+        },
+    },
+}
 ES_REFERSH_INTERVAL = """{"index":{"refresh_interval":"%s"}}"""
 LOG = logging.getLogger(__name__)
 
 
-def es_create_connection(url, username, password, index):
-    if index[-1] == "_":
-        index = index[0:-1]
-    es_client = elasticsearch_lite.ElasticsearchLite()
-    es_client.username = username
-    es_client.password = password
-    es_client.endpoint = url
-    return [es_client, [index + x for x in ["_file", "_dir"]], "%s_state" % index]
+def es_create_connection(url, username, password, index, es_type=ES_TYPE_PS_SCAN):
+    if es_type == ES_TYPE_PS_SCAN:
+        if index[-1] == "_":
+            index = index[0:-1]
+        es_client = es_lite.ElasticsearchLite()
+        es_client.username = username
+        es_client.password = password
+        es_client.endpoint = url
+        return [es_client, [index + x for x in ["_file", "_dir"]], "%s_state" % index]
+    elif es_type == ES_TYPE_DISKOVER:
+        es_client = es_lite.ElasticsearchLite()
+        es_client.username = username
+        es_client.password = password
+        es_client.endpoint = url
+        # Verify the index starts with diskover-
+        if not index.startswith("diskover-"):
+            index = "diskover-" + index
+        # Append the current time if it is not passed in as the index name
+        if not re.match(r"^diskover-(.*?)-[0-9]{14}$", index):
+            index += "-" + time.strftime("%Y%m%d%H%M")
+        return [es_client, [index]]
+    else:
+        raise Exception("Unknown ElasticSearch type: {es_type}. Could not create connection.".format(es_type=es_type))
 
 
 def es_create_index_settings(options={}):
-    new_settings = copy.deepcopy(ES_INDEX_SETTINGS)
-    new_settings["number_of_shards"] = options.get("number_of_shards", ES_INDEX_SETTINGS["number_of_shards"])
-    new_settings["number_of_replicas"] = options.get("number_of_replicas", ES_INDEX_SETTINGS["number_of_replicas"])
+    new_settings = {}
+    es_type = options.get("es_type")
+    if es_type == ES_TYPE_PS_SCAN:
+        new_settings["settings"] = copy.deepcopy(ES_INDEX_SETTINGS)
+        new_settings["settings"]["number_of_shards"] = options.get(
+            "number_of_shards", ES_INDEX_SETTINGS["number_of_shards"]
+        )
+        new_settings["settings"]["number_of_replicas"] = options.get(
+            "number_of_replicas", ES_INDEX_SETTINGS["number_of_replicas"]
+        )
+        new_settings["mapping"] = copy.deepcopy(ES_INDEX_MAPPING)
+    elif es_type == ES_TYPE_DISKOVER:
+        new_settings["settings"] = copy.deepcopy(ES_INDEX_SETTINGS_DISKOVER)
+        new_settings["settings"]["number_of_shards"] = options.get(
+            "number_of_shards", ES_INDEX_SETTINGS["number_of_shards"]
+        )
+        new_settings["settings"]["number_of_replicas"] = options.get(
+            "number_of_replicas", ES_INDEX_SETTINGS["number_of_replicas"]
+        )
+        new_settings["mapping"] = copy.deepcopy(ES_INDEX_MAPPING_DISKOVER)
+    else:
+        raise Exception(
+            "Unknown ElasticSearch type: {es_type}. Could not create index settings.".format(es_type=es_type)
+        )
     return new_settings
+
+
+def es_create_start_options(options={}):
+    es_options = {}
+    if options.get("es_type") == ES_TYPE_DISKOVER:
+        storage_usage_stats = {}
+        if misc.is_onefs_os():
+            storage_usage_stats = misc.get_local_storage_usage_stats()
+        else:
+            # TODO: Add support for querying for usage statistics
+            pass
+        ps_scan_ver = options.get("ps_scan_ver_str", "ps_scan v0.0.0")
+        root_path = options.get("path", "/ifs")
+        es_options = {
+            "diskover": {
+                "spaceinfo": {
+                    "available": storage_usage_stats.get("ifs.bytes.avail", 0),
+                    "available_percent": storage_usage_stats.get("ifs.percent.avail", 0),
+                    "free": storage_usage_stats.get("ifs.bytes.free", 0),
+                    "free_percent": storage_usage_stats.get("ifs.percent.free", 0),
+                    "total": storage_usage_stats.get("ifs.bytes.total", 0),
+                    "used": storage_usage_stats.get("ifs.bytes.used", 0),
+                    "path": root_path,
+                    "type": "spaceinfo",
+                },
+                "indexinfo_start": {
+                    "path": root_path,
+                    "start_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "diskover_ver": ps_scan_ver,
+                    "type": "indexinfo",
+                },
+            },
+        }
+    return es_options
+
+
+def es_create_stop_options(options={}):
+    es_options = {}
+    if options.get("es_type") == ES_TYPE_DISKOVER:
+        root_path = options.get("path", "/ifs")
+        es_options = {
+            "diskover": {
+                "indexinfo_stop": {
+                    "crawl_time": 0,
+                    "dir_count": 0,
+                    "end_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "file_count": 0,
+                    "file_size": 0,
+                    "file_size_du": 0,
+                    "path": root_path,
+                    "type": "indexinfo",
+                },
+            },
+        }
+    return es_options
 
 
 def es_data_sender(
@@ -164,13 +356,15 @@ def es_data_sender(
     bulk_count=50,
 ):
     # TODO: Change the bulk_count and max_wait time to variables
-    es_client = elasticsearch_lite.ElasticsearchLite()
+    es_client = es_lite.ElasticsearchLite()
     es_client.username = username
     es_client.password = password
     es_client.endpoint = url
-    file_idx = index_name + "_file"
-    dir_idx = index_name + "_dir"
-    state_idx = index_name + "_state"
+    cmd_idx_map = {
+      CMD_SEND: index_name + "_file",
+      CMD_SEND_DIR: index_name + "_dir",
+      CMD_SEND_STATS: index_name + "_state",
+    }
     bulk_data = []
     max_wait_time = 30
     start_time = time.time()
@@ -214,8 +408,8 @@ def es_data_sender(
             flush = True
         if flush:
             try:
-                es_data_flush(bulk_data, es_client, file_idx, dir_idx, state_idx)
-            except Exception:
+                es_data_flush(bulk_data, es_client, cmd_idx_map)
+            except Exception as e:
                 LOG.exception("Elastic search send failed.")
             start_time = time.time()
             bulk_data[:] = []
@@ -230,13 +424,16 @@ def es_delete_index(es_client):
         if resp.get("status", 200) not in [200, 404]:
             LOG.error(json.dumps(resp.get("error", {})))
         LOG.debug("Delete index (%s) response: %s" % (idx, resp))
-    resp = es_client[0].delete_index(es_client[2])
-    if resp.get("status", 200) not in [200, 404]:
-        LOG.error(json.dumps(resp.get("error", {})))
-    LOG.debug("Delete index (%s) response: %s" % (es_client[2], resp))
+        if resp.get("status", 200) not in [200, 404]:
+            LOG.error(json.dumps(resp.get("error", {})))
+    for extra_idx in range(len(es_client) - 2):
+        resp = es_client[0].delete_index(es_client[extra_idx + 2])
+        LOG.debug("Delete index (%s) response: %s" % (es_client[2], resp))
+        if resp.get("status", 200) not in [200, 404]:
+            LOG.error(json.dumps(resp.get("error", {})))
 
 
-def es_data_flush(bulk_data, es_client, file_idx, dir_idx, state_idx):
+def es_data_flush(bulk_data, es_client, cmd_idx_map):
     for chunk in bulk_data:
         bulk_file = []
         bulk_dir = []
@@ -273,14 +470,14 @@ def es_data_flush(bulk_data, es_client, file_idx, dir_idx, state_idx):
         # For each bulk list, take all the entries and join them together with a \n and send them to the ES into the
         # appropriate index
         for bulk_list in [bulk_file, bulk_dir, bulk_state]:
+            if bulk_list is bulk_file:
+                idx = cmd_idx_map[CMD_SEND]
+            elif bulk_list is bulk_dir:
+                idx = cmd_idx_map[CMD_SEND_DIR]
+            else:
+                idx = cmd_idx_map[CMD_SEND_STATS]
             if not bulk_list:
                 continue
-            if bulk_list is bulk_file:
-                idx = file_idx
-            elif bulk_list is bulk_dir:
-                idx = dir_idx
-            else:
-                idx = state_idx
             bulk_str = "\n".join(bulk_list)
             resp = es_client.bulk(bulk_str, index_name=idx)
             if resp.get("error", False):
@@ -291,46 +488,104 @@ def es_data_flush(bulk_data, es_client, file_idx, dir_idx, state_idx):
                         LOG.error(json.dumps(item["index"]["error"]))
 
 
-def es_init_index(es_client, index, settings=None):
-    LOG.debug("Creating new indices with mapping: {idx}_file and {idx}_dir".format(idx=index))
+def es_init_index(es_client, index, settings={}, options={}):
     for idx in es_client[1]:
-        resp = es_client[0].create_index(idx, mapping=settings.get("mapping", ES_INDEX_MAPPING), settings=settings)
+        LOG.debug("Creating new index: {idx}".format(idx=idx))
+        resp = es_client[0].create_index(
+            idx,
+            mapping=settings.get("mapping", {}),
+            settings=settings.get("settings", {}),
+        )
         LOG.debug("Create index response: %s" % resp)
         if resp.get("status", 200) not in [200]:
             if resp["error"]["type"] == "resource_already_exists_exception":
                 LOG.debug("Index {idx} already exists".format(idx=idx))
             else:
                 LOG.error(json.dumps(resp.get("error", {})))
-    resp = es_client[0].create_index(es_client[2], settings=settings)
-    LOG.debug("Create index response: %s" % resp)
-    if resp.get("status", 200) not in [200]:
-        if resp["error"]["type"] == "resource_already_exists_exception":
-            LOG.debug("Index {idx} already exists".format(idx=es_client[2]))
-        else:
-            LOG.error(json.dumps(resp.get("error", {})))
+    # Special case for ps_scan to create the state index
+    if len(es_client) > 2:
+        resp = es_client[0].create_index(
+            es_client[2],
+            # TODO: There is no mapping for state currently
+            mapping=settings.get("mapping", {}),
+            settings=settings.get("settings", {}),
+        )
+        LOG.debug("Create index response: %s" % resp)
+        if resp.get("status", 200) not in [200]:
+            if resp["error"]["type"] == "resource_already_exists_exception":
+                LOG.debug("Index {idx} already exists".format(idx=es_client[2]))
+            else:
+                LOG.error(json.dumps(resp.get("error", {})))
 
 
-def es_start_processing(es_client, options={}):
-    # When using Elasticsearch, set the index configuration to speed up bulk updates
-    LOG.debug("Updating index settings")
-    body = ES_REFERSH_INTERVAL % options.get("bulk_refresh_interval", DEFAULT_ES_BULK_REFRESH_INTERVAL)
-    for idx in es_client[1]:
-        resp = es_client[0].update_index_settings(body_str=body, index_name=idx)
+def es_start_processing(es_client, es_options={}, options={}):
+    es_type = options.get("es_type")
+    if es_type == ES_TYPE_PS_SCAN:
+        # When using Elasticsearch, set the index configuration to speed up bulk updates
+        LOG.debug("Updating index settings")
+        body = ES_REFERSH_INTERVAL % es_options.get("bulk_refresh_interval", DEFAULT_ES_BULK_REFRESH_INTERVAL)
+        for idx in es_client[1]:
+            resp = es_client[0].update_index_settings(body_str=body, index_name=idx)
+            if resp.get("status", 200) not in [200]:
+                LOG.error(resp)
+    elif es_type == ES_TYPE_DISKOVER:
+        diskover_options = es_options.get("diskover", {})
+        LOG.debug("Updating index settings")
+        body = ES_REFERSH_INTERVAL % es_options.get("bulk_refresh_interval", DEFAULT_ES_BULK_REFRESH_INTERVAL)
+        resp = es_client[0].update_index_settings(body_str=body, index_name=es_client[1][0])
         if resp.get("status", 200) not in [200]:
             LOG.error(resp)
+        LOG.debug("Creating Diskover spaceinfo document.")
+        body = diskover_options.get("spaceinfo")
+        if body:
+            resp = es_client[0].post_document(body, index_name=es_client[1][0])
+            if resp.get("status", 200) not in [200]:
+                LOG.error(resp)
+        LOG.debug("Creating Diskover start indexinfo document.")
+        body = diskover_options.get("indexinfo_start")
+        if body:
+            resp = es_client[0].post_document(body, index_name=es_client[1][0])
+            if resp.get("status", 200) not in [200]:
+                LOG.error(resp)
+    else:
+        raise Exception("Unknown ElasticSearch type: {es_type}. Could not start processing.".format(es_type=es_type))
 
 
-def es_stop_processing(es_client, options={}):
-    # When using Elasticsearch, reset the index configuration after bulk updates and flush the index
-    LOG.debug("Reset index settings, flush, and force merge")
-    body = ES_REFERSH_INTERVAL % options.get("standard_refresh_interval", DEFAULT_ES_STANDARD_REFRESH_INTERVAL)
-    for idx in es_client[1]:
-        resp = es_client[0].update_index_settings(body_str=body, index_name=idx)
+def es_stop_processing(es_client, es_options={}, options={}):
+    es_type = options.get("es_type")
+    if es_type == ES_TYPE_PS_SCAN:
+        # When using Elasticsearch, reset the index configuration after bulk updates and flush the index
+        LOG.debug("Reset index settings, flush, and force merge")
+        body = ES_REFERSH_INTERVAL % es_options.get("standard_refresh_interval", DEFAULT_ES_STANDARD_REFRESH_INTERVAL)
+        for idx in es_client[1]:
+            resp = es_client[0].update_index_settings(body_str=body, index_name=idx)
+            if resp.get("status", 200) not in [200]:
+                LOG.error(resp)
+            resp = es_client[0].flush(idx)
+            if resp.get("status", 200) not in [200]:
+                LOG.error(resp)
+            resp = es_client[0].forcemerge(idx)
+            if resp.get("status", 200) not in [200]:
+                LOG.error(resp)
+    elif es_type == ES_TYPE_DISKOVER:
+        diskover_options = es_options.get("diskover", {})
+        # When using Elasticsearch, reset the index configuration after bulk updates and flush the index
+        LOG.debug("Creating Diskover stop indexinfo document.")
+        body = diskover_options.get("indexinfo_stop")
+        if body:
+            resp = es_client[0].post_document(body, index_name=es_client[1][0])
+            if resp.get("status", 200) not in [200]:
+                LOG.error(resp)
+        LOG.debug("Reset index settings, flush, and force merge")
+        body = ES_REFERSH_INTERVAL % es_options.get("standard_refresh_interval", DEFAULT_ES_STANDARD_REFRESH_INTERVAL)
+        resp = es_client[0].update_index_settings(body_str=body, index_name=es_client[1][0])
         if resp.get("status", 200) not in [200]:
             LOG.error(resp)
-        resp = es_client[0].flush(idx)
+        resp = es_client[0].flush(es_client[1][0])
         if resp.get("status", 200) not in [200]:
             LOG.error(resp)
-        resp = es_client[0].forcemerge(idx)
+        resp = es_client[0].forcemerge(es_client[1][0])
         if resp.get("status", 200) not in [200]:
             LOG.error(resp)
+    else:
+        raise Exception("Unknown ElasticSearch type: {es_type}. Could not stop processing.".format(es_type=es_type))

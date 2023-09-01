@@ -483,8 +483,8 @@ def init_custom_state(custom_state, options={}):
     custom_state["custom_stats"] = {}
     custom_state["custom_tagging"] = None  # lambda x: None
     custom_state["extra_attr"] = options.get("extra", DEFAULT_PARSE_EXTRA_ATTR)
-    custom_state["es_send_q"] = None
-    custom_state["es_cmd_send_q"] = None
+    custom_state["es_send_q"] = queue.Queue()
+    custom_state["es_send_cmd_q"] = queue.Queue()
     custom_state["max_send_q_size"] = options.get("ex_max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
     custom_state["no_acl"] = options.get("no_acl", DEFAULT_PARSE_SKIP_ACLS)
     custom_state["node_pool_translation"] = {}
@@ -558,6 +558,8 @@ def shutdown(custom_state, custom_threads_state):
                     num_threads=len(wait_for_threads), time=flush_time
                 )
             )
+        else:
+            LOG.debug("Elastic Search send threads have all shutdown.")
 
 
 def translate_user_group_perms(full_path, file_info):
@@ -593,31 +595,31 @@ def translate_user_group_perms(full_path, file_info):
 
 def update_config(custom_state, new_config):
     client_config = new_config.get("client_config", {})
-    es_credentials = client_config.get("es_credentials")
-    if es_credentials:
+    es_options = client_config.get("es_options")
+    # TODO: Add code to shutdown existing threads or adjust running threads based on new config
+    if es_options:
         if client_config.get("es_thread_handles") is not None:
             # TODO: Add support for closing and reconnecting to a new ES instance
             pass
-        if custom_state.get("es_send_q") is None:
-            custom_state["es_send_q"] = queue.Queue()
-        if custom_state.get("es_send_cmd_q") is None:
-            custom_state["es_send_cmd_q"] = queue.Queue()
         es_threads = []
         threads_to_start = client_config.get("es_send_threads", DEFAULT_ES_THREADS)
-        for i in range(threads_to_start):
-            es_thread_instance = threading.Thread(
-                target=elasticsearch_wrapper.es_data_sender,
-                args=(
-                    custom_state["es_send_q"],
-                    custom_state["es_send_cmd_q"],
-                    es_credentials["url"],
-                    es_credentials["user"],
-                    es_credentials["password"],
-                    es_credentials["index"],
-                ),
-            )
-            es_thread_instance.daemon = True
-            es_thread_instance.start()
-            es_threads.append(es_thread_instance)
+        try:
+            for i in range(threads_to_start):
+                es_thread_instance = threading.Thread(
+                    target=elasticsearch_wrapper.es_data_sender,
+                    args=(
+                        custom_state["es_send_q"],
+                        custom_state["es_send_cmd_q"],
+                        es_options["url"],
+                        es_options["user"],
+                        es_options["password"],
+                        es_options["index"],
+                    ),
+                )
+                es_thread_instance.daemon = True
+                es_thread_instance.start()
+                es_threads.append(es_thread_instance)
+        except Exception as e:
+            LOG.exception("Error encountered starting up ES sender threads")
         custom_state["es_thread_handles"] = es_threads
     custom_state["client_config"] = client_config

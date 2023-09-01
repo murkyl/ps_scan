@@ -296,7 +296,11 @@ class PSScanClient(object):
     def parse_config_update(self, cfg):
         # TODO: Re-architect how config updates are sent to the user handler/plug-in
         custom_state, custom_threads_state = self.scanner.get_custom_state()
-        user_handlers.update_config(custom_state, cfg)
+        LOG.debug("Received configuration update: {cfg}".format(cfg=cfg))
+        try:
+            user_handlers.update_config(custom_state, cfg)
+        except Exception as e:
+            LOG.exception("Error during update_config")
         self.client_config = cfg
         self.debug_count = cfg.get("debug", 0)
 
@@ -326,6 +330,7 @@ class PSScanClient(object):
             LOG.addHandler(log_handler)
             LOG.setLevel(logger_block["level"])
             self.debug_count = logger_block.get("debug_count", 0)
+            LOG.debug("Logger configuration updated")
         except KeyError as ke:
             sys.stderr.write("ERROR: Logger filename string is invalid: {txt}\n".format(txt=str(ke)))
         except Exception as e:
