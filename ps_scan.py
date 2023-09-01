@@ -97,6 +97,8 @@ def main():
         else:
             LOG.info("VMEM ulimit setting failed.")
         file_handler = user_handlers.file_handler_pscale
+        if options.get("es_type") == ES_TYPE_DISKOVER:
+            file_handler = user_handlers.file_handler_pscale_diskover
     else:
         file_handler = user_handlers.file_handler_basic
     LOG.debug("Parsed options:\n{opt}".format(opt=json.dumps(options, indent=2, sort_keys=True)))
@@ -104,7 +106,7 @@ def main():
 
     if options["op"] == OPERATION_TYPE_CLIENT:
         LOG.info("Starting client")
-        options["scanner_file_handler"] = user_handlers.file_handler_pscale
+        options["scanner_file_handler"] = file_handler
         options["server_addr"] = options["addr"]
         options["server_port"] = options["port"]
         client = psc.PSScanClient(options)

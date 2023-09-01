@@ -256,7 +256,7 @@ def es_create_connection(url, username, password, index, es_type=ES_TYPE_PS_SCAN
             index = "diskover-" + index
         # Append the current time if it is not passed in as the index name
         if not re.match(r"^diskover-(.*?)-[0-9]{14}$", index):
-            index += "-" + time.strftime("%Y%m%d%H%M")
+            index += "-" + time.strftime(DEFAULT_TIME_FORMAT_SIMPLE)
         return [es_client, {CMD_SEND: index, CMD_SEND_DIR: index, CMD_SEND_STATS: index}]
     else:
         raise Exception("Unknown ElasticSearch type: {es_type}. Could not create connection.".format(es_type=es_type))
@@ -315,7 +315,7 @@ def es_create_start_options(options={}):
                 },
                 "indexinfo_start": {
                     "path": root_path,
-                    "start_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "start_at": time.strftime(DEFAULT_TIME_FORMAT_8601),
                     "diskover_ver": ps_scan_ver,
                     "type": "indexinfo",
                 },
@@ -333,7 +333,7 @@ def es_create_stop_options(options={}):
                 "indexinfo_stop": {
                     "crawl_time": 0,
                     "dir_count": 0,
-                    "end_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    "end_at": time.strftime(DEFAULT_TIME_FORMAT_8601),
                     "file_count": 0,
                     "file_size": 0,
                     "file_size_du": 0,
@@ -426,6 +426,7 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx):
             body_text = None
             try:
                 body_text = json.dumps(chunk_data[idx])
+                LOG.critical("***** DEBUG: DATA FLUSH STRING:\n%s\n" % body_text)
             except UnicodeDecodeError as ude:
                 LOG.info("JSON dumps encountered unicode decoding error. Trying latin-1 re-code to UTF-8")
                 try:
@@ -445,7 +446,9 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx):
                     bulk_list = bulk_dir
                 elif chunk_type == CMD_SEND_STATS:
                     bulk_list = bulk_state
-                bulk_list.append(json.dumps({"index": {"_id": chunk_data[idx]["inode"]}}))
+                # inode has 2 possible key names based on it being a ps_scan or diskover type
+                inode = chunk_data[idx].get("inode", chunk_data[idx].get("ino"))
+                bulk_list.append(json.dumps({"index": {"_id": inode}}))
                 bulk_list.append(body_text)
         # For each bulk list, take all the entries and join them together with a \n and send them to the ES into the
         # appropriate index

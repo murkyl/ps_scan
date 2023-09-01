@@ -76,6 +76,8 @@ DEFAULT_SERVER_PORT = 49372
 DEFAULT_STATS_OUTPUT_INTERVAL = 30
 DEFAULT_STRIP_DOT_SNAPSHOT = True
 DEFAULT_THREAD_COUNT = 8
+DEFAULT_TIME_FORMAT_SIMPLE = "%Y%m%d%H%M"
+DEFAULT_TIME_FORMAT_8601 = "%Y-%m-%dT%H:%M:%S"
 DEFAULT_ULIMIT_MEMORY = 4 * (1024 * 1024 * 1024)
 DEFAULT_ULIMIT_MEMORY_MIN = 32 * (1024 * 1024 * 1024)
 ES_TYPE_DISKOVER = "diskover"
@@ -84,6 +86,15 @@ FILE_TYPE = {
     0o010000: "fifo",
     0o020000: "char",
     0o040000: "dir",
+    0o060000: "block",
+    0o100000: "file",
+    0o120000: "symlink",
+    0o140000: "socket",
+}
+FILE_TYPE_DISKOVER = {
+    0o010000: "fifo",
+    0o020000: "char",
+    0o040000: "directory",
     0o060000: "block",
     0o100000: "file",
     0o120000: "symlink",

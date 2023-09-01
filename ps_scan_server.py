@@ -240,6 +240,9 @@ class PSScanServer(Hydra.HydraServer):
             "--addr",
             self.connect_addr,
         ]
+        if self.cli_options.get("es_type"):
+            run_cmd.append("--es-type")
+            run_cmd.append(self.cli_options.get("es_type"))
         if self.cli_options.get("log"):
             run_cmd.append("--log")
             run_cmd.append(DEFAULT_LOG_FILE_CLIENT_PREFIX + self.cli_options["log"])
