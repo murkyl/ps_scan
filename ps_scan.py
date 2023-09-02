@@ -167,7 +167,8 @@ def main():
             svr = pss.PSScanServer(ps_scan_server_options)
             svr.serve()
             if es_client:
-                stop_options = elasticsearch_wrapper.es_create_stop_options(options)
+                final_stats = svr.get_stats()
+                stop_options = elasticsearch_wrapper.es_create_stop_options(options, stats=final_stats)
                 elasticsearch_wrapper.es_stop_processing(es_client, es_cmd_idx, stop_options, options)
         except Exception as e:
             LOG.exception("Unhandled exception in server.")
