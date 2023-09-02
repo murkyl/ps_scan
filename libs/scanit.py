@@ -21,6 +21,7 @@ __all__ = [
 import copy
 import glob
 import logging
+import math
 import multiprocessing
 import os
 import queue
@@ -56,6 +57,8 @@ PROCESS_TYPE_SIMPLE = next_int(True)
 PROCESS_TYPE_ADVANCED = next_int()
 # ================================================================================
 # Default values
+#   Size of the underlying storage block size
+DEFAULT_BLOCK_SIZE = 8192
 #   Number of threads that are allowed to walk directories out of the total thread count
 DEFAULT_DIR_PRIORITY_COUNT = 2
 #   When there are more than FILE_QUEUE_CUTOFF files chunks in the file_q, only process files
@@ -139,6 +142,7 @@ def default_file_handler(root, filename_list, stats, now, extra_args={}):
       "skipped": <int>                  # Number of files skipped
     }
     """
+    block_size = extra_args.get("block_size", DEFAULT_BLOCK_SIZE)
     processed = 0
     skipped = 0
     for filename in filename_list:
@@ -146,6 +150,7 @@ def default_file_handler(root, filename_list, stats, now, extra_args={}):
         try:
             file_stats = os.lstat(full_path)
             stats["file_size_total"] += file_stats.st_size
+            stats["file_size_physical_total"] += block_size * int(math.ceil(file_stats.st_size / block_size))
             processed += 1
         except:
             skipped += 1
@@ -161,6 +166,7 @@ def default_adv_file_handler(root, filename_list, stats, now, extra_args={}):
       "skipped": <int>                  # Number of files skipped
     }
     """
+    block_size = extra_args.get("block_size", DEFAULT_BLOCK_SIZE)
     processed = 0
     skipped = 0
     dir_list = []
@@ -173,6 +179,7 @@ def default_adv_file_handler(root, filename_list, stats, now, extra_args={}):
                 dir_list.append(filename)
             else:
                 stats["file_size_total"] += file_stats.st_size
+                stats["file_size_physical_total"] += block_size * int(math.ceil(file_stats.st_size / block_size))
                 processed += 1
         except:
             skipped += 1
@@ -183,6 +190,7 @@ class ScanIt(threading.Thread):
     def __init__(self, *args, **kwargs):
         super(ScanIt, self).__init__(args=args, kwargs=kwargs)
         self.common_stats = self._create_stats_state()
+        self.block_size = DEFAULT_BLOCK_SIZE
         self.custom_state = {}
         self.daemon = True
         # process_alive is set to -1 during initialization and then set to True after all threads are initialized
@@ -250,6 +258,7 @@ class ScanIt(threading.Thread):
             "dirs_skipped": 0,
             "file_handler_time": 0,
             "file_size_total": 0,
+            "file_size_physical_total": 0,
             "files_processed": 0,
             "files_queued": 0,
             "files_skipped": 0,
@@ -440,6 +449,7 @@ class ScanIt(threading.Thread):
                                 "start_time": self.run_start,
                                 "thread_custom_state": state["custom"],
                                 "thread_state": state,
+                                "block_size": self.block_size,
                             },
                         )
                         stats["file_handler_time"] += time.time() - start

@@ -414,7 +414,7 @@ class PSScanServer(Hydra.HydraServer):
         Total time spent in dir/file handler routines across all clients (s): {dht:,.2f} / {fht:,.2f}
         Processed/Queued/Skipped dirs: {p_dirs:,d} / {q_dirs:,d} / {s_dirs:,d}
         Processed/Queued/Skipped files: {p_files:,d} / {q_files:,d} / {s_files:,d}
-        Total file size: {fsize:,d}
+        Total file size/physical size: {fsize:,d} / {fphyssize:,d}
         Avg files/second: {a_fps:,.1f}
 """.format(
             wall_tm=wall_time,
@@ -428,6 +428,7 @@ class PSScanServer(Hydra.HydraServer):
             q_files=stats.get("files_queued", 0),
             s_files=stats.get("files_skipped", 0),
             fsize=stats.get("file_size_total", 0),
+            fphyssize=stats.get("file_size_physical_total", 0),
             a_fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / wall_time,
         )
         LOG.info(output_string)
@@ -439,7 +440,7 @@ class PSScanServer(Hydra.HydraServer):
         output_string = """{ts} - Statistics:
         Current run time (s): {runtime:,d}
         FPS overall / recent ({fps_buckets}) intervals: {fps:,.1f} / {fps_per_bucket}
-        Total file bytes processed: {f_bytes:,d}
+        Total file bytes processed / physical bytes: {f_bytes:,d}, {f_phys_bytes:,d}
         Files (Processed/Queued/Skipped): {f_proc:,d} / {f_queued:,d} / {f_skip:,d}
         File Q Size/Handler time: {f_q_size:,d} / {f_h_time:,.1f}
         Dir scan time: {d_scan:,.1f}
@@ -454,6 +455,7 @@ class PSScanServer(Hydra.HydraServer):
             d_skip=stats.get("dirs_skipped", 0),
             f_bytes=stats.get("file_size_total", 0),
             f_h_time=stats.get("file_handler_time", 0),
+            f_phys_bytes=stats.get("file_size_physical_total", 0),
             f_proc=stats.get("files_processed", 0),
             f_q_size=stats.get("file_q_size", 0),
             f_queued=stats.get("files_queued", 0),
@@ -547,7 +549,9 @@ class PSScanServer(Hydra.HydraServer):
                     got_work_clients = []
                     len_dir_list = len(self.work_list)
                     len_want_work_clients = len(want_work_clients)
-                    increment = (len_dir_list // len_want_work_clients) + (1 * (len_dir_list % len_want_work_clients != 0))
+                    increment = (len_dir_list // len_want_work_clients) + (
+                        1 * (len_dir_list % len_want_work_clients != 0)
+                    )
                     index = 0
                     for client_key in want_work_clients:
                         work_dirs = self.work_list[index : index + increment]

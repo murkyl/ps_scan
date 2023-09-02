@@ -28,6 +28,7 @@ import datetime
 import errno
 import json
 import logging
+import math
 import os
 import queue
 import re
@@ -116,6 +117,7 @@ def file_handler_basic(root, filename_list, stats, now, args={}):
       "q_dirs": [<str>]                 # List of directory names that need processing
     }
     """
+    block_size = args.get("block_size")
     custom_state = args.get("custom_state", {})
     start_time = args.get("start_time", time.time())
     thread_custom_state = args.get("thread_custom_state", {})
@@ -144,6 +146,7 @@ def file_handler_basic(root, filename_list, stats, now, args={}):
                 dir_list.append(filename)
                 continue
             stats["file_size_total"] += file_info["size"]
+            stats["file_size_physical_total"] += block_size * int(math.ceil(file_stats.st_size / block_size))
             processed += 1
             result_list.append(file_info)
         except FileNotFoundError as fnfe:
@@ -212,7 +215,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                     thread_stats["lstat_required"] += 1
                     LOG.debug("File %s is not allowed to call os.open, use os.lstat instead." % full_path)
                     time_start = time.time()
-                    file_info = get_file_stat(root, filename, IFS_BLOCK_SIZE, strip_dot_snapshot=strip_dot_snapshot)
+                    file_info = get_file_stat(root, filename, phys_block_size, strip_dot_snapshot=strip_dot_snapshot)
                     thread_stats["lstat_time"] += time.time() - time_start
                     if custom_tagging:
                         time_start = time.time()
@@ -228,6 +231,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                         continue
                     result_list.append(file_info)
                     stats["file_size_total"] += file_info["size"]
+                    stats["file_size_physical_total"] += phys_block_size * int(math.ceil(file_info["size"] / phys_block_size))
                     processed += 1
                     continue
                 LOG.exception("Error found when calling os.open on: %s Error: %s" % (full_path, str(e)))
@@ -391,7 +395,8 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             ):
                 # Fix size issues with symlinks, sockets, and FIFOs
                 file_info["size_logical"] = 0
-            stats["file_size_total"] += fstats["di_size"]
+            stats["file_size_total"] += file_info["size"]
+            stats["file_size_physical_total"] += file_info["size_physical"]
             processed += 1
         except IOError as ioe:
             skipped += 1
@@ -478,7 +483,7 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
                     LOG.debug("File %s is not allowed to call os.open, use os.lstat instead." % full_path)
                     time_start = time.time()
                     file_info = get_file_stat_diskover(
-                        root, filename, IFS_BLOCK_SIZE, strip_dot_snapshot=strip_dot_snapshot
+                        root, filename, phys_block_size, strip_dot_snapshot=strip_dot_snapshot
                     )
                     thread_stats["lstat_time"] += time.time() - time_start
                     if custom_tagging:
@@ -495,6 +500,7 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
                         continue
                     result_list.append(file_info)
                     stats["file_size_total"] += file_info["size"]
+                    stats["file_size_physical_total"] += file_info["size_physical"]
                     processed += 1
                     continue
                 LOG.exception("Error found when calling os.open on %s. Error: %s" % (full_path, str(e)))
@@ -673,7 +679,8 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
             ):
                 # Fix size issues with symlinks, sockets, and FIFOs
                 file_info["pscale"]["size_logical"] = 0
-            stats["file_size_total"] += fstats["di_size"]
+            stats["file_size_total"] += file_info["size"]
+            stats["file_size_physical_total"] += file_info["size_du"]
             processed += 1
         except IOError as ioe:
             skipped += 1
