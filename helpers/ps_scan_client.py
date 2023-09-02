@@ -25,9 +25,9 @@ import time
 
 from helpers.constants import *
 import helpers.misc as misc
+import helpers.user_handlers as user_handlers
 import libs.hydra as Hydra
-import scanit
-import user_handlers
+import libs.scanit as scanit
 
 
 LOG = logging.getLogger()

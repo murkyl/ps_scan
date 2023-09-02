@@ -16,7 +16,7 @@ __all__ = [
 # fmt: on
 import optparse
 
-import scanit
+import libs.scanit as scanit
 from helpers.constants import *
 
 USAGE = "usage: %prog [OPTION...] PATH... [PATH..]"

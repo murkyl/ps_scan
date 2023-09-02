@@ -36,9 +36,9 @@ import sys
 import threading
 import time
 
-import elasticsearch_wrapper
-import helpers.misc as misc
 from helpers.constants import *
+import helpers.elasticsearch_wrapper as elasticsearch_wrapper
+import helpers.misc as misc
 
 try:
     import helpers.onefs_acl as onefs_acl

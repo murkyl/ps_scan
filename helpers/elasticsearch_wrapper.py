@@ -29,7 +29,7 @@ import socket
 import time
 
 import libs.elasticsearch_lite as es_lite
-import scanit
+import libs.scanit as scanit
 from helpers.constants import *
 import helpers.misc as misc
 
