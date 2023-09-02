@@ -41,10 +41,10 @@ import helpers.elasticsearch_wrapper as elasticsearch_wrapper
 import helpers.misc as misc
 
 try:
-    import helpers.onefs_acl as onefs_acl
     import isi.fs.attr as attr
     import isi.fs.diskpool as dp
     import isi.fs.userattr as uattr
+    import libs.onefs_acl as onefs_acl
 except:
     pass
 try:
@@ -230,7 +230,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                     stats["file_size_total"] += file_info["size"]
                     processed += 1
                     continue
-                LOG.exception("Error found when calling os.open on %s. Error: %s" % (full_path, str(e)))
+                LOG.exception("Error found when calling os.open on: %s Error: %s" % (full_path, str(e)))
                 continue
             time_start = time.time()
             fstats = attr.get_dinode(fd)
