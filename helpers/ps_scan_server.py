@@ -26,9 +26,9 @@ import time
 
 from helpers.constants import *
 import helpers.misc as misc
-import helpers.sliding_window_stats as sliding_window_stats
 import libs.hydra as Hydra
 import libs.remote_run as rr
+import libs.sliding_window_stats as sliding_window_stats
 
 
 LOG = logging.getLogger()
@@ -75,6 +75,7 @@ class PSScanServer(Hydra.HydraServer):
         self.request_work_interval = args.get("request_work_interval", DEFAULT_REQUEST_WORK_INTERVAL)
         self.request_work_percentage = args.get("request_work_percentage", DEFAULT_DIRQ_REQUEST_PERCENTAGE)
         self.script_path = args.get("script_path", None)
+        self.stats = {}
         self.stats_fps_window = sliding_window_stats.SlidingWindowStats(STATS_FPS_BUCKETS)
         self.stats_handler = args.get("stats_handler", lambda *x: None)  # TODO: Temporary until stats are moved
         self.stats_last_files_processed = 0
@@ -204,6 +205,9 @@ class PSScanServer(Hydra.HydraServer):
         state["stats_fps_window"] = self.stats_fps_window.get_all_windows()
         LOG.critical(json.dumps(state, indent=2, sort_keys=True, default=lambda o: "<not serializable>"))
 
+    def get_stats(self):
+        return self.stats
+
     def handler_client_command(self, client, msg):
         """
         Users should override this method to add their own handler for client commands.
@@ -257,12 +261,14 @@ class PSScanServer(Hydra.HydraServer):
 
     def output_statistics(self, now, start_wall):
         # TODO: Some external function should do all stats output including custom stats
-        temp_stats = misc.merge_process_stats(self.client_state) or {}
-        new_files_processed = temp_stats.get("files_processed", self.stats_last_files_processed)
+        self.stats = misc.merge_process_stats(self.client_state) or {}
+        self.stats["total_time"] = now - start_wall
+        self.stats["end_time"] = 0
+        new_files_processed = self.stats.get("files_processed", self.stats_last_files_processed)
         self.stats_fps_window.add_sample(new_files_processed - self.stats_last_files_processed)
         self.stats_last_files_processed = new_files_processed
         self.print_statistics_interim(
-            temp_stats,
+            self.stats,
             now,
             start_wall,
             self.stats_fps_window,
@@ -271,8 +277,8 @@ class PSScanServer(Hydra.HydraServer):
         self.stats_handler(
             "interim",
             LOG,
-            temp_stats,
-            temp_stats.get("custom", {}),
+            self.stats,
+            self.stats.get("custom", {}),
             self.client_count,
             now,
             start_wall,
@@ -282,13 +288,15 @@ class PSScanServer(Hydra.HydraServer):
 
     def output_statistics_final(self, now, total_time):
         # TODO: Some external function should do all stats output including custom stats
-        temp_stats = misc.merge_process_stats(self.client_state) or {}
-        self.print_statistics_final(temp_stats, self.client_count, total_time)
+        self.stats = misc.merge_process_stats(self.client_state) or {}
+        self.stats["total_time"] = total_time
+        self.stats["end_time"] = now
+        self.print_statistics_final(self.stats, self.client_count, total_time)
         self.stats_handler(
             "final",
             LOG,
-            temp_stats,
-            temp_stats.get("custom", {}),
+            self.stats,
+            self.stats.get("custom", {}),
             self.client_count,
             now,
             0,
@@ -538,8 +546,8 @@ class PSScanServer(Hydra.HydraServer):
                         LOG.debug("Server has work items and has clients that want work")
                     got_work_clients = []
                     len_dir_list = len(self.work_list)
-                    len_want_work_procs = len(want_work_clients)
-                    increment = (len_dir_list // len_want_work_procs) + (1 * (len_dir_list % len_want_work_procs != 0))
+                    len_want_work_clients = len(want_work_clients)
+                    increment = (len_dir_list // len_want_work_clients) + (1 * (len_dir_list % len_want_work_clients != 0))
                     index = 0
                     for client_key in want_work_clients:
                         work_dirs = self.work_list[index : index + increment]
@@ -559,11 +567,11 @@ class PSScanServer(Hydra.HydraServer):
                 if want_work_clients and have_dirs_clients:
                     if self.debug_count > 1:
                         LOG.debug(
-                            "want_work_procs / have_dir_procs: {want_procs} / {have_procs}".format(
-                                want_procs=",".join(
+                            "want_work_clients / have_dir_clients: {want_clients} / {have_clients}".format(
+                                want_clients=",".join(
                                     sorted([str(self.client_state[x]["id"]) for x in want_work_clients])
                                 ),
-                                have_procs=",".join(
+                                have_clients=",".join(
                                     sorted([str(self.client_state[x]["id"]) for x in have_dirs_clients])
                                 ),
                             )
