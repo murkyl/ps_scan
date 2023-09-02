@@ -526,7 +526,7 @@ class ScanIt(threading.Thread):
             temp_paths = []
             for path_set in paths:
                 for entry in path_set[1]:
-                    temp_paths = os.join(path_set[0], entry)
+                    temp_paths.append(os.path.join(path_set[0], entry))
             paths = temp_paths
         paths = self._glob_paths(paths)
         for p in paths:
