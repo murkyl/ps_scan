@@ -26,6 +26,7 @@ import logging
 import queue
 import re
 import socket
+import threading
 import time
 
 import libs.elasticsearch_lite as es_lite
@@ -324,19 +325,25 @@ def es_create_start_options(options={}):
     return es_options
 
 
-def es_create_stop_options(options={}):
+def es_create_stop_options(options={}, stats={}):
     es_options = {}
+    if options.get("es_type") == ES_TYPE_PS_SCAN:
+        es_options = {
+            "ps_scan": {
+                "stats": stats,
+            },
+        }
     if options.get("es_type") == ES_TYPE_DISKOVER:
         root_path = options.get("path", "/ifs")
         es_options = {
             "diskover": {
                 "indexinfo_stop": {
-                    "crawl_time": 0,
-                    "dir_count": 0,
+                    "crawl_time": stats.get("total_time", 0),
+                    "dir_count": stats.get("dirs_processed", 0),
                     "end_at": time.strftime(DEFAULT_TIME_FORMAT_8601),
-                    "file_count": 0,
-                    "file_size": 0,
-                    "file_size_du": 0,
+                    "file_count": stats.get("files_processed", 0),
+                    "file_size": stats.get("file_size_total", 0),
+                    "file_size_du": stats.get("file_size_physical_total", 0),
                     "path": root_path,
                     "type": "indexinfo",
                 },
@@ -403,7 +410,11 @@ def es_data_sender(
             flush = True
         if flush:
             try:
-                LOG.debug("ElasticSearch bulk data flush called for {count} entries.".format(count=len(bulk_data)))
+                LOG.debug(
+                    "ElasticSearch bulk data flush called for {count} entries. TID: {tid}".format(
+                        count=len(bulk_data), tid=threading.current_thread().name
+                    )
+                )
                 es_data_flush(bulk_data, es_client, es_cmd_idx)
             except Exception as e:
                 LOG.exception("Elastic search send failed.")
@@ -426,7 +437,6 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx):
             body_text = None
             try:
                 body_text = json.dumps(chunk_data[idx])
-                LOG.critical("***** DEBUG: DATA FLUSH STRING:\n%s\n" % body_text)
             except UnicodeDecodeError as ude:
                 LOG.info("JSON dumps encountered unicode decoding error. Trying latin-1 re-code to UTF-8")
                 try:
