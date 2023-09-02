@@ -31,7 +31,7 @@ import json
 import re
 import sys
 import traceback
-import helpers.papi_lite as papi_lite
+import libs.papi_lite as papi_lite
 
 
 URI_ACCESS_ZONE_LIST = "/zones"

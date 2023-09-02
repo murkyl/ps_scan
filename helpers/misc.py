@@ -39,7 +39,7 @@ except:
 import subprocess
 
 from .constants import *
-import helpers.papi_lite as papi_lite
+import libs.papi_lite as papi_lite
 
 
 URI_STATISTICS_KEY = "/statistics/current"
