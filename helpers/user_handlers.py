@@ -84,27 +84,24 @@ def custom_stats_handler(common_stats, custom_state, custom_threads_state, threa
     #    % json.dumps(common_stats, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
     # )
     # LOG.debug(
-    #    "DEBUG: Custom state: %s"
-    #    % json.dumps(custom_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
+    #   "DEBUG: Custom state: %s"
+    #   % json.dumps(custom_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
     # )
     # LOG.debug(
-    #    "DEBUG: Custom threads state: %s"
-    #    % json.dumps(custom_threads_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
+    #   "DEBUG: Custom threads state: %s"
+    #   % json.dumps(custom_threads_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
     # )
     # LOG.debug(
     #    "DEBUG: Thread state: %s"
     #    % json.dumps(thread_state, indent=2, sort_keys=True, default=lambda o: "<not serializable>")
     # )
-    num_threads = len(thread_state) or 1
     custom_stats = custom_state["custom_stats"]
     for field in CUSTOM_STATS_FIELDS:
         custom_stats[field] = 0
-    for thread in thread_state:
-        thread_custom_stats = thread["custom"]["stats"]
+    for thread_state in custom_threads_state:
+        thread_stats = thread_state.get("stats", {})
         for field in CUSTOM_STATS_FIELDS:
-            custom_stats[field] += thread_custom_stats[field]
-    for field in CUSTOM_STATS_FIELDS:
-        custom_stats[field + "_avg"] = custom_stats[field] / num_threads
+            custom_stats[field] += thread_stats.get(field, 0)
     return custom_stats
 
 
@@ -807,7 +804,6 @@ def get_file_stat_diskover(root, filename, block_unit=STAT_BLOCK_SIZE, strip_dot
 def init_custom_state(custom_state, options={}):
     # Add any common parameters that each processing thread should have access to
     # by adding values to the custom_state dictionary
-
     custom_state["custom_stats"] = {}
     custom_state["custom_tagging"] = None  # lambda x: None
     custom_state["extra_attr"] = options.get("extra", DEFAULT_PARSE_EXTRA_ATTR)
@@ -857,9 +853,16 @@ def init_thread(tid, custom_state, thread_custom_state):
         thread_custom_state["stats"][field] = 0
 
 
-def print_statistics(output_type, log, stats, custom_stats, num_clients, now, start_time, wall_time, output_interval):
-    # TODO: Overhaul the stats output code
-    output_string = "===== Custom stats =====\n" + json.dumps(custom_stats, indent=2, sort_keys=True) + "\n"
+def print_statistics(output_type, log, stats, custom_stats, now, start_time, wall_time, output_interval):
+    consolidated_custom_stats = {}
+    for field in CUSTOM_STATS_FIELDS:
+        consolidated_custom_stats[field] = 0
+        for client in custom_stats:
+            consolidated_custom_stats[field] += client[field]
+        consolidated_custom_stats[field] = consolidated_custom_stats[field] / stats["threads"]
+    output_string = (
+        "===== Custom stats (average over all threads) =====\n" + json.dumps(consolidated_custom_stats, indent=2, sort_keys=True) + "\n"
+    )
     LOG.info(output_string)
     sys.stdout.write(output_string)
 

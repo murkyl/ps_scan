@@ -268,6 +268,7 @@ class PSScanServer(Hydra.HydraServer):
         self.stats = misc.merge_process_stats(self.client_state) or {}
         self.stats["total_time"] = now - start_wall
         self.stats["end_time"] = 0
+        custom_stats = [x["stats"].get("custom", {}) for x in self.client_state.values()]
         new_files_processed = self.stats.get("files_processed", self.stats_last_files_processed)
         self.stats_fps_window.add_sample(new_files_processed - self.stats_last_files_processed)
         self.stats_last_files_processed = new_files_processed
@@ -282,8 +283,7 @@ class PSScanServer(Hydra.HydraServer):
             "interim",
             LOG,
             self.stats,
-            self.stats.get("custom", {}),
-            self.client_count,
+            custom_stats,
             now,
             start_wall,
             0,
@@ -295,13 +295,13 @@ class PSScanServer(Hydra.HydraServer):
         self.stats = misc.merge_process_stats(self.client_state) or {}
         self.stats["total_time"] = total_time
         self.stats["end_time"] = now
+        custom_stats = [x["stats"].get("custom", {}) for x in self.client_state.values()]
         self.print_statistics_final(self.stats, self.client_count, total_time)
         self.stats_handler(
             "final",
             LOG,
             self.stats,
-            self.stats.get("custom", {}),
-            self.client_count,
+            custom_stats,
             now,
             0,
             total_time,
@@ -412,19 +412,20 @@ class PSScanServer(Hydra.HydraServer):
         return {}
 
     def print_statistics_final(self, stats, num_clients, wall_time):
+        weight = self.client_count * self.cli_options["threads"]
         output_string = """Final statistics
         Wall time (s): {wall_tm:,.2f}
-        Average Q wait time (s): {avg_q_tm:,.2f}
-        Total time spent in dir/file handler routines across all clients (s): {dht:,.2f} / {fht:,.2f}
+        Average file/dir queue wait time (s): {avg_q_tm:,.2f}
+        Average time spent in dir/file handler routines across all clients (s): {dht:,.2f} / {fht:,.2f}
         Processed/Queued/Skipped dirs: {p_dirs:,d} / {q_dirs:,d} / {s_dirs:,d}
         Processed/Queued/Skipped files: {p_files:,d} / {q_files:,d} / {s_files:,d}
         Total file size/physical size: {fsize:,d} / {fphyssize:,d}
         Avg files/second: {a_fps:,.1f}
 """.format(
             wall_tm=wall_time,
-            avg_q_tm=stats.get("q_wait_time", 0) / (num_clients or 1),
-            dht=stats.get("dir_handler_time", 0),
-            fht=stats.get("file_handler_time", 0),
+            avg_q_tm=stats.get("q_wait_time", 0) / weight,
+            dht=stats.get("dir_handler_time", 0) / weight,
+            fht=stats.get("file_handler_time", 0) / weight,
             p_dirs=stats.get("dirs_processed", 0),
             q_dirs=stats.get("dirs_queued", 0),
             s_dirs=stats.get("dirs_skipped", 0),
@@ -441,6 +442,7 @@ class PSScanServer(Hydra.HydraServer):
     def print_statistics_interim(self, stats, now, start, fps_window, interval):
         buckets = [str(x) for x in fps_window.get_window_sizes()]
         fps_per_bucket = ["{fps:,.1f}".format(fps=x / interval) for x in fps_window.get_all_windows()]
+        weight = self.client_count * self.cli_options["threads"]
         output_string = """{ts} - Statistics:
         Current run time (s): {runtime:,d}
         FPS overall / recent ({fps_buckets}) intervals: {fps:,.1f} / {fps_per_bucket}
@@ -452,13 +454,13 @@ class PSScanServer(Hydra.HydraServer):
         Dir Q Size/Handler time: {d_q_size:,d} / {d_h_time:,.1f}
 """.format(
             d_proc=stats.get("dirs_processed", 0),
-            d_h_time=stats.get("dir_handler_time", 0),
+            d_h_time=stats.get("dir_handler_time", 0) / weight,
             d_q_size=stats.get("dir_q_size", 0),
             d_queued=stats.get("dirs_queued", 0),
-            d_scan=stats.get("dir_scan_time", 0),
+            d_scan=stats.get("dir_scan_time", 0) / weight,
             d_skip=stats.get("dirs_skipped", 0),
             f_bytes=stats.get("file_size_total", 0),
-            f_h_time=stats.get("file_handler_time", 0),
+            f_h_time=stats.get("file_handler_time", 0) / weight,
             f_phys_bytes=stats.get("file_size_physical_total", 0),
             f_proc=stats.get("files_processed", 0),
             f_q_size=stats.get("file_q_size", 0),

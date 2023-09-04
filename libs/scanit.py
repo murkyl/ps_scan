@@ -615,6 +615,7 @@ class ScanIt(threading.Thread):
             )
         stats["dir_q_size"] = self.dir_q.qsize()
         stats["file_q_size"] = self.file_q.qsize()
+        stats["threads"] = self.num_threads
         return stats
 
     def run(self):
