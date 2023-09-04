@@ -411,9 +411,12 @@ def es_data_sender(
         if flush:
             try:
                 LOG.debug(
-                    "ElasticSearch bulk data flush called for {count} entries. TID: {tid}".format(
-                        count=len(bulk_data), tid=threading.current_thread().name
-                    )
+                    {
+                      "msg": "ElasticSearch bulk data flush",
+                      "entries": len(bulk_data),
+                      "qsize": send_q.qsize(),
+                      "tid": threading.current_thread().name,
+                    }
                 )
                 es_data_flush(bulk_data, es_client, es_cmd_idx)
             except Exception as e:
