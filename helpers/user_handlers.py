@@ -231,7 +231,9 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                         continue
                     result_list.append(file_info)
                     stats["file_size_total"] += file_info["size"]
-                    stats["file_size_physical_total"] += phys_block_size * int(math.ceil(file_info["size"] / phys_block_size))
+                    stats["file_size_physical_total"] += phys_block_size * int(
+                        math.ceil(file_info["size"] / phys_block_size)
+                    )
                     processed += 1
                     continue
                 LOG.exception("Error found when calling os.open on: %s Error: %s" % (full_path, str(e)))
@@ -920,6 +922,7 @@ def translate_user_group_perms(full_path, file_info):
 
 
 def update_config(custom_state, new_config):
+    cli_config = new_config.get("cli_options", {})
     client_config = new_config.get("client_config", {})
     es_options = client_config.get("es_options")
     # TODO: Add code to shutdown existing threads or adjust running threads based on new config
@@ -949,3 +952,4 @@ def update_config(custom_state, new_config):
             LOG.exception("Error encountered starting up ES sender threads")
         custom_state["es_thread_handles"] = es_threads
     custom_state["client_config"] = client_config
+    custom_state["no_acl"] = cli_config.get("no_acl", custom_state["no_acl"])
