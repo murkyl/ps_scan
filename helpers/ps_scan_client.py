@@ -40,38 +40,41 @@ class PSScanClient(object):
         Parameters
         ----------
         args: dictionary
-            dir_output_interval: int - Time in seconds between each directory queue update to the server
+            debug: int - Debug flag count from the CLI. The higher this number, the more debug may be logged
+            dir_output_interval: int - Time in seconds between each directory queue size update to the server
             dir_request_interval: int - Limit how often a client can request more work directories, in seconds
+            dirq_chunk: int - Scanner: Maximum number of directories to bundle in each work unit. For example, if a
+                directory listing contained 100 subdirectories, then it would be broken into ceil(100/dirq_chunk) pieces
+            dirq_priority: int - Scanner: Number of threads that are allowed to walk directories when the number of
+                files drop below a certain threshold. These directory threads are a way to prioritize processing a new
+                directory to get more files queued up. If the number of files drops below a lower threshold, then all
+                new available threads will become directory processing threads.
+            dirq_request_percentage: float - Percentage of the queued working directories to return per request. As an
+                example, if a scanner has 200 directories yet to be processed and this value is set to 0.5, then when a
+                server requests to return some directories for other clients to process, the scanner would return
+                100 * 0.5 = 50 directories
+            fileq_chunk: int - Scanner: Maximum number of files to bundle in each work unit
+            fileq_cutoff: int - The higher of 2 limits on the number of queued files. When the number of queued files
+                falls below this number, the dirq_priority setting is used to determine if more threads need to be
+                processing directories
+            file_q_min_cutoff: int - The lower of 2 limits on the number of queued files. When the number of queued
+                files falls below this number, all new available threads will process directories to queue up more files
+                for processing
+            num_threads: int - Number of threads the file scanner will use
             poll_interval: int - Time in seconds to wait in the select statement
-            scanner_file_handler: function pointer -
-            scanner_dir_chunk: int -
-            scanner_dir_priority_count: int -
-            scanner_dir_request_percent: float - Percentage of the queued working directories to return per request
-            scanner_file_chunk: int -
-            scanner_file_q_cutoff: int -
-            scanner_file_q_min_cutoff: int -
-            scanner_num_threads: int - Number of threads the file scanner should use
+            scanner_file_handler: function pointer - Pointer to a method that will process a list of files
             server_addr: str - IP/FQDN of the ps_scan server process
             server_port: int - Port to connect to the ps_scan server
             stats_interval: int - Time in seconds between each statistics update to the server
         """
         self.client_config = {}
+        self.config_update_count = 0
         self.debug_count = args.get("debug", 0)
         self.dir_output_count = 0
-        self.dir_output_interval = args.get("dir_output_interval", DEFAULT_DIR_OUTPUT_INTERVAL)
-        self.dir_request_interval = args.get("dir_request_interval", DEFAULT_DIR_REQUEST_INTERVAL)
         self.poll_interval = args.get("poll_interval", DEFAULT_CMD_POLL_INTERVAL)
         self.scanner = scanit.ScanIt()
         # TODO: Change how file handler is called
-        # TODO: Fix the args.get to match CLI options
         self.scanner_file_handler = args.get("scanner_file_handler", user_handlers.file_handler_basic)
-        self.scanner_dir_chunk = args.get("scanner_dir_chunk", scanit.DEFAULT_QUEUE_DIR_CHUNK_SIZE)
-        self.scanner_dir_priority_count = args.get("scanner_dir_priority_count", scanit.DEFAULT_DIR_PRIORITY_COUNT)
-        self.scanner_dir_request_percent = args.get("scanner_dir_request_percent", DEFAULT_DIRQ_REQUEST_PERCENTAGE)
-        self.scanner_file_chunk = args.get("scanner_file_chunk", scanit.DEFAULT_QUEUE_FILE_CHUNK_SIZE)
-        self.scanner_file_q_cutoff = args.get("scanner_file_q_cutoff", scanit.DEFAULT_FILE_QUEUE_CUTOFF)
-        self.scanner_file_q_min_cutoff = args.get("scanner_file_q_min_cutoff", scanit.DEFAULT_FILE_QUEUE_MIN_CUTOFF)
-        self.scanner_num_threads = args.get("scanner_num_threads", DEFAULT_THREAD_COUNT)
         self.sent_data = 0
         self.server_addr = args.get("server_addr", Hydra.DEFAULT_SERVER_ADDR)
         self.server_port = args.get("server_port", Hydra.DEFAULT_SERVER_PORT)
@@ -82,11 +85,11 @@ class PSScanClient(object):
             }
         )
         self.stats_output_count = 0
-        self.stats_output_interval = args.get("stats_interval", DEFAULT_STATS_OUTPUT_INTERVAL)
         self.status = CLIENT_STATE_STARTING
         self.wait_list = [self.socket]
         self.want_data = time.time()
         self.work_list_count = 0
+        self._process_args(args)
         self._init_scanner()
 
     def _exec_send_dir_list(self, dir_list):
@@ -157,6 +160,25 @@ class PSScanClient(object):
         # TODO: Change how the user handler is passed in and initialized
         custom_state, custom_threads_state = s.get_custom_state()
         user_handlers.init_custom_state(custom_state)
+
+    def _process_args(self, args, use_default=True):
+        cfg_fields = [
+            ["dir_output_interval", "dir_output_interval", DEFAULT_DIR_OUTPUT_INTERVAL],
+            ["dir_request_interval", "dir_request_interval", DEFAULT_DIR_REQUEST_INTERVAL],
+            ["scanner_dir_chunk", "dirq_chunk", scanit.DEFAULT_QUEUE_DIR_CHUNK_SIZE],
+            ["scanner_dir_priority_count", "dirq_priority", scanit.DEFAULT_DIR_PRIORITY_COUNT],
+            ["scanner_dir_request_percent", "dirq_request_percentage", DEFAULT_DIRQ_REQUEST_PERCENTAGE],
+            ["scanner_file_chunk", "fileq_chunk", scanit.DEFAULT_QUEUE_FILE_CHUNK_SIZE],
+            ["scanner_file_q_cutoff", "fileq_cutoff", scanit.DEFAULT_FILE_QUEUE_CUTOFF],
+            ["scanner_file_q_min_cutoff", "file_q_min_cutoff", scanit.DEFAULT_FILE_QUEUE_MIN_CUTOFF],
+            # TODO: Changing the number of threads does not work dynamically at this time. The thread count is configured
+            #     currently as a CLI option when ps_scan_server launches the client
+            ["scanner_num_threads", "threads", DEFAULT_THREAD_COUNT],
+            ["stats_output_interval", "stats_interval", DEFAULT_STATS_OUTPUT_INTERVAL],
+        ]
+        for field in cfg_fields:
+            def_val = field[2] if use_default else getattr(self, field[0])
+            setattr(self, field[0], args.get(field[1], def_val))
 
     def connect(self):
         LOG.info("Connecting to server at {svr}:{port}".format(svr=self.server_addr, port=self.server_port))
@@ -302,7 +324,9 @@ class PSScanClient(object):
         except Exception as e:
             LOG.exception("Error during update_config")
         self.client_config = cfg
+        self._process_args(cfg.get("cli_options", {}), use_default=False)
         self.debug_count = cfg.get("debug", 0)
+        self.config_update_count += 1
 
     def parse_config_update_log_level(self, cfg):
         log_level = cfg.get("log_level")
