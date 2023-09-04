@@ -304,11 +304,29 @@ class ScanIt(threading.Thread):
         return alive_threads
 
     def _get_queue_to_read(self):
+        """Every time a thread is ready to perform more work it checks to see which queue, either the file queue or the
+        directory queue, it should try and get a work item from. The queue to work on defaults to the file queue unless
+        the following criteria are met:
+        In all cases, the directory queue must not be empty to have a thread work on the directory queue
+        If the number of files in the file queue are lower than the file_q_min_cutoff then the thread should get a
+            directory from the directory queue to process. This is done so the scanner does not run out of files ready
+            to process. An example here would be if the file_q_min_cutoff is 200 files and the number of files in the
+            file queue drops down to 190, then the free thread will try and get work from the directory queue.
+        If the number of queue files is less than the file_q_cutoff and the number of threads working on reading
+            directories is less than the dir_priority_count. This two part condition will boost the priority of reading
+            from the directory queue when the number of files is lower than a threshold and there are no more than
+            dir_priority_count threads already reading directories. As an exmaple, if the file_q_cutoff is 1000 files,
+            the dir_priority_count is 2, the current number of threads processing directories is 1, and the current
+            number of queued files is 800, then the free thread would be assigned to read from the directory queue. If
+            the number of queued files was 1200, then the free thread would be assigned to the file queue. This is due
+            to the number of queued files being above the file_q_cutoff, or 1000 file limit. If there were already 2
+            threads processing directories then the free thread would also be assinged to the file queue.
+        """
         dir_q_size = self.dir_q.qsize()
         file_q_size = self.file_q.qsize()
         q_to_read = self.file_q
         if (dir_q_size > 0) and (
-            (file_q_size < self.file_q_cutoff and self.dir_q_threads_count < self.dir_priority_count)
+            (file_q_size < self.file_q_cutoff and self.dir_q_threads_count <= self.dir_priority_count)
             or (file_q_size < self.file_q_min_cutoff)
         ):
             self._incr_dir_q_thread_count()
