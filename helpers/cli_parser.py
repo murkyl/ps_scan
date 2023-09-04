@@ -302,9 +302,9 @@ def add_parser_options_advanced(parser, hide_options=False):
         "--cmd-poll-interval",
         action="store",
         type="float",
-        default=DEFAULT_DIR_OUTPUT_INTERVAL,
+        default=DEFAULT_CMD_POLL_INTERVAL,
         help="""Number of fractional seconds to wait for commands in  
-the subprocess command loop.                          
+the client command loop.                              
 Default: %default
 """,
     )
@@ -361,8 +361,8 @@ Default: %default
         "--es-bulk-refresh",
         action="store",
         default=DEFAULT_ES_BULK_REFRESH_INTERVAL,
-        help="""When max send queue size is reached, sleep each file  
-scanner by this value in seconds to slow scanning.    
+        help="""ElasticSearch time string the specifies how much time 
+between indexing data and when it will be available.  
 Default: %default
 """,
     )
@@ -439,16 +439,6 @@ Default: %default
         default=scanit.DEFAULT_FILE_QUEUE_MIN_CUTOFF,
         help="""When the number of files in the file queue is less    
 than this value, only process directories if possible.
-Default: %default
-""",
-    )
-    group.add_option(
-        "--q-poll-interval",
-        action="store",
-        type="int",
-        default=scanit.DEFAULT_POLL_INTERVAL,
-        help="""Number of seconds to wait in between polling events   
-for the statistics and ES send loop.                  
 Default: %default
 """,
     )
