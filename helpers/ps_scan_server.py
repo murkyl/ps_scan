@@ -42,18 +42,20 @@ class PSScanServer(Hydra.HydraServer):
         ----------
         args: dictionary
             cli_options: dict - All command line options
+                queue_timeout: int - Number of seconds to wait for new messages before continuing with the processing
+                        loop
+                request_work_interval: int - Number of seconds between requests to a client to return work
+                request_work_percentage: float - Percentage of unprocessed dirs that a client should return when the
+                        server requests a client to return work items
+                stats_interval: int - Number of seconds between each statistics update
             client_config: dict - Dictionary sent to clients during a configuration update command
             node_list: list - List of clients to auto-start. Format of each entry is in remote_run module
-            poll_interval: int - Seconds between select polls. Smaller numbers result in faster server shutdown
-            queue_timeout: int - Number of seconds to wait for new messages before continuing with the processing loop
-            request_work_interval: int - Number of seconds between requests to a client to return work
             scan_path: list - List of paths to scan
             script_path: str - Full path to script to run on clients
             server_addr: str - IP address to listen for clients on
             server_connect_addr:str - FQDN/IP that clients should use to connect
             server_port: int - Port number for server to listen on
             socket_listen_queue: int - Number of pending clients for a socket
-            stats_interval: int - Number of seconds between each statistics update
             stats_handler: function - Function to call to output final statistics
         """
         args["async_server"] = True
@@ -70,17 +72,17 @@ class PSScanServer(Hydra.HydraServer):
         self.debug_count = self.cli_options.get("debug", 0)
         self.msg_q = queue.Queue()
         self.node_list = args.get("node_list", None)
-        self.queue_timeout = args.get("queue_timeout", DEFAULT_QUEUE_TIMEOUT)
+        self.queue_timeout = self.cli_options.get("queue_timeout", DEFAULT_QUEUE_TIMEOUT)
         self.remote_state = None
-        self.request_work_interval = args.get("request_work_interval", DEFAULT_REQUEST_WORK_INTERVAL)
-        self.request_work_percentage = args.get("request_work_percentage", DEFAULT_DIRQ_REQUEST_PERCENTAGE)
+        self.request_work_interval = self.cli_options.get("request_work_interval", DEFAULT_REQUEST_WORK_INTERVAL)
+        self.request_work_percentage = self.cli_options.get("request_work_percentage", DEFAULT_DIRQ_REQUEST_PERCENTAGE)
         self.script_path = args.get("script_path", None)
         self.stats = {}
         self.stats_fps_window = sliding_window_stats.SlidingWindowStats(STATS_FPS_BUCKETS)
         self.stats_handler = args.get("stats_handler", lambda *x: None)  # TODO: Temporary until stats are moved
         self.stats_last_files_processed = 0
         self.stats_output_count = 0
-        self.stats_output_interval = args.get("stats_interval", DEFAULT_STATS_OUTPUT_INTERVAL)
+        self.stats_output_interval = self.cli_options.get("stats_interval", DEFAULT_STATS_OUTPUT_INTERVAL)
         self.work_list = args.get("scan_path", [])
         if not (self.connect_addr and self.script_path):
             raise Exception("Server connect address and script path is required")
@@ -243,6 +245,8 @@ class PSScanServer(Hydra.HydraServer):
             str(self.server_port),
             "--addr",
             self.connect_addr,
+            "--threads",
+            self.cli_options.get("threads"),
         ]
         if self.cli_options.get("es_type"):
             run_cmd.append("--es-type")
@@ -511,6 +515,7 @@ class PSScanServer(Hydra.HydraServer):
                     self.stats_output_count = cur_stats_count
                     self.output_statistics(now, start_wall)
 
+                # TODO: Look at this loop and see if we can short circuit some of it to make the loop faster and output less junk
                 # Check all our client states to gather which are idle, which have work dirs, and which want work
                 continue_running = False
                 idle_clients = 0
