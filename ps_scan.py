@@ -115,6 +115,7 @@ def main():
         except Exception as e:
             LOG.exception("Unhandled exception in client.")
     elif options["op"] in (OPERATION_TYPE_AUTO, OPERATION_TYPE_SERVER):
+        options["scan_path"] = args if not isinstance(args, list) else args[0]
         ps_scan_server_options = {
             "cli_options": options,
             "client_config": {},
@@ -172,6 +173,7 @@ def main():
                 elasticsearch_wrapper.es_stop_processing(es_client, es_cmd_idx, stop_options, options)
         except Exception as e:
             LOG.exception("Unhandled exception in server.")
+            sys.exit(4)
 
 
 def setup_logger(options):
