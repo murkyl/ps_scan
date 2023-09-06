@@ -14,6 +14,7 @@ __all__ = [
 # fmt: on
 import base64
 import json
+import logging
 import ssl
 
 try:
@@ -30,6 +31,9 @@ except:
     urlencode = urllib.urlencode
 
 
+LOG = logging.getLogger(__name__)
+
+
 def get_basic_auth_header(user, password):
     user_pass_str = "{u}:{p}".format(u=user, p=password)
     user_pass_str = user_pass_str.encode("ascii")
@@ -41,6 +45,7 @@ def get_basic_auth_header(user, password):
 class ElasticsearchLite:
     def __init__(self):
         self.conn = None
+        self.conn_endpoint = None
         self.endpoint = None
         self.headers = {}
         self.password = None
@@ -51,7 +56,10 @@ class ElasticsearchLite:
         if not self.conn:
             self.connect()
         if index_name:
-            url_base = "{idx}/{url}".format(idx=index_name, url=url_base)
+            url_fmt = "/{idx}/{url}"
+        else:
+            url_fmt = "/{url}"
+        url_base = url_fmt.format(idx=index_name, url=url_base)
         if query:
             if not (isinstance(query, str) or isinstance(query, unicode)):
                 url_base += "?" + urlencode(query)
@@ -59,7 +67,10 @@ class ElasticsearchLite:
                 url_base += "?" + query
         self.conn.request(op, url_base, body_str, self.headers)
         resp = self.conn.getresponse()
-        return json.loads(resp.read())
+        if resp.status >= 200 and resp.status < 300:
+            return json.loads(resp.read())
+        self.conn = None
+        return ({"status": resp.status, "error": resp.reason})
 
     def bulk(self, body_str, index_name=None):
         if body_str and body_str[-1] != "\n":
@@ -69,14 +80,16 @@ class ElasticsearchLite:
     def connect(self):
         self.validate_options()
         if self.use_https:
-            self.conn = http_conn.HTTPSConnection(self.endpoint, context=ssl._create_unverified_context())
+            self.conn = http_conn.HTTPSConnection(self.conn_endpoint, context=ssl._create_unverified_context())
         else:
-            self.conn = http_conn.HTTPConnection(self.endpoint)
+            self.conn = http_conn.HTTPConnection(self.conn_endpoint)
         auth_header = None
         if self.password and self.username:
             auth_header = get_basic_auth_header(self.username, self.password)
         self.headers = {
             "Content-Type": "application/json",
+            "Accept": "*/*",
+            "Agent": "elasticsearch_lite/{ver}".format(ver=__version__),
         }
         if auth_header:
             self.headers["Authorization"] = auth_header
@@ -115,6 +128,13 @@ class ElasticsearchLite:
     def post_document(self, body_str, index_name=None, query=None):
         if isinstance(body_str, dict):
             body_str = json.dumps(body_str)
+        # TODO: Check if the connection is still alive instead of always closing and assuming the connection is dead
+        if self.conn:
+            try:
+                self.conn.close()
+            except:
+                pass
+            self.conn = None
         return self._simple_es_request("_doc", op="POST", body_str=body_str, index_name=index_name, query=query)
 
     def search(self, body_str, index_name=None):
@@ -133,7 +153,9 @@ class ElasticsearchLite:
         self.endpoint = self.endpoint.strip()
         if self.endpoint.startswith("http://"):
             self.use_https = False
-            self.endpoint = self.endpoint[7:]
+            self.conn_endpoint = self.endpoint[7:]
         elif self.endpoint.startswith("https://"):
             self.use_https = True
-            self.endpoint = self.endpoint[8:]
+            self.conn_endpoint= self.endpoint[8:]
+        else:
+            raise ValueError("Invalid endpoint: {endpoint}".format(endpoint=self.endpoint))
