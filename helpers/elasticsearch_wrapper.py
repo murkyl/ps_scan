@@ -12,8 +12,8 @@ __all__ = [
     "es_data_sender",
     "es_create_connection",
     "es_create_index_settings",
-    "es_create_start_options_diskover",
-    "es_create_stop_options_diskover",
+    "es_create_start_options",
+    "es_create_stop_options",
     "es_delete_index",
     "es_init_index",
     "es_start_processing",
@@ -301,7 +301,7 @@ def es_create_start_options(options={}):
             # TODO: Add support for querying for usage statistics
             pass
         ps_scan_ver = options.get("ps_scan_ver_str", "ps_scan v0.0.0")
-        root_path = options.get("path", "/ifs")
+        root_path = options.get("scan_path", "/ifs")
         es_options = {
             "diskover": {
                 "spaceinfo": {
@@ -334,7 +334,7 @@ def es_create_stop_options(options={}, stats={}):
             },
         }
     if options.get("es_type") == ES_TYPE_DISKOVER:
-        root_path = options.get("path", "/ifs")
+        root_path = options.get("scan_path", "/ifs")
         es_options = {
             "diskover": {
                 "indexinfo_stop": {
@@ -373,6 +373,7 @@ def es_data_sender(
 
     while True:
         flush = False
+        flush_all = False
         cmd = None
         # Read commands from command queue.
         # If the command is exit we check if there is a flush argument and set the flush flag
@@ -380,7 +381,7 @@ def es_data_sender(
             cmd_item = cmd_q.get(block=False)
             cmd = cmd_item[0]
             if cmd == CMD_EXIT:
-                flush = (cmd_item[1] or {}).get("flush", False)
+                flush_all = (cmd_item[1] or {}).get("flush", False)
         except queue.Empty:
             pass
         except Exception as e:
@@ -395,7 +396,7 @@ def es_data_sender(
                 bulk_data.append([data_cmd, data_item[1]])
             elif data_cmd == CMD_EXIT:
                 cmd = CMD_EXIT
-                flush = True
+                flush_all = True
         except queue.Empty:
             # If there is no data in the data queue and there are no items in our accumulation list, reset the start
             # time so we always wait up to the max_wait_time seconds to accumulate data
@@ -406,23 +407,38 @@ def es_data_sender(
 
         # If we have enough items in the bulk_data array or after a certain period of time has elapsed, send all the
         # data to Elastic by setting the flush flag to True
-        if (len(bulk_data) >= bulk_count) or (time.time() - start_time >= max_wait_time):
+        if (len(bulk_data) >= bulk_count) or ((time.time() - start_time) >= max_wait_time):
             flush = True
-        if flush:
-            try:
-                LOG.debug(
-                    {
-                      "msg": "ElasticSearch bulk data flush",
-                      "entries": len(bulk_data),
-                      "qsize": send_q.qsize(),
-                      "tid": threading.current_thread().name,
-                    }
-                )
-                es_data_flush(bulk_data, es_client, es_cmd_idx)
-            except Exception as e:
-                LOG.exception("Elastic search send failed.")
+        if flush or flush_all:
+            # We bunch up our sends so the maximum number of times we should need to loop through the send_q items is
+            # the number of items in the queue. This prevents the loop from running forever in case of an error.
+            for flush_count in range(send_q.qsize()):
+                try:
+                    LOG.debug(
+                        {
+                            "msg": "ElasticSearch bulk data flush",
+                            "entries": len(bulk_data),
+                            "qsize": send_q.qsize(),
+                            "tid": threading.current_thread().name,
+                        }
+                    )
+                    es_data_flush(bulk_data, es_client, es_cmd_idx)
+                except Exception as e:
+                    LOG.exception("Elastic search send failed.")
+                    break
+                bulk_data[:] = []
+                if not flush_all:
+                    break
+                try:
+                    for i in range(bulk_count):
+                        data_item = send_q.get(block=False)
+                        data_cmd = data_item[0]
+                        if data_cmd & (CMD_SEND | CMD_SEND_DIR | CMD_SEND_STATS):
+                            bulk_data.append([data_cmd, data_item[1]])
+                except queue.Empty:
+                    flush = True
+                    flush_all = False
             start_time = time.time()
-            bulk_data[:] = []
         if cmd == CMD_EXIT:
             break
 
@@ -511,10 +527,11 @@ def es_init_index(es_client, es_cmd_idx, settings={}, options={}):
         )
         LOG.debug("Create index response: %s" % resp)
         if resp.get("status", 200) not in [200]:
-            if resp["error"]["type"] == "resource_already_exists_exception":
+            if resp["error"].get("type") == "resource_already_exists_exception":
                 LOG.debug("Index {idx} already exists".format(idx=idx))
             else:
                 LOG.error(json.dumps(resp.get("error", {})))
+                raise Exception("Unable to create index")
 
 
 def es_start_processing(es_client, es_cmd_idx, start_options={}, options={}):
