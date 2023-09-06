@@ -861,7 +861,9 @@ def print_statistics(output_type, log, stats, custom_stats, now, start_time, wal
             consolidated_custom_stats[field] += client[field]
         consolidated_custom_stats[field] = consolidated_custom_stats[field] / stats["threads"]
     output_string = (
-        "===== Custom stats (average over all threads) =====\n" + json.dumps(consolidated_custom_stats, indent=2, sort_keys=True) + "\n"
+        "===== Custom stats (average over all threads) =====\n"
+        + json.dumps(consolidated_custom_stats, indent=2, sort_keys=True)
+        + "\n"
     )
     LOG.info(output_string)
     sys.stdout.write(output_string)
