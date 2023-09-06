@@ -197,6 +197,8 @@ class PSScanClient(object):
             rlist, _, xlist = select.select(self.wait_list, [], self.wait_list, self.poll_interval)
             now = time.time()
             self.work_list_count = self.scanner.get_dir_queue_size()
+            if self.debug_count > 2:
+                LOG.debug({"msg": "Select call returned", "dir_q_size": self.work_list_count})
             if rlist:
                 data = self.socket.recv()
                 msg_type = data.get("type")
@@ -367,23 +369,32 @@ class PSScanClient(object):
             if not work_items:
                 return
             LOG.debug(
-                "{cmd}: Received {count} work items to process".format(
-                    cmd=msg_type,
-                    count=len(work_items),
-                )
+                {
+                    "msg": "Received: Work items to process",
+                    "cmd": msg_type,
+                    "work_items_count": len(work_items),
+                }
             )
             self.scanner.add_scan_path(work_items)
             self.want_data = 0
             self.work_list_count = self.scanner.get_dir_queue_size()
             if self.status != CLIENT_STATE_RUNNING:
                 LOG.debug(
-                    "old_state:{old_state}, new_state:{new_state}".format(
-                        new_state=CLIENT_STATE_RUNNING, old_state=self.status
-                    )
+                    {
+                        "msg": "State change",
+                        "old_state": self.status,
+                        "new_state": CLIENT_STATE_RUNNING,
+                    }
                 )
                 self.status = CLIENT_STATE_RUNNING
                 self._exec_send_client_state_running()
         elif msg_type == MSG_TYPE_CLIENT_QUIT:
+            LOG.debug(
+                {
+                    "msg": "Received: Quit message",
+                    "cmd": msg_type,
+                }
+            )
             return {"cmd": PS_CMD_QUIT}
         elif msg_type == MSG_TYPE_CLIENT_REQ_DIR_LIST:
             dir_list = self.scanner.get_dir_queue_items(
@@ -392,13 +403,21 @@ class PSScanClient(object):
             if dir_list:
                 self._exec_send_dir_list(dir_list)
             LOG.debug(
-                "{cmd}: Asked to return work items. Returning {count} items.".format(
-                    cmd=msg_type,
-                    count=len(dir_list),
-                )
+                {
+                    "msg": "Received: Return work items",
+                    "cmd": msg_type,
+                    "work_items_count": len(dir_list),
+                }
             )
         elif msg_type == MSG_TYPE_CONFIG_UPDATE:
             cfg = msg.get("config")
+            LOG.debug(
+                {
+                    "msg": "Received: Configuration update",
+                    "cmd": msg_type,
+                    "update_items": cfg.keys(),
+                }
+            )
             if "logger" in cfg:
                 self.parse_config_update_logger(cfg)
             if "log_level" in cfg:
@@ -407,10 +426,23 @@ class PSScanClient(object):
                 self.parse_config_update(cfg)
         elif msg_type == MSG_TYPE_DEBUG:
             dbg = msg.get("cmd")
+            LOG.debug(
+                {
+                    "msg": "Received: Debug command",
+                    "cmd": msg_type,
+                    "debug_cmds": dbg.keys(),
+                }
+            )
             if "dump_state" in dbg:
                 self.dump_state()
         else:
-            LOG.debug("Unhandled message: {msg}".format(msg=msg))
+            LOG.debug(
+                {
+                    "msg": "Received: Unhandled message",
+                    "cmd": msg_type,
+                    "raw_msg": msg,
+                }
+            )
         return {}
 
     def stats_merge(self, now):
