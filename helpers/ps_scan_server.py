@@ -412,7 +412,7 @@ class PSScanServer(Hydra.HydraServer):
         return {}
 
     def print_statistics_final(self, stats, num_clients, wall_time):
-        weight = self.client_count * self.cli_options["threads"]
+        weight = (self.client_count * self.cli_options["threads"]) or 1
         output_string = """Final statistics
         Wall time (s): {wall_tm:,.2f}
         Average file/dir queue wait time (s): {avg_q_tm:,.2f}
@@ -442,7 +442,7 @@ class PSScanServer(Hydra.HydraServer):
     def print_statistics_interim(self, stats, now, start, fps_window, interval):
         buckets = [str(x) for x in fps_window.get_window_sizes()]
         fps_per_bucket = ["{fps:,.1f}".format(fps=x / interval) for x in fps_window.get_all_windows()]
-        weight = self.client_count * self.cli_options["threads"]
+        weight = (self.client_count * self.cli_options["threads"]) or 1
         output_string = """{ts} - Statistics:
         Current run time (s): {runtime:,d}
         FPS overall / recent ({fps_buckets}) intervals: {fps:,.1f} / {fps_per_bucket}
@@ -551,14 +551,21 @@ class PSScanServer(Hydra.HydraServer):
 
                 # Send out our directories to all processes that want work if we have work to send
                 if want_work_clients and self.work_list:
-                    if self.debug_count > 1:
-                        LOG.debug("Server has work items and has clients that want work")
                     got_work_clients = []
                     len_dir_list = len(self.work_list)
                     len_want_work_clients = len(want_work_clients)
                     increment = (len_dir_list // len_want_work_clients) + (
                         1 * (len_dir_list % len_want_work_clients != 0)
                     )
+                    if self.debug_count > 1:
+                        LOG.debug(
+                            {
+                                "msg": "Server has work items and clients want work",
+                                "work_items_count": len_dir_list,
+                                "want_work_clients_count": len_want_work_clients,
+                                "increment": increment,
+                            }
+                        )
                     index = 0
                     for client_key in want_work_clients:
                         work_dirs = self.work_list[index : index + increment]
