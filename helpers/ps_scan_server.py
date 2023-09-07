@@ -101,7 +101,7 @@ class PSScanServer(Hydra.HydraServer):
         self.send_all_clients(msg)
         self.dump_state()
 
-    def _exec_send_config_update(self, client):
+    def _exec_send_config_update(self, client, client_idx=""):
         client_logger = None
         if self.cli_options.get("log"):
             base, ext = os.path.splitext(self.cli_options.get("log", DEFAULT_LOG_FILE_PREFIX + DEFAULT_LOG_FILE_SUFFIX))
@@ -119,6 +119,7 @@ class PSScanServer(Hydra.HydraServer):
             {
                 "type": MSG_TYPE_CONFIG_UPDATE,
                 "config": {
+                    "client_id": client_idx,
                     "cli_options": self.cli_options,
                     "client_config": self.client_config,
                     "logger": client_logger,
@@ -393,7 +394,7 @@ class PSScanServer(Hydra.HydraServer):
                 "want_data": now,
             }
             # Send configuration to client
-            self._exec_send_config_update(client_idx)
+            self._exec_send_config_update(client_idx, self.client_count)
             # Send up to 1 directory in our work queue to each connected client
             work_sent = self._exec_send_one_work_item(client_idx)
             if work_sent:
@@ -414,27 +415,31 @@ class PSScanServer(Hydra.HydraServer):
     def print_statistics_final(self, stats, num_clients, wall_time):
         weight = (self.client_count * self.cli_options["threads"]) or 1
         output_string = """Final statistics
-        Wall time (s): {wall_tm:,.2f}
+        Wall time (s): {wall_tm}
         Average file/dir queue wait time (s): {avg_q_tm:,.2f}
-        Average time spent in dir/file handler routines across all clients (s): {dht:,.2f} / {fht:,.2f}
-        Processed/Queued/Skipped dirs: {p_dirs:,d} / {q_dirs:,d} / {s_dirs:,d}
-        Processed/Queued/Skipped files: {p_files:,d} / {q_files:,d} / {s_files:,d}
-        Total file size/physical size: {fsize:,d} / {fphyssize:,d}
-        Avg files/second: {a_fps:,.1f}
+        Average time spent in dir/file handler routines across all clients (s): {d_htime:,.2f} / {f_htime:,.2f}
+        Average dir scan time (s): {d_scan:,.1f}
+        Processed/Queued/Skipped dirs: {d_proc:,d} / {d_queued:,d} / {d_skip:,d}
+        Processed/Queued/Skipped files: {f_proc:,d} / {f_queued:,d} / {f_skip:,d}
+        Total file size/physical size: {f_bytes:,d} ({f_bytes_sz})/ {f_phys_bytes:,d} ({f_phys_bytes_sz})
+        Avg files/second: {fps:,.1f}
 """.format(
-            wall_tm=wall_time,
             avg_q_tm=stats.get("q_wait_time", 0) / weight,
-            dht=stats.get("dir_handler_time", 0) / weight,
-            fht=stats.get("file_handler_time", 0) / weight,
-            p_dirs=stats.get("dirs_processed", 0),
-            q_dirs=stats.get("dirs_queued", 0),
-            s_dirs=stats.get("dirs_skipped", 0),
-            p_files=stats.get("files_processed", 0),
-            q_files=stats.get("files_queued", 0),
-            s_files=stats.get("files_skipped", 0),
-            fsize=stats.get("file_size_total", 0),
-            fphyssize=stats.get("file_size_physical_total", 0),
-            a_fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / wall_time,
+            d_htime=stats.get("dir_handler_time", 0) / weight,
+            d_proc=stats.get("dirs_processed", 0),
+            d_queued=stats.get("dirs_queued", 0),
+            d_scan=stats.get("dir_scan_time", 0) / weight,
+            d_skip=stats.get("dirs_skipped", 0),
+            f_bytes=stats.get("file_size_total", 0),
+            f_bytes_sz=misc.humanize_number(stats.get("file_size_total", 0)),
+            f_htime=stats.get("file_handler_time", 0) / weight,
+            f_phys_bytes=stats.get("file_size_physical_total", 0),
+            f_phys_bytes_sz=misc.humanize_number(stats.get("file_size_physical_total", 0)),
+            f_proc=stats.get("files_processed", 0),
+            f_queued=stats.get("files_queued", 0),
+            f_skip=stats.get("files_skipped", 0),
+            fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / wall_time,
+            wall_tm=misc.humanize_seconds(wall_time),
         )
         LOG.info(output_string)
         sys.stdout.write(output_string)
@@ -444,32 +449,35 @@ class PSScanServer(Hydra.HydraServer):
         fps_per_bucket = ["{fps:,.1f}".format(fps=x / interval) for x in fps_window.get_all_windows()]
         weight = (self.client_count * self.cli_options["threads"]) or 1
         output_string = """{ts} - Statistics:
-        Current run time (s): {runtime:,d}
+        Current run time (s): {runtime}
         FPS overall / recent ({fps_buckets}) intervals: {fps:,.1f} / {fps_per_bucket}
-        Total file bytes processed / physical bytes: {f_bytes:,d}, {f_phys_bytes:,d}
+        Total file bytes processed / physical bytes: {f_bytes:,d} ({f_bytes_sz}) / {f_phys_bytes:,d} ({f_bytes_sz})
         Files (Processed/Queued/Skipped): {f_proc:,d} / {f_queued:,d} / {f_skip:,d}
-        File Q Size/Handler time: {f_q_size:,d} / {f_h_time:,.1f}
-        Dir scan time: {d_scan:,.1f}
+        File Q Size/Handler time: {f_q_size:,d} / {f_htime:,.1f}
+        Dir scan time/Avg Q wait time: {d_scan:,.1f} / {avg_q_tm:,.1f}
         Dirs (Processed/Queued/Skipped): {d_proc:,d} / {d_queued:,d} / {d_skip:,d}
-        Dir Q Size/Handler time: {d_q_size:,d} / {d_h_time:,.1f}
+        Dir Q Size/Handler time: {d_q_size:,d} / {d_htime:,.1f}
 """.format(
+            avg_q_tm=stats.get("q_wait_time", 0) / weight,
+            d_htime=stats.get("dir_handler_time", 0) / weight,
             d_proc=stats.get("dirs_processed", 0),
-            d_h_time=stats.get("dir_handler_time", 0) / weight,
             d_q_size=stats.get("dir_q_size", 0),
             d_queued=stats.get("dirs_queued", 0),
             d_scan=stats.get("dir_scan_time", 0) / weight,
             d_skip=stats.get("dirs_skipped", 0),
             f_bytes=stats.get("file_size_total", 0),
-            f_h_time=stats.get("file_handler_time", 0) / weight,
+            f_bytes_sz=misc.humanize_number(stats.get("file_size_total", 0)),
+            f_htime=stats.get("file_handler_time", 0) / weight,
             f_phys_bytes=stats.get("file_size_physical_total", 0),
+            f_phys_bytes_sz=misc.humanize_number(stats.get("file_size_physical_total", 0)),
             f_proc=stats.get("files_processed", 0),
             f_q_size=stats.get("file_q_size", 0),
             f_queued=stats.get("files_queued", 0),
             f_skip=stats.get("files_skipped", 0),
-            fps=stats.get("files_processed", 0) / (now - start),
+            fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / (now - start),
             fps_buckets=", ".join(buckets),
             fps_per_bucket=" - ".join(fps_per_bucket),
-            runtime=int(now - start),
+            runtime=misc.humanize_seconds(int(now - start)),
             ts=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
         LOG.info(output_string)
