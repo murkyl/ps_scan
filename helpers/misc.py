@@ -197,35 +197,35 @@ def get_local_storage_usage_stats():
     return stats
 
 
-def humanize_number(num, suffix='B', base=10, truncate=True):
-  num = num if num else 0
-  factor = 1024.0 if base == 2 else 1000.0
-  bin_mark = ''
-  if num == 0:
-    return "0 %s"%suffix
-  for unit in ['', 'K', 'M', 'G', 'T', 'P', 'E', 'Z', 'Y']:
-    if abs(num) < factor:
-      break
-    num /= factor
-  if unit != '' and base == 2:
-    bin_mark = 'i'
-  return "%.1f %s%s%s"%(num, unit, bin_mark, suffix)
+def humanize_number(num, suffix="B", base=10, truncate=True):
+    num = num if num else 0
+    factor = 1024.0 if base == 2 else 1000.0
+    bin_mark = ""
+    if num == 0:
+        return "0 %s" % suffix
+    for unit in ["", "K", "M", "G", "T", "P", "E", "Z", "Y"]:
+        if abs(num) < factor:
+            break
+        num /= factor
+    if unit != "" and base == 2:
+        bin_mark = "i"
+    return "%.1f %s%s%s" % (num, unit, bin_mark, suffix)
 
 
 def humanize_seconds(sec):
-  units = [[31536000, 'year'], [86400, 'day'], [3600, 'hour'], [60, 'minute'], [1, 'second']]
-  if sec == 0:
-    return '0 seconds'
-  elif not sec:
-    return ''
-  time_str = ''  
-  for unit in units:
-    if abs(sec) >= unit[0]:
-      whole = sec//unit[0]
-      time_str += "%d %s%s "%(whole, unit[1], 's'*(whole > 1) or ''*(whole <= 1))
-      sec -= whole*unit[0]
-  time_str = time_str.rstrip()
-  return time_str
+    units = [[31536000, "year"], [86400, "day"], [3600, "hour"], [60, "minute"], [1, "second"]]
+    if sec == 0:
+        return "0 seconds"
+    elif not sec:
+        return ""
+    time_str = ""
+    for unit in units:
+        if abs(sec) >= unit[0]:
+            whole = sec // unit[0]
+            time_str += "%d %s%s " % (whole, unit[1], "s" * (whole > 1) or "" * (whole <= 1))
+            sec -= whole * unit[0]
+    time_str = time_str.rstrip()
+    return time_str
 
 
 def is_onefs_os():
