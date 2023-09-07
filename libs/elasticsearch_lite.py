@@ -70,7 +70,7 @@ class ElasticsearchLite:
         if resp.status >= 200 and resp.status < 300:
             return json.loads(resp.read())
         self.conn = None
-        return ({"status": resp.status, "error": resp.reason})
+        return {"status": resp.status, "error": resp.reason}
 
     def bulk(self, body_str, index_name=None):
         if body_str and body_str[-1] != "\n":
@@ -156,6 +156,6 @@ class ElasticsearchLite:
             self.conn_endpoint = self.endpoint[7:]
         elif self.endpoint.startswith("https://"):
             self.use_https = True
-            self.conn_endpoint= self.endpoint[8:]
+            self.conn_endpoint = self.endpoint[8:]
         else:
             raise ValueError("Invalid endpoint: {endpoint}".format(endpoint=self.endpoint))
