@@ -418,7 +418,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 os.close(fd)
             except:
                 pass
-    if (result_list or result_dir_list) and custom_state.get("es_send_q"):
+    if (result_list or result_dir_list) and custom_state["client_config"].get("es_cmd_idx"):
         time_start = time.time()
         if result_list:
             custom_state["es_send_q"].put([CMD_SEND, result_list])
@@ -702,7 +702,7 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
                 os.close(fd)
             except:
                 pass
-    if (result_list or result_dir_list) and custom_state.get("es_send_q"):
+    if (result_list or result_dir_list) and custom_state["client_config"].get("es_cmd_idx"):
         time_start = time.time()
         if result_list:
             custom_state["es_send_q"].put([CMD_SEND, result_list])
