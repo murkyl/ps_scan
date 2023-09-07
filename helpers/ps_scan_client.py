@@ -68,6 +68,7 @@ class PSScanClient(object):
             stats_interval: int - Time in seconds between each statistics update to the server
         """
         self.client_config = {}
+        self.client_id = ""
         self.config_update_count = 0
         self.debug_count = args.get("debug", 0)
         self.dir_output_count = 0
@@ -238,7 +239,7 @@ class PSScanClient(object):
                 self._exec_send_status_stats(now)
 
             # Determine if we should send a directory queue count update
-            cur_dir_count = (now - start_wall) // self.dir_output_interval
+            cur_dir_count = int((now - start_wall) // self.dir_output_interval)
             if cur_dir_count > self.dir_output_count:
                 if self.debug_count > 1:
                     LOG.debug("Sending dir count update #{dir_count:,d}".format(dir_count=cur_dir_count))
@@ -246,7 +247,7 @@ class PSScanClient(object):
                 self._exec_send_status_dir_count()
 
             # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
-            if (self.work_list_count == 0) and (now - self.want_data > self.dir_request_interval):
+            if (not self.work_list_count) and ((now - self.want_data) > self.dir_request_interval):
                 if self.debug_count > 1:
                     LOG.debug(
                         "Asking server for more work: file_queue_size:{fq_size}".format(
@@ -327,7 +328,6 @@ class PSScanClient(object):
             LOG.exception("Error during update_config")
         self.client_config = cfg
         self._process_args(cfg.get("cli_options", {}), use_default=False)
-        self.debug_count = cfg.get("debug", 0)
         self.config_update_count += 1
 
     def parse_config_update_log_level(self, cfg):
@@ -356,7 +356,13 @@ class PSScanClient(object):
             LOG.addHandler(log_handler)
             LOG.setLevel(logger_block["level"])
             self.debug_count = logger_block.get("debug_count", 0)
-            LOG.debug("Logger configuration updated")
+            LOG.debug(
+                {
+                    "msg": "Logger configuration updated",
+                    "log_level": logger_block["level"],
+                    "debug_count": self.debug_count,
+                }
+            )
         except KeyError as ke:
             sys.stderr.write("ERROR: Logger filename string is invalid: {txt}\n".format(txt=str(ke)))
         except Exception as e:
@@ -424,6 +430,8 @@ class PSScanClient(object):
                 self.parse_config_update_log_level(cfg)
             if "client_config" in cfg:
                 self.parse_config_update(cfg)
+            if "client_id" in cfg:
+                self.client_id = cfg["client_id"]
         elif msg_type == MSG_TYPE_DEBUG:
             dbg = msg.get("cmd")
             LOG.debug(
