@@ -376,10 +376,10 @@ class ScanIt(threading.Thread):
         self._enqueue_chunks(path, dir_file_list, self.file_chunk, self.file_q, CMD_PROC_FILE)
         # files_queued includes all potential directories. Adjust the count when we actually know how many dirs
         return {
-            "files_queued": len(dir_file_list),
             "dir_scan_time": (time.time() - start),
             "dirs_queued": 0,
             "dirs_skipped": dirs_skipped,
+            "files_queued": len(dir_file_list),
         }
 
     def _process_walk_dir(self, path):
@@ -397,6 +397,7 @@ class ScanIt(threading.Thread):
         return {
             "dir_scan_time": (time.time() - start),
             "dirs_queued": num_dirs,
+            "dirs_skipped": 0,
             "files_queued": num_files,
         }
 
@@ -437,10 +438,12 @@ class ScanIt(threading.Thread):
                     for dirname in work_item[2]:
                         # If the directory name is in our skip directory list, skip this directory
                         if dirname in self.default_skip_dirs:
+                            LOG.debug({"msg": "Skipping directory", "filename": dirname})
                             stats["dirs_skipped"] += 1
                             continue
                         # If handler_dir returns True, we should skip this directory
                         if self.handler_dir and self.handler_dir(work_item[1], dirname):
+                            LOG.debug({"msg": "Skipping directory", "filename": dirname})
                             stats["dirs_skipped"] += 1
                             continue
                         stats["dirs_processed"] += 1
@@ -452,8 +455,8 @@ class ScanIt(threading.Thread):
                         except:
                             LOG.exception(TXT_STR[T_EX_PROCESS_NEW_DIR].format(tid=name, r=work_item[1], d=dirname))
                             raise TerminateThread
-                        for stat_item in handler_stats:
-                            stats[stat_item] += handler_stats[stat_item]
+                        for key in handler_stats.keys():
+                            stats[key] += handler_stats[key]
                     stats["dir_handler_time"] += time.time() - start
                 elif cmd == CMD_PROC_FILE:
                     try:
@@ -470,23 +473,22 @@ class ScanIt(threading.Thread):
                                 "block_size": self.block_size,
                             },
                         )
-                        stats["file_handler_time"] += time.time() - start
                         stats["files_processed"] += handler_stats["processed"]
                         stats["files_skipped"] += handler_stats["skipped"]
                         dirs_to_queue = handler_stats.get("q_dirs", [])
                         if dirs_to_queue:
+                            dir_queue_length = len(dirs_to_queue)
                             self._enqueue_chunks(work_item[1], dirs_to_queue, self.dir_chunk, self.dir_q, CMD_PROC_DIR)
-                            stats["dirs_queued"] += len(dirs_to_queue)
+                            stats["dirs_queued"] += dir_queue_length
                             # Fix the files queued count to adjust for the directories queued as files
-                            stats["files_queued"] -= len(dirs_to_queue)
+                            stats["files_queued"] -= dir_queue_length
+                        stats["file_handler_time"] += time.time() - start
                     except MemoryError:
                         LOG.exception(TXT_STR[T_OOM_PROCESS_FILE].format(tid=name, r=work_item[1]))
                         raise TerminateThread
                     except:
                         LOG.exception(TXT_STR[T_EX_PROCESS_FILE].format(tid=name, r=work_item[1]))
                         raise TerminateThread
-                if q_to_read == self.dir_q:
-                    self._decr_dir_q_thread_count()
                 if cmd == CMD_EXIT:
                     break
             except TerminateThread:
@@ -508,6 +510,10 @@ class ScanIt(threading.Thread):
                 LOG.exception(TXT_STR[T_EX_PROCESS_GENERAL].format(tid=name, ex=e))
                 self.terminate()
                 break
+            else:
+                if q_to_read == self.dir_q:
+                    self._decr_dir_q_thread_count()
+
         state["run_state"] = S_IDLE
         LOG.debug(TXT_STR[T_EXIT].format(tid=name))
 
