@@ -141,7 +141,7 @@ class PSScanServer(Hydra.HydraServer):
             )
             return True
         except queue.Empty as qe:
-            LOG.error("Work queue was not empty but unable to get a work item to send to the new client")
+            LOG.error({"msg": "Work queue was not empty but unable to get a work item to send to the new client"})
         return False
 
     def _exec_send_quit(self, client):
@@ -187,7 +187,7 @@ class PSScanServer(Hydra.HydraServer):
         self.send_all_clients(msg)
 
     def dump_state(self):
-        LOG.critical("\nDumping state\n" + "=" * 20)
+        LOG.critical({"msg": "Dumping state\n" + "=" * 20})
         state = {}
         for member in [
             "client_count",
@@ -225,15 +225,15 @@ class PSScanServer(Hydra.HydraServer):
         self.msg_q.put({"type": MSG_TYPE_CLIENT_CONNECT, "client": client})
 
     def handler_signal_interrupt(self, signum, frame):
-        LOG.debug("SIGINT signal received. Quiting program.")
+        LOG.debug({"msg": "SIGINT signal received. Quitting program."})
         self.msg_q.put({"type": MSG_TYPE_QUIT})
 
     def handler_signal_usr1(self, signum, frame):
-        LOG.debug("SIGUSR1 signal received. Toggling debug.")
+        LOG.debug({"msg": "SIGUSR1 signal received. Toggling debug."})
         self._exec_toggle_debug()
 
     def handler_signal_usr2(self, signum, frame):
-        LOG.debug("SIGUSR2 signal received. Dumping state.")
+        LOG.debug({"msg": "SIGUSR2 signal received. Dumping state."})
         self._exec_dump_state()
 
     def launch_remote_processes(self):
@@ -259,10 +259,10 @@ class PSScanServer(Hydra.HydraServer):
             for node in self.node_list:
                 if node.get("type") != "default":
                     node["cmd"] = run_cmd
-            LOG.debug("Launching remote process with cmd: {cmd}".format(cmd=run_cmd))
+            LOG.debug({"msg": "Launching remote process", "shell_command": run_cmd})
             self.remote_state = rr.RemoteRun({"callback": self.remote_callback})
             self.remote_state.connect(self.node_list)
-        LOG.debug("All remote processes launched.")
+        LOG.debug({"msg": "All remote processes launched"})
 
     def output_statistics(self, now, start_wall):
         # TODO: Some external function should do all stats output including custom stats
@@ -318,7 +318,7 @@ class PSScanServer(Hydra.HydraServer):
             data_type = data.get("type")
             if data_type == "cmd":
                 cmd = data.get("cmd")
-                LOG.debug("[client:{cid}] - Command: {cmd}".format(cid=cid, cmd=cmd))
+                LOG.debug({"msg": "Received command", "cid": cid, "command": cmd})
                 if cmd == PS_CMD_QUIT:
                     return {"cmd": PS_CMD_QUIT}
                 elif cmd == PS_CMD_DUMPSTATE:
@@ -326,55 +326,106 @@ class PSScanServer(Hydra.HydraServer):
                 elif cmd == PS_CMD_TOGGLEDEBUG:
                     self._exec_toggle_debug()
                 else:
-                    LOG.error("[client:{cid}] - unknown_command:{cmd}".format(cid=cid, cmd=cmd))
+                    LOG.error({"msg": "Unknown command", "cid": cid, "command": cmd})
             elif data_type == MSG_TYPE_CLIENT_DIR_LIST:
-                LOG.debug("[client:{cid}] - returned_directories:{data}".format(cid=cid, data=len(data["work_item"])))
-                cur_client["sent_data"] = 0
+                LOG.debug(
+                    {
+                        "msg": "Client returned work directories",
+                        "cid": cid,
+                        "work_dir_count": len(data["work_item"]),
+                        "dir_q_count": data.get("dir_q_count", "Unknown"),
+                        "command": data_type,
+                    }
+                )
+                cur_client["sent_data"] = now
                 cur_client["want_data"] = 0
                 # Extend directory work list with items returned by the client
                 self.work_list.extend(data["work_item"])
             elif data_type == MSG_TYPE_CLIENT_STATE_IDLE:
                 LOG.debug(
-                    "[client:{cid}] - old_state:{old_state}, new_state:{new_state}".format(
-                        cid=cid, new_state=CLIENT_STATE_IDLE, old_state=cur_client["status"]
-                    )
+                    {
+                        "msg": "State change",
+                        "cid": cid,
+                        "old_state": cur_client["status"],
+                        "new_state": CLIENT_STATE_IDLE,
+                        "command": data_type,
+                    }
                 )
                 cur_client["status"] = CLIENT_STATE_IDLE
                 cur_client["want_data"] = now
             elif data_type == MSG_TYPE_CLIENT_STATE_RUNNING:
                 LOG.debug(
-                    "[client:{cid}] - old_state:{old_state}, new_state:{new_state}".format(
-                        cid=cid, new_state=CLIENT_STATE_RUNNING, old_state=cur_client["status"]
-                    )
+                    {
+                        "msg": "State change",
+                        "cid": cid,
+                        "old_state": cur_client["status"],
+                        "new_state": CLIENT_STATE_RUNNING,
+                        "command": data_type,
+                    }
                 )
                 cur_client["status"] = CLIENT_STATE_RUNNING
                 cur_client["want_data"] = 0
             elif data_type == MSG_TYPE_CLIENT_STATE_STOPPED:
                 LOG.debug(
-                    "[client:{cid}] - old_state:{old_state}, new_state:{new_state}".format(
-                        cid=cid, new_state=CLIENT_STATE_STOPPED, old_state=cur_client["status"]
-                    )
+                    {
+                        "msg": "State change",
+                        "cid": cid,
+                        "old_state": cur_client["status"],
+                        "new_state": CLIENT_STATE_STOPPED,
+                        "command": data_type,
+                    }
                 )
                 cur_client["status"] = CLIENT_STATE_STOPPED
                 cur_client["want_data"] = 0
             elif data_type == MSG_TYPE_CLIENT_STATUS_DIR_COUNT:
                 if self.debug_count > 1:
-                    LOG.debug("[client:{cid}] - has_queued_directories:{data}".format(cid=cid, data=data["data"]))
+                    LOG.debug(
+                        {
+                            "msg": "Client work directory queue size",
+                            "cid": cid,
+                            "dir_count": data["data"],
+                            "command": data_type,
+                        }
+                    )
                 cur_client["dir_count"] = data["data"]
             elif data_type == MSG_TYPE_CLIENT_STATUS_STATS:
                 if self.debug_count > 1:
-                    LOG.debug("[client:{cid}] - stats_update:1".format(cid=cid))
+                    LOG.debug(
+                        {
+                            "msg": "Statistics update",
+                            "cid": cid,
+                            "command": data_type,
+                        }
+                    )
                 cur_client["stats"] = data["data"]
                 cur_client["stats_time"] = now
             elif data_type == MSG_TYPE_CLIENT_REQ_DIR_LIST:
                 if self.debug_count > 1:
-                    LOG.debug("[client:{cid}] - Requested directory list".format(cid=cid))
+                    LOG.debug(
+                        {
+                            "msg": "Requested work directories",
+                            "cid": cid,
+                            "command": data_type,
+                        }
+                    )
                 cur_client["want_data"] = now
             else:
-                LOG.error("[client:{cid}] - unknown_command:{cmd}".format(cid=cid, cmd=data_type))
+                LOG.error(
+                    {
+                        "msg": "Unknown command",
+                        "cid": cid,
+                        "command": data_type,
+                    }
+                )
         elif msg["type"] == MSG_TYPE_CLIENT_CLOSED:
             cur_client = self.client_state.get(msg["client"])
-            LOG.debug("[client:{cid}] - Socket closed: {data}".format(cid=cur_client["id"], data=msg))
+            LOG.debug(
+                {
+                    "msg": "Socket closed",
+                    "cid": cur_client["id"],
+                    "data": msg,
+                }
+            )
             cur_client["dir_count"] = 0
             cur_client["sent_data"] = 0
             cur_client["status"] = CLIENT_STATE_STOPPED
@@ -382,12 +433,18 @@ class PSScanServer(Hydra.HydraServer):
         elif msg["type"] == MSG_TYPE_CLIENT_CONNECT:
             client_idx = msg["client"]
             self.client_count += 1
-            LOG.debug("[client:{cid}] - Socket connected: {data}".format(cid=self.client_count, data=msg))
+            LOG.debug(
+                {
+                    "msg": "Socket connected",
+                    "cid": self.client_count,
+                    "data": msg,
+                }
+            )
             state_obj = {
                 "client": client_idx,
                 "dir_count": 0,
                 "id": self.client_count,
-                "sent_data": 0,
+                "sent_data": now - self.request_work_interval,
                 "stats": {},
                 "stats_time": None,
                 "status": CLIENT_STATE_STARTING,
@@ -397,19 +454,23 @@ class PSScanServer(Hydra.HydraServer):
             self._exec_send_config_update(client_idx, self.client_count)
             # Send up to 1 directory in our work queue to each connected client
             work_sent = self._exec_send_one_work_item(client_idx)
-            if work_sent:
-                state_obj["want_data"] = 0
             self.client_state[client_idx] = state_obj
         elif msg["type"] == MSG_TYPE_QUIT:
-            LOG.debug("Received internal quit command")
+            LOG.debug({"msg": "Received internal quit command"})
             return {"cmd": PS_CMD_QUIT}
         elif msg["type"] == MSG_TYPE_REMOTE_CALLBACK:
             # This type of command is sent from the remote_run module that handles spawning processes on other machines
             # TODO: Add code to handle re-launching dead processes
             # TODO: Log any console output if there is an error
-            LOG.debug("Remote process message from client {client}: {data}".format(client=msg["client"], data=msg))
+            LOG.debug(
+                {
+                    "msg": "Remote process message from client",
+                    "cid": msg["client"],
+                    "data": msg,
+                }
+            )
         else:
-            LOG.debug("Unhandled message received: {data}".format(data=msg))
+            LOG.debug({"msg": "Unhandled message received", "data": msg})
         return {}
 
     def print_statistics_final(self, stats, num_clients, wall_time):
@@ -431,10 +492,10 @@ class PSScanServer(Hydra.HydraServer):
             d_scan=stats.get("dir_scan_time", 0) / weight,
             d_skip=stats.get("dirs_skipped", 0),
             f_bytes=stats.get("file_size_total", 0),
-            f_bytes_sz=misc.humanize_number(stats.get("file_size_total", 0)),
+            f_bytes_sz=misc.humanize_number(stats.get("file_size_total", 0), base=2),
             f_htime=stats.get("file_handler_time", 0) / weight,
             f_phys_bytes=stats.get("file_size_physical_total", 0),
-            f_phys_bytes_sz=misc.humanize_number(stats.get("file_size_physical_total", 0)),
+            f_phys_bytes_sz=misc.humanize_number(stats.get("file_size_physical_total", 0), base=2),
             f_proc=stats.get("files_processed", 0),
             f_queued=stats.get("files_queued", 0),
             f_skip=stats.get("files_skipped", 0),
@@ -450,8 +511,8 @@ class PSScanServer(Hydra.HydraServer):
         weight = (self.client_count * self.cli_options["threads"]) or 1
         output_string = """{ts} - Statistics:
         Current run time (s): {runtime}
-        FPS overall / recent ({fps_buckets}) intervals: {fps:,.1f} / {fps_per_bucket}
-        Total file bytes processed / physical bytes: {f_bytes:,d} ({f_bytes_sz}) / {f_phys_bytes:,d} ({f_bytes_sz})
+        FPS overall / recent ({fps_buckets}) {interval}s intervals: {fps:,.1f} / {fps_per_bucket}
+        Total file bytes processed / physical bytes: {f_bytes:,d} ({f_bytes_sz}) / {f_phys_bytes:,d} ({f_phys_bytes_sz})
         Files (Processed/Queued/Skipped): {f_proc:,d} / {f_queued:,d} / {f_skip:,d}
         File Q Size/Handler time: {f_q_size:,d} / {f_htime:,.1f}
         Dir scan time/Avg Q wait time: {d_scan:,.1f} / {avg_q_tm:,.1f}
@@ -466,17 +527,18 @@ class PSScanServer(Hydra.HydraServer):
             d_scan=stats.get("dir_scan_time", 0) / weight,
             d_skip=stats.get("dirs_skipped", 0),
             f_bytes=stats.get("file_size_total", 0),
-            f_bytes_sz=misc.humanize_number(stats.get("file_size_total", 0)),
+            f_bytes_sz=misc.humanize_number(stats.get("file_size_total", 0), base=2),
             f_htime=stats.get("file_handler_time", 0) / weight,
             f_phys_bytes=stats.get("file_size_physical_total", 0),
-            f_phys_bytes_sz=misc.humanize_number(stats.get("file_size_physical_total", 0)),
+            f_phys_bytes_sz=misc.humanize_number(stats.get("file_size_physical_total", 0), base=2),
             f_proc=stats.get("files_processed", 0),
             f_q_size=stats.get("file_q_size", 0),
             f_queued=stats.get("files_queued", 0),
             f_skip=stats.get("files_skipped", 0),
             fps=(stats.get("files_processed", 0) + stats.get("files_skipped", 0)) / (now - start),
             fps_buckets=", ".join(buckets),
-            fps_per_bucket=" - ".join(fps_per_bucket),
+            fps_per_bucket=" | ".join(fps_per_bucket),
+            interval=self.stats_output_interval,
             runtime=misc.humanize_seconds(int(now - start)),
             ts=datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         )
@@ -487,7 +549,7 @@ class PSScanServer(Hydra.HydraServer):
         self.msg_q.put({"type": MSG_TYPE_REMOTE_CALLBACK, "data": msg, "client_id": client_id, "client": client})
 
     def serve(self):
-        LOG.info("Starting server")
+        LOG.info({"msg": "Starting server"})
         start_wall = time.time()
         self.start()
         self.launch_remote_processes()
@@ -502,7 +564,7 @@ class PSScanServer(Hydra.HydraServer):
             except queue.Empty as qe:
                 queue_item = None
             except Exception as e:
-                LOG.exception(e)
+                LOG.exception({"msg": "Unhandled exception getting item from msg_q", "exception": str(e)})
                 continue_running = False
                 continue
             else:
@@ -513,7 +575,7 @@ class PSScanServer(Hydra.HydraServer):
                         continue
                 except Exception as e:
                     # parse_message should handle exceptions. Any uncaught exceptions should terminate the program.
-                    LOG.exception(e)
+                    LOG.exception({"msg": "Unhandled exception parsing message", "exception": str(e)})
                     continue_running = False
                     continue
 
@@ -522,6 +584,15 @@ class PSScanServer(Hydra.HydraServer):
                 #   The -1 is for a 1 second offset to allow time for stats to come from processes
                 cur_stats_count = (now - start_wall) // self.stats_output_interval
                 if cur_stats_count > self.stats_output_count:
+                    if self.debug_count > 1:
+                        if cur_stats_count != (self.stats_output_count + 1):
+                            LOG.debug(
+                                {
+                                    "msg": "Statistics count jumped",
+                                    "expected_stats_count": self.stats_output_count + 1,
+                                    "calculated_stats_count": cur_stats_count,
+                                }
+                            )
                     self.stats_output_count = cur_stats_count
                     self.output_statistics(now, start_wall)
 
@@ -579,6 +650,12 @@ class PSScanServer(Hydra.HydraServer):
                         work_dirs = self.work_list[index : index + increment]
                         if not work_dirs:
                             continue
+                        LOG.debug(
+                            {
+                                "msg": "Sending work to client",
+                                "cid": self.client_state[client_key]["id"],
+                            }
+                        )
                         self._exec_send_work_items(client_key, work_dirs)
                         self.client_state[client_key]["want_data"] = 0
                         index += increment
@@ -593,37 +670,44 @@ class PSScanServer(Hydra.HydraServer):
                 if want_work_clients and have_dirs_clients:
                     if self.debug_count > 1:
                         LOG.debug(
-                            "want_work_clients / have_dir_clients: {want_clients} / {have_clients}".format(
-                                want_clients=",".join(
+                            {
+                                "msg": "Checking if server can request clients to return work",
+                                "want_work_clients": ",".join(
                                     sorted([str(self.client_state[x]["id"]) for x in want_work_clients])
                                 ),
-                                have_clients=",".join(
+                                "have_work_clients": ",".join(
                                     sorted([str(self.client_state[x]["id"]) for x in have_dirs_clients])
                                 ),
-                            )
+                            }
                         )
                     for client_key in have_dirs_clients:
                         client = self.client_state[client_key]
                         if self.debug_count > 1:
                             LOG.debug(
-                                "client:{cid} has queued dirs, evaluating if we should send message".format(
-                                    cid=client["id"]
-                                )
+                                {
+                                    "msg": "Client could return work",
+                                    "cid": client["id"],
+                                }
                             )
                         # Limit the number of times we request data from each client to request_work_interval seconds
                         if (now - client["sent_data"]) > self.request_work_interval:
                             if self.debug_count > 1:
-                                LOG.debug("Sending CMD_REQ_DIR to client:{cid}".format(cid=client["id"]))
+                                LOG.debug(
+                                    {
+                                        "msg": "Sending client request to return work",
+                                        "cid": client["id"],
+                                    }
+                                )
                             self._exec_send_req_dir_list(client_key)
                             client["sent_data"] = now
             except Exception as e:
-                LOG.exception("Exception while in server loop")
+                LOG.exception({"msg": "Exception while in server loop", "exception": str(e)})
                 continue_running = False
         total_wall_time = time.time() - start_wall
         self.output_statistics_final(now, total_wall_time)
-        LOG.info("{prog} shutting down.".format(prog=__title__))
+        LOG.info({"msg": "{prog} shutting down.".format(prog=__title__)})
         self.shutdown()
-        LOG.info("{prog} shutdown complete.".format(prog=__title__))
+        LOG.info({"msg": "{prog} shutdown complete.".format(prog=__title__)})
 
     def shutdown(self):
         super(PSScanServer, self).shutdown()

@@ -89,7 +89,7 @@ class PSScanClient(object):
         self.status = CLIENT_STATE_STARTING
         self.wait_list = [self.socket]
         self.want_data = time.time()
-        self.work_list_count = 0
+        self.dir_q_count = 0
         self._process_args(args)
         self._init_scanner()
 
@@ -98,7 +98,7 @@ class PSScanClient(object):
             {
                 "type": MSG_TYPE_CLIENT_DIR_LIST,
                 "work_item": dir_list,
-                "dir_q_count": self.work_list_count,
+                "dir_q_count": self.dir_q_count,
             }
         )
 
@@ -108,6 +108,14 @@ class PSScanClient(object):
                 "type": MSG_TYPE_CLIENT_REQ_DIR_LIST,
             }
         )
+        if self.debug_count > 1:
+            LOG.debug(
+                {
+                    "msg": "Asking server for more work",
+                    "dir_q_count": self.dir_q_count,
+                    "file_q_count": self.scanner.get_file_queue_size(),
+                }
+            )
 
     def _exec_send_client_state_idle(self):
         self.socket.send(
@@ -131,19 +139,13 @@ class PSScanClient(object):
                 "data": stats_data,
             }
         )
-        if self.debug_count > 1:
-            LOG.debug(
-                {
-                    "msg": "Local statistics",
-                    "statistics": stats_data,
-                }
-            )
+        LOG.debug({"msg": "Local statistics", "statistics": stats_data})
 
     def _exec_send_status_dir_count(self):
         self.socket.send(
             {
                 "type": MSG_TYPE_CLIENT_STATUS_DIR_COUNT,
-                "data": self.work_list_count,
+                "data": self.dir_q_count,
             }
         )
 
@@ -197,11 +199,7 @@ class PSScanClient(object):
         )
         connected = self.socket.connect()
         if not connected:
-            LOG.info(
-                {
-                    "msg": "Unable to connect to server",
-                }
-            )
+            LOG.info({"msg": "Unable to connect to server"})
             return
         continue_running = True
         start_wall = time.time()
@@ -214,14 +212,9 @@ class PSScanClient(object):
             try:
                 rlist, _, xlist = select.select(self.wait_list, [], self.wait_list, self.poll_interval)
                 now = time.time()
-                self.work_list_count = self.scanner.get_dir_queue_size()
+                self.dir_q_count = self.scanner.get_dir_queue_size()
                 if self.debug_count > 2:
-                    LOG.debug(
-                        {
-                            "msg": "Select call returned",
-                            "dir_q_size": self.work_list_count,
-                        }
-                    )
+                    LOG.debug({"msg": "Select call returned", "dir_q_count": self.dir_q_count})
                 if rlist:
                     data = self.socket.recv()
                     msg_type = data.get("type")
@@ -245,33 +238,21 @@ class PSScanClient(object):
                             continue_running = False
                             continue
                     elif msg_type is None:
-                        LOG.debug(
-                            {
-                                "msg": "Socket ready to read but no data was received. We should shutdown now.",
-                            }
-                        )
+                        LOG.debug({"msg": "Socket ready to read but no data was received. Shutting down"})
                         self.disconnect()
                         continue_running = False
                         continue
                     else:
-                        LOG.debug(
-                            {
-                                "msg": "Unexpected message received",
-                                "data": data,
-                            }
-                        )
+                        LOG.debug({"msg": "Unexpected message received", "data": data})
                 if xlist:
-                    LOG.error(
-                        {
-                            "msg": "Socket encountered an error or was closed",
-                        }
-                    )
+                    LOG.error({"msg": "Socket encountered an error or was closed"})
                     self.disconnect()
                     break
 
                 # Determine if we should send a statistics update
-                cur_stats_count = (now - start_wall) // self.stats_output_interval
+                cur_stats_count = int((now - start_wall) // self.stats_output_interval)
                 if cur_stats_count > self.stats_output_count:
+                    self.stats_output_count = cur_stats_count
                     if self.debug_count > 1:
                         LOG.debug(
                             {
@@ -279,38 +260,40 @@ class PSScanClient(object):
                                 "stats_count": cur_stats_count,
                             }
                         )
-                    self.stats_output_count = cur_stats_count
                     self._exec_send_status_stats(now)
 
                 # Determine if we should send a directory queue count update
                 cur_dir_count = int((now - start_wall) // self.dir_output_interval)
                 if cur_dir_count > self.dir_output_count:
                     if self.debug_count > 1:
+                        if cur_dir_count != (self.dir_output_count + 1):
+                            LOG.debug(
+                                {
+                                    "msg": "Dir count update jumped",
+                                    "expected_dir_count": self.dir_output_count + 1,
+                                    "calculated_dir_count": cur_dir_count,
+                                }
+                            )
                         LOG.debug(
                             {
                                 "msg": "Sending dir count update",
-                                "dir_count": cur_dir_count,
-                                "work_list_count": self.work_list_count,
+                                "dir_update_count": cur_dir_count,
+                                "dir_q_count": self.dir_q_count,
                             }
                         )
                     self.dir_output_count = cur_dir_count
                     self._exec_send_status_dir_count()
 
                 # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
-                if (not self.work_list_count) and ((now - self.want_data) > self.dir_request_interval):
-                    if self.debug_count > 1:
-                        LOG.debug(
-                            {
-                                "msg": "Asking server for more work",
-                                "work_list_count": self.work_list_count,
-                            }
-                        )
+                # We will request new directories even if we have files left to process to try and keep the scanner
+                # from running out of work
+                if (not self.dir_q_count) and ((now - self.want_data) > self.dir_request_interval):
                     self.want_data = now
                     self._exec_send_req_dir_list()
 
                 # Check if the scanner is idle
                 if (
-                    not self.work_list_count
+                    not self.dir_q_count
                     and not self.scanner.get_file_queue_size()
                     and not self.scanner.is_processing()
                     and self.status != CLIENT_STATE_IDLE
@@ -327,12 +310,7 @@ class PSScanClient(object):
                     # Send a stats update whenever we go idle
                     self._exec_send_status_stats(now)
             except Exception as e:
-                LOG.critical(
-                    {
-                        "msg": "Unhandled exception",
-                        "exception": str(e),
-                    }
-                )
+                LOG.critical({"msg": "Unhandled exception", "exception": str(e)})
                 self.disconnect()
 
     def disconnect(self):
@@ -348,17 +326,14 @@ class PSScanClient(object):
             self.socket = None
 
     def dump_state(self):
-        LOG.critical(
-            {
-                "msg": "Dumping state" + "=" * 20,
-            }
-        )
+        LOG.critical({"msg": "Dumping state" + "=" * 20})
         state = {}
         for member in [
             "client_config",
             "debug_count",
             "dir_output_count",
             "dir_output_interval",
+            "dir_q_count",
             "dir_request_interval",
             "poll_interval",
             "scanner_dir_chunk",
@@ -376,7 +351,6 @@ class PSScanClient(object):
             "status",
             "wait_list",
             "want_data",
-            "work_list_count",
         ]:
             state[member] = str(getattr(self, member))
         state["dir_q_size"] = self.scanner.get_dir_queue_size()
@@ -405,11 +379,7 @@ class PSScanClient(object):
     def parse_config_update_log_level(self, cfg):
         log_level = cfg.get("log_level")
         if not log_level:
-            LOG.error(
-                {
-                    "msg": "log_level missing from cfg while updating the log level",
-                }
-            )
+            LOG.error({"msg": "log_level missing from cfg while updating the log level"})
             return
         LOG.setLevel(log_level)
 
@@ -459,12 +429,12 @@ class PSScanClient(object):
             )
             self.scanner.add_scan_path(work_items)
             self.want_data = 0
-            self.work_list_count = self.scanner.get_dir_queue_size()
+            self.dir_q_count = self.scanner.get_dir_queue_size()
             if self.debug_count > 1:
                 LOG.debug(
                     {
                         "msg": "Current work list count",
-                        "work_list_count": self.work_list_count,
+                        "dir_q_count": self.dir_q_count,
                     }
                 )
             if self.status != CLIENT_STATE_RUNNING:
@@ -491,13 +461,13 @@ class PSScanClient(object):
             )
             if dir_list:
                 # Update the number of directories we have queued after removing a chunk to return to the server
-                self.work_list_count = self.scanner.get_dir_queue_size()
+                self.dir_q_count = self.scanner.get_dir_queue_size()
                 self._exec_send_dir_list(dir_list)
             LOG.debug(
                 {
                     "msg": "Received: Return work items",
                     "command": msg_type,
-                    "work_items_count": self.work_list_count,
+                    "dir_q_count": self.dir_q_count,
                     "returned_items_count": len(dir_list),
                 }
             )
@@ -544,10 +514,5 @@ class PSScanClient(object):
         try:
             scanner_stats = self.scanner.get_stats()
         except Exception as e:
-            LOG.exception(
-                {
-                    "msg": "Unable to get scanner stats",
-                    "exception": str(e),
-                }
-            )
+            LOG.exception({"msg": "Unable to get scanner stats", "exception": str(e)})
         return scanner_stats

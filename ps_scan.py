@@ -52,7 +52,7 @@ def main():
     if options["es_options_file"]:
         es_options = misc.read_es_options_file(options["es_options_file"])
         if es_options is None:
-            LOG.critical("Unable to open or read the credentials file: {file}".format(file=options["es_cred_file"]))
+            LOG.critical({"msg": "Unable to open or read the credentials file", "filename": options["es_cred_file"]})
             sys.exit(3)
         # Take CLI options over file ones if they are present
         # Since we read in some options from a file, fill in the options dictionary with the file values if needed
@@ -93,19 +93,19 @@ def main():
         # Set resource limits
         old_limit, new_limit = misc.set_resource_limits(options["ulimit_memory"])
         if new_limit:
-            LOG.debug("VMEM ulimit value set to: {val}".format(val=new_limit))
+            LOG.debug({"msg": "VMEM ulimit value set", "new_value": new_limit})
         else:
-            LOG.info("VMEM ulimit setting failed.")
+            LOG.info({"msg": "VMEM ulimit setting failed"})
         file_handler = user_handlers.file_handler_pscale
         if options.get("es_type") == ES_TYPE_DISKOVER:
             file_handler = user_handlers.file_handler_pscale_diskover
     else:
         file_handler = user_handlers.file_handler_basic
-    LOG.debug("Parsed options:\n{opt}".format(opt=json.dumps(options, indent=2, sort_keys=True)))
-    LOG.debug("Initial scan paths: {paths}".format(paths=", ".join(args)))
+    LOG.debug({"msg": "Parsed options", "options": json.dumps(options, indent=2, sort_keys=True)})
+    LOG.debug({"msg": "Initial scan paths", "paths": ", ".join(args)})
 
     if options["op"] == OPERATION_TYPE_CLIENT:
-        LOG.info("Starting client")
+        LOG.info({"msg": "Starting client"})
         options["scanner_file_handler"] = file_handler
         options["server_addr"] = options["addr"]
         options["server_port"] = options["port"]
@@ -113,7 +113,7 @@ def main():
         try:
             client.connect()
         except Exception as e:
-            LOG.exception("Unhandled exception in client.")
+            LOG.exception({"msg": "Unhandled exception in client", "exception": str(e)})
     elif options["op"] in (OPERATION_TYPE_AUTO, OPERATION_TYPE_SERVER):
         options["scan_path"] = args if not isinstance(args, list) else args[0]
         ps_scan_server_options = {
@@ -153,7 +153,7 @@ def main():
             if es_client and (options["es_init_index"] or options["es_reset_index"]):
                 if options["es_reset_index"]:
                     elasticsearch_wrapper.es_delete_index(es_client, es_cmd_idx)
-                LOG.debug("Initializing indices for Elasticsearch: {index}".format(index=es_options["index"]))
+                LOG.debug({"msg": "Initializing indices for Elasticsearch", "index": es_options["index"]})
                 es_index_settings = elasticsearch_wrapper.es_create_index_settings(
                     {
                         "number_of_shards": options["es_shards"],
@@ -172,7 +172,7 @@ def main():
                 stop_options = elasticsearch_wrapper.es_create_stop_options(options, stats=final_stats)
                 elasticsearch_wrapper.es_stop_processing(es_client, es_cmd_idx, stop_options, options)
         except Exception as e:
-            LOG.exception("Unhandled exception in server.")
+            LOG.exception({"msg": "Unhandled exception in server", "exception": str(e)})
             sys.exit(4)
 
 
