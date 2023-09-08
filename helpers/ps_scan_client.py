@@ -98,6 +98,7 @@ class PSScanClient(object):
             {
                 "type": MSG_TYPE_CLIENT_DIR_LIST,
                 "work_item": dir_list,
+                "dir_q_count": self.work_list_count,
             }
         )
 
@@ -131,7 +132,12 @@ class PSScanClient(object):
             }
         )
         if self.debug_count > 1:
-            LOG.debug("Local statistics: {stats}".format(stats=stats_data))
+            LOG.debug(
+                {
+                    "msg": "Local statistics",
+                    "statistics": stats_data,
+                }
+            )
 
     def _exec_send_status_dir_count(self):
         self.socket.send(
@@ -182,10 +188,20 @@ class PSScanClient(object):
             setattr(self, field[0], args.get(field[1], def_val))
 
     def connect(self):
-        LOG.info("Connecting to server at {svr}:{port}".format(svr=self.server_addr, port=self.server_port))
+        LOG.info(
+            {
+                "msg": "Connecting to server",
+                "server": self.server_addr,
+                "port": self.server_port,
+            }
+        )
         connected = self.socket.connect()
         if not connected:
-            LOG.info("Unable to connect to server")
+            LOG.info(
+                {
+                    "msg": "Unable to connect to server",
+                }
+            )
             return
         continue_running = True
         start_wall = time.time()
@@ -195,84 +211,129 @@ class PSScanClient(object):
 
         # Main client processing loop
         while continue_running:
-            rlist, _, xlist = select.select(self.wait_list, [], self.wait_list, self.poll_interval)
-            now = time.time()
-            self.work_list_count = self.scanner.get_dir_queue_size()
-            if self.debug_count > 2:
-                LOG.debug({"msg": "Select call returned", "dir_q_size": self.work_list_count})
-            if rlist:
-                data = self.socket.recv()
-                msg_type = data.get("type")
-                if msg_type == MSG_TYPE_COMMAND:
-                    cmd = data.get("cmd")
-                    LOG.debug("Command received: {cmd}".format(cmd=cmd))
-                    if cmd == "closed":
-                        self.disconnect()
-                        continue_running = False
-                        continue
-                elif msg_type == "data":
-                    msg_data = data.get("data")
-                    response = self.parse_message(msg_data, now)
-                    if response.get("cmd") == PS_CMD_QUIT:
-                        self.disconnect()
-                        continue_running = False
-                        continue
-                elif msg_type is None:
-                    LOG.debug("Socket ready to read but no data was received. We should shutdown now.")
-                    self.disconnect()
-                    continue_running = False
-                    continue
-                else:
-                    LOG.debug("Unexpected message received: {data}".format(data=data))
-            if xlist:
-                LOG.error("Socket encountered an error or was closed")
-                self.disconnect()
-                continue_running = False
-                break
-
-            # Determine if we should send a statistics update
-            cur_stats_count = (now - start_wall) // self.stats_output_interval
-            if cur_stats_count > self.stats_output_count:
-                if self.debug_count > 1:
-                    LOG.debug("Sending stats update")
-                self.stats_output_count = cur_stats_count
-                self._exec_send_status_stats(now)
-
-            # Determine if we should send a directory queue count update
-            cur_dir_count = int((now - start_wall) // self.dir_output_interval)
-            if cur_dir_count > self.dir_output_count:
-                if self.debug_count > 1:
-                    LOG.debug("Sending dir count update #{dir_count:,d}".format(dir_count=cur_dir_count))
-                self.dir_output_count = cur_dir_count
-                self._exec_send_status_dir_count()
-
-            # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
-            if (not self.work_list_count) and ((now - self.want_data) > self.dir_request_interval):
-                if self.debug_count > 1:
+            try:
+                rlist, _, xlist = select.select(self.wait_list, [], self.wait_list, self.poll_interval)
+                now = time.time()
+                self.work_list_count = self.scanner.get_dir_queue_size()
+                if self.debug_count > 2:
                     LOG.debug(
-                        "Asking server for more work: file_queue_size:{fq_size}".format(
-                            fq_size=self.scanner.get_file_queue_size()
+                        {
+                            "msg": "Select call returned",
+                            "dir_q_size": self.work_list_count,
+                        }
+                    )
+                if rlist:
+                    data = self.socket.recv()
+                    msg_type = data.get("type")
+                    if msg_type == MSG_TYPE_COMMAND:
+                        cmd = data.get("cmd")
+                        LOG.debug(
+                            {
+                                "msg": "Command received",
+                                "command": cmd,
+                            }
                         )
+                        if cmd == "closed":
+                            self.disconnect()
+                            continue_running = False
+                            continue
+                    elif msg_type == "data":
+                        msg_data = data.get("data")
+                        response = self.parse_message(msg_data, now)
+                        if response.get("cmd") == PS_CMD_QUIT:
+                            self.disconnect()
+                            continue_running = False
+                            continue
+                    elif msg_type is None:
+                        LOG.debug(
+                            {
+                                "msg": "Socket ready to read but no data was received. We should shutdown now.",
+                            }
+                        )
+                        self.disconnect()
+                        continue_running = False
+                        continue
+                    else:
+                        LOG.debug(
+                            {
+                                "msg": "Unexpected message received",
+                                "data": data,
+                            }
+                        )
+                if xlist:
+                    LOG.error(
+                        {
+                            "msg": "Socket encountered an error or was closed",
+                        }
                     )
-                self.want_data = now
-                self._exec_send_req_dir_list()
+                    self.disconnect()
+                    break
 
-            # Check if the scanner is idle
-            if (
-                not self.work_list_count
-                and not self.scanner.get_file_queue_size()
-                and not self.scanner.is_processing()
-                and self.status != CLIENT_STATE_IDLE
-            ):
-                LOG.debug(
-                    "old_state:{old_state}, new_state:{new_state}".format(
-                        new_state=CLIENT_STATE_IDLE, old_state=self.status
+                # Determine if we should send a statistics update
+                cur_stats_count = (now - start_wall) // self.stats_output_interval
+                if cur_stats_count > self.stats_output_count:
+                    if self.debug_count > 1:
+                        LOG.debug(
+                            {
+                                "msg": "Sending statistics update",
+                                "stats_count": cur_stats_count,
+                            }
+                        )
+                    self.stats_output_count = cur_stats_count
+                    self._exec_send_status_stats(now)
+
+                # Determine if we should send a directory queue count update
+                cur_dir_count = int((now - start_wall) // self.dir_output_interval)
+                if cur_dir_count > self.dir_output_count:
+                    if self.debug_count > 1:
+                        LOG.debug(
+                            {
+                                "msg": "Sending dir count update",
+                                "dir_count": cur_dir_count,
+                                "work_list_count": self.work_list_count,
+                            }
+                        )
+                    self.dir_output_count = cur_dir_count
+                    self._exec_send_status_dir_count()
+
+                # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
+                if (not self.work_list_count) and ((now - self.want_data) > self.dir_request_interval):
+                    if self.debug_count > 1:
+                        LOG.debug(
+                            {
+                                "msg": "Asking server for more work",
+                                "work_list_count": self.work_list_count,
+                            }
+                        )
+                    self.want_data = now
+                    self._exec_send_req_dir_list()
+
+                # Check if the scanner is idle
+                if (
+                    not self.work_list_count
+                    and not self.scanner.get_file_queue_size()
+                    and not self.scanner.is_processing()
+                    and self.status != CLIENT_STATE_IDLE
+                ):
+                    LOG.debug(
+                        {
+                            "msg": "State change",
+                            "old_state": self.status,
+                            "new_state": CLIENT_STATE_IDLE,
+                        }
                     )
+                    self.status = CLIENT_STATE_IDLE
+                    self._exec_send_client_state_idle()
+                    # Send a stats update whenever we go idle
+                    self._exec_send_status_stats(now)
+            except Exception as e:
+                LOG.critical(
+                    {
+                        "msg": "Unhandled exception",
+                        "exception": str(e),
+                    }
                 )
-                self.status = CLIENT_STATE_IDLE
-                self._exec_send_client_state_idle()
-                # Send a stats update whenever we go idle
-                self._exec_send_status_stats(now)
+                self.disconnect()
 
     def disconnect(self):
         custom_state, custom_threads_state = self.scanner.get_custom_state()
@@ -287,7 +348,11 @@ class PSScanClient(object):
             self.socket = None
 
     def dump_state(self):
-        LOG.critical("\nDumping state\n" + "=" * 20)
+        LOG.critical(
+            {
+                "msg": "Dumping state" + "=" * 20,
+            }
+        )
         state = {}
         for member in [
             "client_config",
@@ -321,11 +386,18 @@ class PSScanClient(object):
     def parse_config_update(self, cfg):
         # TODO: Re-architect how config updates are sent to the user handler/plug-in
         custom_state, custom_threads_state = self.scanner.get_custom_state()
-        LOG.debug("Received configuration update: {cfg}".format(cfg=cfg))
+        LOG.debug(
+            {
+                "msg": "Received configuration update",
+                "configuration": cfg,
+            }
+        )
         try:
             user_handlers.update_config(custom_state, cfg)
         except Exception as e:
-            LOG.exception("Error during update_config")
+            LOG.exception(
+                {"msg": "Error during update_config", "exception": str(e)},
+            )
         self.client_config = cfg
         self._process_args(cfg.get("cli_options", {}), use_default=False)
         self.config_update_count += 1
@@ -333,7 +405,11 @@ class PSScanClient(object):
     def parse_config_update_log_level(self, cfg):
         log_level = cfg.get("log_level")
         if not log_level:
-            LOG.error("log_level missing from cfg while updating the log level.")
+            LOG.error(
+                {
+                    "msg": "log_level missing from cfg while updating the log level",
+                }
+            )
             return
         LOG.setLevel(log_level)
 
@@ -377,13 +453,20 @@ class PSScanClient(object):
             LOG.debug(
                 {
                     "msg": "Received: Work items to process",
-                    "cmd": msg_type,
+                    "command": msg_type,
                     "work_items_count": len(work_items),
                 }
             )
             self.scanner.add_scan_path(work_items)
             self.want_data = 0
             self.work_list_count = self.scanner.get_dir_queue_size()
+            if self.debug_count > 1:
+                LOG.debug(
+                    {
+                        "msg": "Current work list count",
+                        "work_list_count": self.work_list_count,
+                    }
+                )
             if self.status != CLIENT_STATE_RUNNING:
                 LOG.debug(
                     {
@@ -398,7 +481,7 @@ class PSScanClient(object):
             LOG.debug(
                 {
                     "msg": "Received: Quit message",
-                    "cmd": msg_type,
+                    "command": msg_type,
                 }
             )
             return {"cmd": PS_CMD_QUIT}
@@ -407,12 +490,15 @@ class PSScanClient(object):
                 num_items=1, percentage=msg.get("pct", self.scanner_dir_request_percent)
             )
             if dir_list:
+                # Update the number of directories we have queued after removing a chunk to return to the server
+                self.work_list_count = self.scanner.get_dir_queue_size()
                 self._exec_send_dir_list(dir_list)
             LOG.debug(
                 {
                     "msg": "Received: Return work items",
-                    "cmd": msg_type,
-                    "work_items_count": len(dir_list),
+                    "command": msg_type,
+                    "work_items_count": self.work_list_count,
+                    "returned_items_count": len(dir_list),
                 }
             )
         elif msg_type == MSG_TYPE_CONFIG_UPDATE:
@@ -420,7 +506,7 @@ class PSScanClient(object):
             LOG.debug(
                 {
                     "msg": "Received: Configuration update",
-                    "cmd": msg_type,
+                    "command": msg_type,
                     "update_items": cfg.keys(),
                 }
             )
@@ -437,7 +523,7 @@ class PSScanClient(object):
             LOG.debug(
                 {
                     "msg": "Received: Debug command",
-                    "cmd": msg_type,
+                    "command": msg_type,
                     "debug_cmds": dbg.keys(),
                 }
             )
@@ -447,7 +533,7 @@ class PSScanClient(object):
             LOG.debug(
                 {
                     "msg": "Received: Unhandled message",
-                    "cmd": msg_type,
+                    "command": msg_type,
                     "raw_msg": msg,
                 }
             )
@@ -458,5 +544,10 @@ class PSScanClient(object):
         try:
             scanner_stats = self.scanner.get_stats()
         except Exception as e:
-            LOG.exception("Unable to get scanner stats.")
+            LOG.exception(
+                {
+                    "msg": "Unable to get scanner stats",
+                    "exception": str(e),
+                }
+            )
         return scanner_stats
