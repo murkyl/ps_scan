@@ -117,10 +117,22 @@ class PSScanClient(object):
                 }
             )
 
-    def _exec_send_client_state_idle(self):
+    def _exec_send_client_state(self, new_state):
+        LOG.debug(
+            {
+                "msg": "State change",
+                "old_state": self.status,
+                "new_state": new_state,
+            }
+        )
+        self.status = new_state
+        msg_type = {
+            CLIENT_STATE_IDLE: MSG_TYPE_CLIENT_STATE_IDLE,
+            CLIENT_STATE_RUNNING: MSG_TYPE_CLIENT_STATE_RUNNING,
+        }.get(new_state)
         self.socket.send(
             {
-                "type": MSG_TYPE_CLIENT_STATE_IDLE,
+                "type": msg_type,
             }
         )
 
@@ -284,7 +296,7 @@ class PSScanClient(object):
                     self.dir_output_count = cur_dir_count
                     self._exec_send_status_dir_count()
 
-                # Ask parent process for more data if required, limit data requests to dir_request_interval seconds
+                # Ask server for more data if required, limit data requests to dir_request_interval seconds
                 # We will request new directories even if we have files left to process to try and keep the scanner
                 # from running out of work
                 if (not self.dir_q_count) and ((now - self.want_data) > self.dir_request_interval):
@@ -298,15 +310,7 @@ class PSScanClient(object):
                     and not self.scanner.is_processing()
                     and self.status != CLIENT_STATE_IDLE
                 ):
-                    LOG.debug(
-                        {
-                            "msg": "State change",
-                            "old_state": self.status,
-                            "new_state": CLIENT_STATE_IDLE,
-                        }
-                    )
-                    self.status = CLIENT_STATE_IDLE
-                    self._exec_send_client_state_idle()
+                    self._exec_send_client_state(CLIENT_STATE_IDLE)
                     # Send a stats update whenever we go idle
                     self._exec_send_status_stats(now)
             except Exception as e:
@@ -438,15 +442,7 @@ class PSScanClient(object):
                     }
                 )
             if self.status != CLIENT_STATE_RUNNING:
-                LOG.debug(
-                    {
-                        "msg": "State change",
-                        "old_state": self.status,
-                        "new_state": CLIENT_STATE_RUNNING,
-                    }
-                )
-                self.status = CLIENT_STATE_RUNNING
-                self._exec_send_client_state_running()
+                self._exec_send_client_state(CLIENT_STATE_RUNNING)
         elif msg_type == MSG_TYPE_CLIENT_QUIT:
             LOG.debug(
                 {
