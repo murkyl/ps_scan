@@ -566,8 +566,8 @@ class ScanIt(threading.Thread):
         for p in paths:
             if p.endswith("/"):
                 p = p[0:-1]
-            self._enqueue_chunks(os.path.dirname(p), [os.path.basename(p)], self.dir_chunk, self.dir_q, CMD_PROC_FILE)
-        self.common_stats["files_queued"] += len(paths)
+            self._enqueue_chunks(os.path.dirname(p), [os.path.basename(p)], self.dir_chunk, self.dir_q, CMD_PROC_DIR)
+        self.common_stats["dirs_queued"] += len(paths)
 
     def is_processing(self):
         processing_count = 0
