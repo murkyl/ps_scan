@@ -181,4 +181,4 @@ SSD_STATUS = [
     "invalid",
 ]
 STAT_BLOCK_SIZE = 512
-STATS_FPS_BUCKETS = [2, 5, 10]
+STATS_FPS_BUCKETS = [1, 2, 5, 10]
