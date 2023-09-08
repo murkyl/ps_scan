@@ -859,7 +859,8 @@ def print_statistics(output_type, log, stats, custom_stats, now, start_time, wal
         consolidated_custom_stats[field] = 0
         for client in custom_stats:
             consolidated_custom_stats[field] += client[field]
-        consolidated_custom_stats[field] = consolidated_custom_stats[field] / stats["threads"]
+        if "_time" in field:
+            consolidated_custom_stats[field] = consolidated_custom_stats[field] / stats["threads"]
     output_string = (
         "===== Custom stats (average over all threads) =====\n"
         + json.dumps(consolidated_custom_stats, indent=2, sort_keys=True)
@@ -902,7 +903,7 @@ def translate_user_group_perms(full_path, file_info):
     # TODO: Add translation to names from SID/UID/GID values
     if file_info["perms_unix_uid"] == 0xFFFFFFFF or file_info["perms_unix_gid"] == 0xFFFFFFFF:
         lstat_required = True
-        LOG.debug("File requires standard lstat for UID/GID: {filename}".format(filename=full_path))
+        LOG.debug("lstat required for UID/GID: {filename}".format(filename=full_path))
         # If the UID/GID is set to 0xFFFFFFFF then on cluster, the UID/GID is generated
         # by the cluster.
         # When this happens, use os.fstat to get the UID/GID information from the point
