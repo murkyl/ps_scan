@@ -28,6 +28,7 @@ import re
 import socket
 import threading
 import time
+import zlib
 
 import libs.elasticsearch_lite as es_lite
 import libs.scanit as scanit
@@ -479,7 +480,10 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx):
                     bulk_list = bulk_state
                 # inode has 2 possible key names based on it being a ps_scan or diskover type
                 inode = chunk_data[idx].get("inode", chunk_data[idx].get("ino"))
-                bulk_list.append(json.dumps({"index": {"_id": inode}}))
+                # The full path of the file including the file name is hashed with CRC32 in order to provide a unique
+                # _id field for ElasticSearch. This is required for files that have identical inode numbers
+                full_path = "%s/%s" % (chunk_data[idx].get("file_path"), chunk_data[idx].get("file_name"))
+                bulk_list.append(json.dumps({"index": {"_id": "%s_%s" % (inode, zlib.crc32(full_path) & 0xFFFFFFFF)}}))
                 bulk_list.append(body_text)
         # For each bulk list, take all the entries and join them together with a \n and send them to the ES into the
         # appropriate index
