@@ -412,12 +412,14 @@ def es_data_sender(
         if flush or flush_all:
             # We bunch up our sends so the maximum number of times we should need to loop through the send_q items is
             # the number of items in the queue. This prevents the loop from running forever in case of an error.
-            for flush_count in range(send_q.qsize()):
+            for flush_count in range(send_q.qsize() + 1):
                 try:
                     LOG.debug(
                         {
                             "msg": "ElasticSearch bulk data flush",
                             "entries": len(bulk_data),
+                            "flush_all": flush_all,
+                            "flush_count": flush_count,
                             "qsize": send_q.qsize(),
                             "tid": threading.current_thread().name,
                         }
