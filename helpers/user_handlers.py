@@ -448,6 +448,10 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
     thread_custom_state = args.get("thread_custom_state", {})
     thread_state = args.get("thread_state", {})
     thread_stats = thread_state["custom"]["stats"]
+    dir_stats_file_count = 0
+    dir_stats_file_size = 0
+    dir_stats_file_size_physical = 0
+    dir_stats_subdir_count = 0
 
     # Custom state values are guaranteed to exist due to the init routine
     custom_tagging = custom_state["custom_tagging"]
@@ -498,8 +502,8 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
                         dir_list.append(filename)
                         continue
                     result_list.append(file_info)
-                    stats["file_size_total"] += file_info["size"]
-                    stats["file_size_physical_total"] += file_info["size_physical"]
+                    dir_stats_file_size += file_info["size"]
+                    dir_stats_file_size_physical += file_info["size_physical"]
                     processed += 1
                     continue
                 LOG.exception("Error found when calling os.open on %s. Error: %s" % (full_path, str(e)))
@@ -664,13 +668,15 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
 
             if fstats["di_mode"] & 0o040000:
                 file_info["pscale"]["_scan_time"] = now
-                result_dir_list.append(file_info)
                 # Fix size issues with dirs
                 file_info["pscale"]["size_logical"] = 0
+                result_dir_list.append(file_info)
                 # Save directories to re-queue
                 dir_list.append(filename)
+                dir_stats_subdir_count += 1
                 continue
             result_list.append(file_info)
+            dir_stats_file_count += 1
             if (
                 (fstats["di_mode"] & 0o010000 == 0o010000)
                 or (fstats["di_mode"] & 0o120000 == 0o120000)
@@ -678,24 +684,28 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
             ):
                 # Fix size issues with symlinks, sockets, and FIFOs
                 file_info["pscale"]["size_logical"] = 0
-            stats["file_size_total"] += file_info["size"]
-            stats["file_size_physical_total"] += file_info["size_du"]
+            dir_stats_file_size += file_info["size"]
+            dir_stats_file_size_physical += file_info["size_du"]
             processed += 1
         except IOError as ioe:
             skipped += 1
+            dir_stats_file_count += 1
             if ioe.errno == errno.EACCES:  # 13: No access
                 LOG.warn("Permission error scanning: {file}".format(file=full_path))
             else:
                 LOG.exception(ioe)
         except FileNotFoundError as fnfe:
             skipped += 1
+            dir_stats_file_count += 1
             LOG.warn("File not found: {filename}".format(filename=filename))
         except PermissionError as pe:
             skipped += 1
+            dir_stats_file_count += 1
             LOG.warn("Permission error scanning: {file}".format(file=full_path))
             LOG.exception(pe)
         except Exception as e:
             skipped += 1
+            dir_stats_file_count += 1
             LOG.exception(e)
         finally:
             try:
@@ -715,6 +725,8 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
             else:
                 break
         thread_stats["es_queue_time"] += time.time() - time_start
+    stats["file_size_total"] += dir_stats_file_size
+    stats["file_size_physical_total"] += dir_stats_file_size_physical
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
@@ -893,7 +905,8 @@ def shutdown(custom_state, custom_threads_state):
                 )
             )
         else:
-            LOG.debug("Elastic Search send threads have all shutdown.")
+            LOG.debug({"msg": "Send queue size", "qsize": custom_state.get("es_send_cmd_q").qsize()})
+            LOG.debug({"msg": "Elastic Search send threads have all shutdown"})
 
 
 def translate_user_group_perms(full_path, file_info):
