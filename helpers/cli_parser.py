@@ -443,6 +443,16 @@ Default: %default
 """,
     )
     group.add_option(
+        "--max-work-items",
+        action="store",
+        type="int",
+        default=DEFAULT_MAX_WORK_ITEMS_PER_REQUEST,
+        help="""Maximum number of messages to include in a single work
+item request call between the client and server.      
+Default: %default
+""",
+    )
+    group.add_option(
         "--request-work-interval",
         action="store",
         type="int",
