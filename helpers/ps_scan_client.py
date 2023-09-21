@@ -72,6 +72,7 @@ class PSScanClient(object):
         self.config_update_count = 0
         self.debug_count = args.get("debug", 0)
         self.dir_output_count = 0
+        self.max_work_items = args.get("max_work_items", DEFAULT_MAX_WORK_ITEMS_PER_REQUEST)
         self.poll_interval = args.get("poll_interval", DEFAULT_CMD_POLL_INTERVAL)
         self.scanner = scanit.ScanIt()
         # TODO: Change how file handler is called
@@ -170,6 +171,7 @@ class PSScanClient(object):
             "file_q_cutoff",
             "file_q_min_cutoff",
             "num_threads",
+            "max_work_items",
         ]:
             setattr(s, attrib, getattr(self, "scanner_" + attrib))
         s.exit_on_idle = False
@@ -195,6 +197,7 @@ class PSScanClient(object):
             # TODO: Changing the number of threads does not work dynamically at this time. The thread count is configured
             #     currently as a CLI option when ps_scan_server launches the client
             ["scanner_num_threads", "threads", DEFAULT_THREAD_COUNT],
+            ["scanner_max_work_items", "max_work_items", DEFAULT_MAX_WORK_ITEMS_PER_REQUEST],
             ["stats_output_interval", "stats_interval", DEFAULT_STATS_OUTPUT_INTERVAL],
         ]
         for field in cfg_fields:
@@ -314,7 +317,7 @@ class PSScanClient(object):
                     # Send a stats update whenever we go idle
                     self._exec_send_status_stats(now)
             except Exception as e:
-                LOG.critical({"msg": "Unhandled exception", "exception": str(e)})
+                LOG.exception({"msg": "Unhandled exception", "exception": str(e)})
                 self.disconnect()
 
     def disconnect(self):
@@ -339,6 +342,7 @@ class PSScanClient(object):
             "dir_output_interval",
             "dir_q_count",
             "dir_request_interval",
+            "max_work_items",
             "poll_interval",
             "scanner_dir_chunk",
             "scanner_dir_priority_count",

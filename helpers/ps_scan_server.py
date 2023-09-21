@@ -70,6 +70,7 @@ class PSScanServer(Hydra.HydraServer):
         self.client_state = {}
         self.connect_addr = args.get("server_connect_addr", None)
         self.debug_count = self.cli_options.get("debug", 0)
+        self.max_work_items = self.cli_options.get("max_work_items", DEFAULT_MAX_WORK_ITEMS_PER_REQUEST)
         self.msg_q = queue.Queue()
         self.node_list = args.get("node_list", None)
         self.queue_timeout = self.cli_options.get("queue_timeout", DEFAULT_QUEUE_TIMEOUT)
@@ -193,6 +194,7 @@ class PSScanServer(Hydra.HydraServer):
             "client_count",
             "client_state",
             "connect_addr",
+            "max_work_items",
             "node_list",
             "queue_timeout",
             "remote_state",
@@ -636,6 +638,9 @@ class PSScanServer(Hydra.HydraServer):
                     increment = (len_dir_list // len_want_work_clients) + (
                         1 * (len_dir_list % len_want_work_clients != 0)
                     )
+                    # Cap the number of directories sent to any client in a single request
+                    if increment > self.max_work_items:
+                        increment = self.max_work_items
                     if self.debug_count > 1:
                         LOG.debug(
                             {
@@ -654,6 +659,7 @@ class PSScanServer(Hydra.HydraServer):
                             {
                                 "msg": "Sending work to client",
                                 "cid": self.client_state[client_key]["id"],
+                                "work_item_count": len(work_dirs),
                             }
                         )
                         self._exec_send_work_items(client_key, work_dirs)

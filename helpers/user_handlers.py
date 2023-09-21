@@ -179,6 +179,14 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     thread_custom_state = args.get("thread_custom_state", {})
     thread_state = args.get("thread_state", {})
     thread_stats = thread_state["custom"]["stats"]
+    dir_stats_file_count = 0
+    dir_stats_file_size = 0
+    dir_stats_file_size_physical = 0
+    dir_stats_subdir_count = 0
+    dir_object = None
+    if isinstance(root, dict):
+        dir_object = root
+        root = os.path.join(dir_object["file_path"], dir_object["file_name"])
 
     # Custom state values are guaranteed to exist due to the init routine
     custom_tagging = custom_state["custom_tagging"]
@@ -196,6 +204,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
     dir_list = []
     result_list = []
     result_dir_list = []
+    update_dir_list = []
 
     for filename in filename_list:
         try:
@@ -220,18 +229,30 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                         thread_stats["get_custom_tagging_time"] += time.time() - time_start
                     if file_info["file_type"] == "dir":
                         file_info["_scan_time"] = now
-                        result_dir_list.append(file_info)
                         # Fix size issues with dirs
                         file_info["size_logical"] = 0
-                        # Save directories to re-queue
-                        dir_list.append(filename)
+                        dir_stats_subdir_count += 1
+                        dir_info = {}
+                        for field in ["file_name", "file_path", "inode"]:
+                            dir_info[field] = file_info[field]
+                        # Save directory info object to re-queue
+                        dir_list.append(dir_info)
+                        # Save the bulk of the directory info immediately
+                        result_dir_list.append(file_info)
                         continue
                     result_list.append(file_info)
                     stats["file_size_total"] += file_info["size"]
                     stats["file_size_physical_total"] += phys_block_size * int(
                         math.ceil(file_info["size"] / phys_block_size)
                     )
+                    dir_stats_file_count += 1
+                    dir_stats_file_size += file_info["size"]
+                    dir_stats_file_size_physical += file_info["size_physical"]
                     processed += 1
+                    continue
+                if e.errno in (errno.ENOENT):  # 2: File not found
+                    thread_stats["file_not_found"] += 1
+                    LOG.debug("File %s is not found." % (full_path))
                     continue
                 LOG.exception("Error found when calling os.open on: %s Error: %s" % (full_path, str(e)))
                 continue
@@ -380,13 +401,18 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
 
             if fstats["di_mode"] & 0o040000:
                 file_info["_scan_time"] = now
-                result_dir_list.append(file_info)
+                file_info["file_is_inlined"] = False
                 # Fix size issues with dirs
                 file_info["size_logical"] = 0
-                # Save directories to re-queue
-                dir_list.append(filename)
+                dir_stats_subdir_count += 1
+                dir_info = {}
+                for field in ["file_name", "file_path", "inode"]:
+                    dir_info[field] = file_info[field]
+                # Save directory info object to re-queue
+                dir_list.append(dir_info)
+                # Save the bulk of the directory info immediately
+                result_dir_list.append(file_info)
                 continue
-            result_list.append(file_info)
             if (
                 (fstats["di_mode"] & 0o010000 == 0o010000)
                 or (fstats["di_mode"] & 0o120000 == 0o120000)
@@ -394,8 +420,12 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
             ):
                 # Fix size issues with symlinks, sockets, and FIFOs
                 file_info["size_logical"] = 0
+            result_list.append(file_info)
             stats["file_size_total"] += file_info["size"]
             stats["file_size_physical_total"] += file_info["size_physical"]
+            dir_stats_file_count += 1
+            dir_stats_file_size += file_info["size"]
+            dir_stats_file_size_physical += file_info["size_physical"]
             processed += 1
         except IOError as ioe:
             skipped += 1
@@ -418,12 +448,22 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 os.close(fd)
             except:
                 pass
-    if (result_list or result_dir_list) and custom_state["client_config"].get("es_cmd_idx"):
+    if dir_object:
+        dir_object["dir_count_dirs"] = dir_stats_subdir_count
+        dir_object["dir_count_files"] = dir_stats_file_count
+        dir_object["dir_depth"] = len(dir_object["file_path"].split("/"))
+        dir_object["dir_file_size"] = dir_stats_file_size
+        dir_object["dir_file_size_physical"] = dir_stats_file_size_physical
+        dir_object["dir_leaf"] = dir_stats_subdir_count == 0
+        update_dir_list.append(dir_object)
+    if (result_list or result_dir_list or update_dir_list) and custom_state["client_config"].get("es_cmd_idx"):
         time_start = time.time()
         if result_list:
             custom_state["es_send_q"].put([CMD_SEND, result_list])
         if result_dir_list:
             custom_state["es_send_q"].put([CMD_SEND_DIR, result_dir_list])
+        if update_dir_list:
+            custom_state["es_send_q"].put([CMD_SEND_DIR_UPDATE, update_dir_list])
         for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
             if custom_state["es_send_q"].qsize() > max_send_q_size:
                 thread_stats["es_queue_wait_count"] += 1
@@ -452,6 +492,10 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
     dir_stats_file_size = 0
     dir_stats_file_size_physical = 0
     dir_stats_subdir_count = 0
+    dir_object = None
+    if isinstance(root, dict):
+        dir_object = root
+        root = os.path.join(dir_object["parent_path"], dir_object["name"])
 
     # Custom state values are guaranteed to exist due to the init routine
     custom_tagging = custom_state["custom_tagging"]
@@ -469,6 +513,7 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
     dir_list = []
     result_list = []
     result_dir_list = []
+    update_dir_list = []
 
     for filename in filename_list:
         try:
@@ -493,18 +538,31 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
                         time_start = time.time()
                         file_info["user_tags"] = custom_tagging(file_info)
                         thread_stats["get_custom_tagging_time"] += time.time() - time_start
-                    if file_info["file_type"] == "dir":
+                    if file_info["type"] == "directory":
                         file_info["_scan_time"] = now
-                        result_dir_list.append(file_info)
                         # Fix size issues with dirs
                         file_info["size_logical"] = 0
-                        # Save directories to re-queue
-                        dir_list.append(filename)
+                        dir_stats_subdir_count += 1
+                        dir_info = {}
+                        for field in ["ino", "name", "parent_path"]:
+                            dir_info[field] = file_info[field]
+                        # Save directory info object to re-queue
+                        dir_list.append(dir_info)
+                        # Save the bulk of the directory info immediately
+                        result_dir_list.append(file_info)
                         continue
-                    result_list.append(file_info)
+                    stats["file_size_total"] += file_info["size"]
+                    stats["file_size_physical_total"] += phys_block_size * int(
+                        math.ceil(file_info["size"] / phys_block_size)
+                    )
+                    dir_stats_file_count += 1
                     dir_stats_file_size += file_info["size"]
-                    dir_stats_file_size_physical += file_info["size_physical"]
+                    dir_stats_file_size_physical += file_info["size_du"]
                     processed += 1
+                    continue
+                if e.errno in (errno.ENOENT):  # 2: File not found
+                    thread_stats["file_not_found"] += 1
+                    LOG.debug("File %s is not found." % (full_path))
                     continue
                 LOG.exception("Error found when calling os.open on %s. Error: %s" % (full_path, str(e)))
                 continue
@@ -527,9 +585,9 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
             compressed_file = True if (di_data_blocks and comp_blocks) else False
             stubbed_file = (fstats["di_flags"] & IFLAG_COMBO_STUBBED) > 0
             if strip_dot_snapshot:
-                file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
+                parent_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
             else:
-                file_path = root
+                parent_path = root
             file_info = {
                 "atime": datetime.datetime.fromtimestamp(atime).strftime(DEFAULT_TIME_FORMAT_8601),
                 "ctime": datetime.datetime.fromtimestamp(fstats["di_ctime"]).strftime(DEFAULT_TIME_FORMAT_8601),
@@ -540,7 +598,7 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
                 "name": filename,
                 "nlink": fstats["di_nlink"],
                 "owner": fstats["di_uid"],
-                "parent_path": file_path,
+                "parent_path": parent_path,
                 "size": fstats["di_size"],
                 "size_du": fstats["di_physical_blocks"] * phys_block_size,
                 "type": FILE_TYPE_DISKOVER[fstats["di_mode"] & FILE_TYPE_MASK],
@@ -554,10 +612,6 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
                     "ctime_date": datetime.date.fromtimestamp(fstats["di_ctime"]).isoformat(),
                     "mtime": fstats["di_mtime"],
                     "mtime_date": datetime.date.fromtimestamp(fstats["di_mtime"]).isoformat(),
-                    # ========== File and path strings ==========
-                    ## "file_path": file_path,
-                    ## "file_name": filename,
-                    ## "file_ext": os.path.splitext(filename)[1],
                     # ========== File attributes ==========
                     "file_access_pattern": ACCESS_PATTERN[fstats["di_la_pattern"]],
                     "file_compression_ratio": comp_blocks / di_data_blocks if compressed_file else 1,
@@ -668,15 +722,18 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
 
             if fstats["di_mode"] & 0o040000:
                 file_info["pscale"]["_scan_time"] = now
+                file_info["file_is_inlined"] = False
                 # Fix size issues with dirs
                 file_info["pscale"]["size_logical"] = 0
-                result_dir_list.append(file_info)
-                # Save directories to re-queue
-                dir_list.append(filename)
                 dir_stats_subdir_count += 1
+                dir_info = {}
+                for field in ["ino", "name", "parent_path"]:
+                    dir_info[field] = file_info[field]
+                # Save directory info object to re-queue
+                dir_list.append(dir_info)
+                # Save the bulk of the directory info immediately
+                result_dir_list.append(file_info)
                 continue
-            result_list.append(file_info)
-            dir_stats_file_count += 1
             if (
                 (fstats["di_mode"] & 0o010000 == 0o010000)
                 or (fstats["di_mode"] & 0o120000 == 0o120000)
@@ -684,6 +741,10 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
             ):
                 # Fix size issues with symlinks, sockets, and FIFOs
                 file_info["pscale"]["size_logical"] = 0
+            result_list.append(file_info)
+            stats["file_size_total"] += file_info["size"]
+            stats["file_size_physical_total"] += file_info["size_du"]
+            dir_stats_file_count += 1
             dir_stats_file_size += file_info["size"]
             dir_stats_file_size_physical += file_info["size_du"]
             processed += 1
@@ -712,12 +773,26 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
                 os.close(fd)
             except:
                 pass
-    if (result_list or result_dir_list) and custom_state["client_config"].get("es_cmd_idx"):
+    if dir_object:
+        dir_object["dir_count"] = 0
+        dir_object["dir_count_norecurs"] = dir_stats_subdir_count
+        dir_object["dir_depth"] = len(dir_object["parent_path"].split("/")) - 1
+        dir_object["file_count"] = 0
+        dir_object["file_count_norecurs"] = dir_stats_file_count
+        dir_object["size"] = 0
+        dir_object["size_norecurs"] = dir_stats_file_size
+        dir_object["size_du"] = 0
+        dir_object["size_du_norecurs"] = dir_stats_file_size_physical
+        dir_object["dir_leaf"] = dir_stats_subdir_count == 0
+        result_dir_list.append(dir_object)
+    if (result_list or result_dir_list or update_dir_list) and custom_state["client_config"].get("es_cmd_idx"):
         time_start = time.time()
         if result_list:
             custom_state["es_send_q"].put([CMD_SEND, result_list])
         if result_dir_list:
             custom_state["es_send_q"].put([CMD_SEND_DIR, result_dir_list])
+        if update_dir_list:
+            custom_state["es_send_q"].put([CMD_SEND_DIR_UPDATE, update_dir_list])
         for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
             if custom_state["es_send_q"].qsize() > max_send_q_size:
                 thread_stats["es_queue_wait_count"] += 1
@@ -725,8 +800,6 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
             else:
                 break
         thread_stats["es_queue_time"] += time.time() - time_start
-    stats["file_size_total"] += dir_stats_file_size
-    stats["file_size_physical_total"] += dir_stats_file_size_physical
     return {"processed": processed, "skipped": skipped, "q_dirs": dir_list}
 
 
@@ -811,6 +884,7 @@ def get_file_stat_diskover(root, filename, block_unit=STAT_BLOCK_SIZE, strip_dot
         "size_physical",
     ]:
         del pscale_fstat[key]
+    return file_info
 
 
 def init_custom_state(custom_state, options={}):
