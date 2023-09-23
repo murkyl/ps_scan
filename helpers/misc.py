@@ -19,6 +19,7 @@ __all__ = [
     "get_local_internal_addr",
     "get_local_node_number",
     "get_local_storage_usage_stats",
+    "get_nodepool_translation",
     "humanize_number",
     "humanize_seconds",
     "is_onefs_os",
@@ -32,6 +33,7 @@ __all__ = [
 ]
 # fmt: on
 import copy
+import logging
 import platform
 
 try:
@@ -43,7 +45,12 @@ import subprocess
 from .constants import *
 import libs.papi_lite as papi_lite
 
+try:
+    import isi.fs.diskpool as dp
+except:
+    pass
 
+LOG = logging.getLogger(__name__)
 URI_STATISTICS_KEY = "/statistics/current"
 
 
@@ -195,6 +202,23 @@ def get_local_storage_usage_stats():
     for item in data[2].get("stats"):
         stats[item["key"]] = item["value"]
     return stats
+
+
+def get_nodepool_translation():
+    node_pool_translation = {}
+    if is_onefs_os():
+        try:
+            dpdb = dp.DiskPoolDB()
+            groups = dpdb.get_groups()
+            for g in groups:
+                children = g.get_children()
+                for child in children:
+                    node_pool_translation[int(child.entryid)] = g.name
+        except Exception as e:
+            LOG.exception("Unable to get the ID to name translation for node pools")
+    else:
+        LOG.info({"msg": "Cannot get nodepool translation table. Not running on a OneFS system"})
+    return node_pool_translation
 
 
 def humanize_number(num, suffix="B", base=10, truncate=True):
