@@ -1,13 +1,17 @@
 import datetime
 import errno
 import gzip
+import hashlib
 import json
 import logging
 from logging.config import dictConfig
 import os
+import random
 import re
 import stat
 import sys
+import tempfile
+import threading
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "libs"))
@@ -23,7 +27,11 @@ except:
     urlencode = urllib.urlencode
     urlquote = urllib.quote
     urlunquote = urllib.unquote
-
+try:
+    dir(os.scandir)
+    use_scandir = 1
+except:
+    use_scandir = 0
 
 dictConfig(
     {
@@ -51,7 +59,8 @@ from libs.flask import Flask
 from libs.flask import make_response
 from libs.flask import request
 from libs.flask import Response
-from libs.werkzeug.serving import WSGIRequestHandler
+from libs.waitress import serve
+
 try:
     import isi.fs.attr as attr
     import isi.fs.diskpool as dp
@@ -74,11 +83,204 @@ DATA_TYPE_PS = "powerscale"
 DATA_TYPE_DISKOVER = "diskover"
 DEFAULT_DATA_TYPE = DATA_TYPE_PS
 DEFAULT_ITEM_LIMIT = 10000
-DEFAULT_TOKEN_EXPIRATION = 1800 # Time in seconds after which a continuation token is considered expired and cleaned up
+DEFAULT_MAX_ITEM_LIMIT = 100000
+DEFAULT_CACHE_CLEANUP_INTERVAL = 10
+# DEFAULT_CACHE_SIZE_MAX = 1024 ^ 3
+DEFAULT_CACHE_SIZE_MAX = 8000
+# DEFAULT_CACHE_TIMEOUT = 1800  # Time in seconds after which a continuation token is considered expired and cleaned up
+DEFAULT_CACHE_TIMEOUT = 60  # Time in seconds after which a continuation token is considered expired and cleaned up
 JSON_SER_ERR = "<not serializable>"
-MIME_TYPE_JSON = MIME_TYPE_JSON
+MIME_TYPE_JSON = "application/json"
 STATS_FIELD_LIST = ["not_found", "processed", "skipped"]
+TXT_INVALID_TOKEN = "Invalid continuation token received. Either the token does not exist or the token has expired"
 TXT_QUERY_PATH_REQUIRED = "A URL encoded path is required in the 'path' query parameter"
+
+
+class SimpleCache:
+    class RepeatTimer(threading.Timer):
+        def run(self):
+            while not self.finished.wait(self.interval):
+                self.function(*self.args, **self.kwargs)
+
+    def __init__(self, args=None):
+        args = args or {}
+        self.lock = threading.Lock()
+        self.cache = {}
+        # Number of time the cache has been used
+        self.cache_count = 0
+        # Number of current cache entries that are files
+        self.cached_files = 0
+        # Number of current cache entries that are in memory
+        self.cached_memory = 0
+        # Number of times we have had to write an entry to a file
+        self.cache_overflow_count = 0
+        # Size of the current cache in bytes
+        self.cache_size = 0
+        # Maximum size of the in memory cache in bytes
+        self.cache_size_max = args.get("cache_size_max", DEFAULT_CACHE_SIZE_MAX)
+        # Number of seconds until a cached entry expires
+        self.cache_timeout = args.get("cache_timeout", DEFAULT_CACHE_TIMEOUT)
+        # Number of seconds between cache cleanups
+        self.cache_clean_interval = args.get("cache_cleanup_interval", DEFAULT_CACHE_CLEANUP_INTERVAL)
+        # Cleanup timer thread
+        self.timer = self.RepeatTimer(self.cache_clean_interval, self._clean_cache)
+        self.timer.start()
+
+    def __del__(self):
+        self.timer.cancel()
+        self._clean_cache(force=True)
+        self.lock.release()
+
+    def _clean_cache(self, force=False):
+        """Checks each cache entry to see if it has expired and cleans up expired entries
+
+        Parameters
+        ----------
+        force: <boolean> - When set to true, unexpired entries are also cleaned up
+
+        Returns
+        ----------
+        No return value
+        """
+        LOG.debug({"msg": "Cleaning cache", "cache_entries": len(self.cache.keys()), "cache_size": self.cache_size})
+        now = time.time()
+        # Grab lock
+        try:
+            self.lock.acquire()
+            for token in list(self.cache.keys()):
+                cache_item = self.cache.get(token, {})
+                if cache_item and (cache_item["timeout"] < now or force):
+                    # Clean up item
+                    if "file" in cache_item:
+                        cache_item["file"].close()
+                        self.cached_files -= 1
+                    else:
+                        self.cache_size -= cache_item["data_len"]
+                        self.cached_memory -= 1
+                    del self.cache[token]
+        except Exception as e:
+            LOG.exception(e)
+        finally:
+            self.lock.release()
+        # Released lock
+        LOG.debug(
+            {
+                "msg": "Clean cache complete",
+                "cache_size": self.cache_size,
+                "cache_count": self.cache_count,
+                "cache_overflow_count": self.cache_overflow_count,
+                "cache_entries": len(self.cache.keys()),
+                "cached_files": self.cached_files,
+                "cached_memory": self.cached_memory,
+            }
+        )
+
+    def add_item(self, item, use_files=True):
+        """Adds an item into the cache
+
+        Parameters
+        ----------
+        item: <object> Item to be stored in the cache
+        use_files: <boolean> Set to true if the cache should try and write to disk when cache is full, false otherwise
+
+        Returns
+        ----------
+        dict - A dictionary with 2 values as follows:
+                {
+                    "token": <string> String to be used in a subsequent get_item command to retrieve this item
+                    "expiration": <int> Epoch time in seconds specifying when the token will expire in the future
+                }
+        """
+        json_data = json.dumps(item)
+        comp_data = gzip.zlib.compress(bytes(str(json_data).encode("utf-8")), 9)
+        json_data = None
+        comp_data_len = len(comp_data)
+        cache_entry = {
+            "timeout": time.time() + self.cache_timeout,
+            "data": comp_data,
+            "data_len": comp_data_len,
+        }
+        if comp_data_len + self.cache_size > self.cache_size_max:
+            self._clean_cache()
+        if comp_data_len + self.cache_size > self.cache_size_max:
+            # If we cannot use a file to store the item, return a None to signal an out of memory situation
+            if not use_files:
+                return None
+            LOG.debug({"msg": "Cache full. Writing item to disk", "len": comp_data_len, "cache_size": self.cache_size})
+            # If a cache clean does not free enough space, we need to write this cache item to disk
+            tfile = tempfile.TemporaryFile()
+            tfile.write(comp_data)
+            tfile.seek(0)
+            cache_entry.update(
+                {
+                    "data": None,
+                    "file": tfile,
+                }
+            )
+            self.cache_overflow_count += 1
+            self.cached_files += 1
+            # Pre-subtract 1 from cached_memory. This is adjusted +1 during the add into the cache dictionary
+            self.cached_memory -= 1
+        # Grab lock
+        try:
+            self.lock.acquire()
+            self.cache_count += 1
+            self.cached_memory += 1
+            token_string = "{time}{len}{rand}{count}".format(
+                time=cache_entry["timeout"],
+                len=cache_entry["data_len"],
+                rand=random.randint(0, 100000),
+                count=self.cache_count,
+            )
+            token = hashlib.sha256(bytes(str(token_string).encode("utf-8"))).hexdigest()
+            self.cache[token] = cache_entry
+            self.cache_size += 0 if cache_entry.get("file") else comp_data_len
+        except Exception as e:
+            LOG.exception(e)
+            raise
+        finally:
+            self.lock.release()
+        # Released lock
+        LOG.debug({"msg": "Cached item", "len": comp_data_len, "cache_size": self.cache_size})
+        return {"token": token, "expiration": cache_entry["timeout"]}
+
+    def get_item(self, token):
+        """Returns the item in the cache to the caller based on the token
+
+        Parameters
+        ----------
+        token: <string> String token used to locate the cached item
+
+        Returns
+        ----------
+        <object> The item associated with the token. If the token is invalid or the cached item has expired, then
+                None will be returned instead
+        """
+        # Grab lock
+        try:
+            self.lock.acquire()
+            cache_item = self.cache.get(token)
+            if not cache_item:
+                return None
+            if "file" in cache_item:
+                self.cached_files -= 1
+            else:
+                # Only decrement the cache_size if the cache item is not a file
+                self.cache_size -= cache_item["data_len"]
+                self.cached_memory -= 1
+            del self.cache[token]
+        except Exception as e:
+            LOG.exception(e)
+        finally:
+            self.lock.release()
+        # Released lock
+        if "file" in cache_item:
+            comp_data = cache_item["file"].read()
+            cache_item["file"].close()
+        else:
+            comp_data = cache_item["data"]
+        cache_item = json.loads(gzip.zlib.decompress(comp_data).decode("utf-8"))
+        return cache_item
 
 
 def add_diskover_fields(file_info):
@@ -101,26 +303,44 @@ def add_diskover_fields(file_info):
 
 
 def file_handler_pscale(root, filename_list, args={}):
-    """
-    The file handler returns a dictionary:
-    {
-      "dirs": [<dict>]                  # List of directory metadata objects
-      "files": [<dict>]                 # List of file metadata objects
-      "stats": {
-        "lstat_required": <bool>        #
-        "not_found": <int>              # Number of files that were not found
-        "processed": <int>              # Number of files actually processed
-        "skipped": <int>                # Number of files skipped
-        "time_access_time": <int>       # Seconds spent getting the file access time
-        "time_acl": <int>               # Seconds spent getting file ACL
-        "time_custom_tagging": <int>    # Seconds spent processing custom tags
-        "time_dinode": <int>            # Seconds spent getting OneFS metadata
-        "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
-        "time_lstat": <int>             # Seconds spent in lstat
-        "time_scan_dir": <int>          # Seconds spent scanning the entire directory
-        "time_user_attr": <int>         # Seconds spent scanning user attributes
-      }
-    }
+    """Gets the metadata for the files/directories based at root and given the file/dir names in filename_list
+
+    Parameters
+    ----------
+    root: <string> Root directory to start the scan
+    filename_list: <list:string> List of file and directory names to retrieve metadata
+    args: <dict> Dictionary containing parameters to control the scan
+            {
+              "custom_tagging": <bool>          # When true call a custom handler for each file
+              "extra_attr": <bool>              # When true, gets extra OneFS metadata
+              "no_acl": <bool>                  # When true, skip ACL parsing
+              "phys_block_size": <int>          # Number of bytes in a block for the underlying storage device
+              "nodepool_translation": <dict>    # Dictionary with a node pool number to text string translation
+              "strip_dot_snapshot": <bool>      # When true, strip the .snapshot name from the file path returned
+              "user_attr": <bool>               # When true, get user attribute data for files
+            }
+
+    Returns
+    ----------
+    dict - A dictionary representing the root and files scanned
+            {
+              "dirs": [<dict>]                  # List of directory metadata objects
+              "files": [<dict>]                 # List of file metadata objects
+              "stats": {
+                "lstat_required": <bool>        # Number of times lstat was called vs. internal stat call
+                "not_found": <int>              # Number of files that were not found
+                "processed": <int>              # Number of files actually processed
+                "skipped": <int>                # Number of files skipped
+                "time_access_time": <int>       # Seconds spent getting the file access time
+                "time_acl": <int>               # Seconds spent getting file ACL
+                "time_custom_tagging": <int>    # Seconds spent processing custom tags
+                "time_dinode": <int>            # Seconds spent getting OneFS metadata
+                "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
+                "time_lstat": <int>             # Seconds spent in lstat
+                "time_scan_dir": <int>          # Seconds spent scanning the entire directory
+                "time_user_attr": <int>         # Seconds spent scanning user attributes
+              }
+            }
     """
     now = time.time()
     custom_tagging = args.get("custom_tagging", False)
@@ -146,7 +366,6 @@ def file_handler_pscale(root, filename_list, args={}):
         "time_lstat": 0,
         "time_scan_dir": 0,
         "time_user_attr": 0,
-        
     }
 
     for filename in filename_list:
@@ -324,8 +543,8 @@ def file_handler_pscale(root, filename_list, args={}):
             time_start = time.time()
             lstat_required = translate_user_group_perms(full_path, file_info)
             if lstat_required:
-              stats["lstat_required"] += 1
-              stats["time_lstat"] += time.time() - time_start
+                stats["lstat_required"] += 1
+                stats["time_lstat"] += time.time() - time_start
 
             if fstats["di_mode"] & 0o040000:
                 file_info["_scan_time"] = now
@@ -388,7 +607,12 @@ def file_handler_pscale_diskover(root, filename_list, args={}):
 
 def get_directory_listing(path):
     try:
-        dir_file_list = os.listdir(path)
+        if use_scandir:
+            dir_file_list = []
+            for entry in os.scandir(path):
+                dir_file_list.append(entry.name)
+        else:
+            dir_file_list = os.listdir(path)
     except IOError as ioe:
         dir_file_list = []
         if ioe.errno == 13:
@@ -484,51 +708,83 @@ def handle_ps_stat_list():
     args = request.args
     param_path = args.get("path")
     param_type = args.get("type", DEFAULT_DATA_TYPE)
-    param_limit = args.get("limit", DEFAULT_ITEM_LIMIT)
+    param_limit = int(args.get("limit", DEFAULT_ITEM_LIMIT))
+    if param_limit < 1:
+        param_limit = 1
+    if param_limit > DEFAULT_MAX_ITEM_LIMIT:
+        param_limit = DEFAULT_MAX_ITEM_LIMIT
     param_token = args.get("token")
     if not param_path:
         return make_response({"msg": TXT_QUERY_PATH_REQUIRED}, 404)
+
+    dir_handler = file_handler_pscale if param_type == DATA_TYPE_PS else file_handler_pscale_diskover
+    dir_list = []
+    dir_list_len = 0
+    list_stat_data = {}
     root = {}
     root_is_dir = False
+    stat_data = None
     token_continuation = ""
     token_expiration = ""
+
+    # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
+    base, file, full_path = get_path_from_urlencoded(param_path)
     if not param_token:
-        # Process the passed in root path by itself
-        base, file, file_list = get_path_from_urlencoded(param_path)
-        if param_type == DATA_TYPE_PS:
-            stat_data = file_handler_pscale(base, [file], app.config["ps_scan"])
-        else:
-            stat_data = file_handler_pscale_diskover(base, [file], app.config["ps_scan"])
+        stat_data = dir_handler(base, [file], app.config["ps_scan"])
         if stat_data["dirs"]:
             root = stat_data["dirs"][0]
             root_is_dir = True
+            param_limit -= 1
         elif stat_data["files"]:
             root = stat_data["files"][0]
+            param_limit -= 1
+
     if root_is_dir or param_token:
+        # Get the list of files/directories to process either from the file system directly or a cache
         if param_token:
-            # DEBUG: Get the remainder of the list and then set dir_list to a subset
-            pass
+            # Get the cached list and then set dir_list
+            LOG.debug({"msg": "Getting cached directory listing", "path": full_path})
+            cached_item = app.config["cache"].get_item(param_token)
+            if not cached_item:
+                return make_response({"msg": TXT_INVALID_TOKEN, "token": param_token}, 404)
+            base = cached_item["base"]
+            dir_list = cached_item["dir_list"]
+            offset = cached_item["offset"] + param_limit
         else:
             # Process the direct children of the passed in path
-            LOG.debug({"msg": "Getting directory listing", "path": file_list})
-            dir_list = get_directory_listing(file_list)
+            LOG.debug({"msg": "Getting directory listing", "path": full_path})
+            dir_list = get_directory_listing(full_path)
+            offset = param_limit
         # Split this list up into chunks dependent on the 'limit' query value
         dir_list_len = len(dir_list)
         if dir_list_len > param_limit:
-            # DEBUG: Pagination is required
-            token_expiration = time.time() + DEFAULT_TOKEN_EXPIRATION
-        if param_type == DATA_TYPE_PS:
-            list_stat_data = file_handler_pscale(file_list, dir_list, app.config["ps_scan"])
-        else:
-            list_stat_data = file_handler_pscale_diskover(file_list, dir_list, app.config["ps_scan"])
-    else:
-        dir_list = []
-        list_stat_data = {}
+            # Cache the remainder of the directory listing to avoid re-scanning the directory
+            token_data = app.config["cache"].add_item(
+                {"base": full_path, "dir_list": dir_list[param_limit:], "offset": offset}
+            )
+            dir_list = dir_list[0:param_limit]
+            token_continuation = token_data["token"]
+            token_expiration = token_data["expiration"]
+        # Perform the actual stat commands on each file/directory
+        if dir_list:
+            list_stat_data = dir_handler(full_path, dir_list, app.config["ps_scan"])
+
+    # Calculate statistics to return in the response
     dirs_len = len(list_stat_data.get("dirs", []))
     files_len = len(list_stat_data.get("files", []))
-    items_total = len(dir_list) + 1 * (not not root)
+    items_total = dir_list_len + 1 * (not not root)
     items_returned = dirs_len + files_len + 1 * (not not root)
-    items_remaining = items_total - items_returned
+    total_stats = {}
+    if stat_data:
+        if list_stat_data:
+            for key in list_stat_data["stats"]:
+                total_stats[key] = list_stat_data["stats"][key] + stat_data["stats"][key]
+        else:
+            total_stats = stat_data["stats"]
+    else:
+        total_stats = list_stat_data["stats"]
+
+    # Build response
     resp_data = {
         "contents": {
             "dirs": list_stat_data.get("dirs", []),
@@ -537,10 +793,9 @@ def handle_ps_stat_list():
         },
         "items_total": items_total,
         "items_returned": items_returned,
-        "items_remaining": items_remaining,
         "token_continuation": token_continuation,
         "token_expiration": token_expiration,
-        "stats": stat_data["stats"],
+        "stats": total_stats,
     }
     return Response(json.dumps(resp_data, default=lambda o: JSON_SER_ERR), mimetype=MIME_TYPE_JSON)
 
@@ -578,7 +833,7 @@ def handle_ps_stat_single():
 
 
 if __name__ == "__main__" or __file__ == None:
-    # DEBUG: Add CLI parsing and populate the app.config with config variables
+    # DEBUG: Add CLI parsing and populate the app.config["ps_scan"] with config variables
+    app.config["cache"] = SimpleCache()
     app.config["ps_scan"] = {"nodepool_translation": misc.get_nodepool_translation()}
-    WSGIRequestHandler.protocol_version = "HTTP/1.1"
-    app.run(threaded=True, debug=True, use_debugger=False, use_reloader=False)
+    serve(app, listen="*:4242")
