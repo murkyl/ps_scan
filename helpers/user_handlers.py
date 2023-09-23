@@ -72,7 +72,6 @@ CUSTOM_STATS_FIELDS = [
     "lstat_required",
     "lstat_time",
 ]
-RE_STRIP_SNAPSHOT = r"/\.snapshot(?:/$|/[^/]*)"
 
 
 def custom_stats_handler(common_stats, custom_state, custom_threads_state, thread_state):
@@ -897,22 +896,11 @@ def init_custom_state(custom_state, options={}):
     custom_state["es_send_cmd_q"] = queue.Queue()
     custom_state["max_send_q_size"] = options.get("es_max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
     custom_state["no_acl"] = options.get("no_acl", DEFAULT_PARSE_SKIP_ACLS)
-    custom_state["node_pool_translation"] = {}
+    custom_state["node_pool_translation"] = misc.get_nodepool_translation()
     custom_state["phys_block_size"] = IFS_BLOCK_SIZE
     custom_state["send_q_sleep"] = options.get("es_send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
     custom_state["strip_dot_snapshot"] = options.get("strip_dot_snapshot", DEFAULT_STRIP_DOT_SNAPSHOT)
     custom_state["user_attr"] = options.get("user_attr", DEFAULT_PARSE_USER_ATTR)
-    if misc.is_onefs_os():
-        # Query the cluster for node pool name information
-        try:
-            dpdb = dp.DiskPoolDB()
-            groups = dpdb.get_groups()
-            for g in groups:
-                children = g.get_children()
-                for child in children:
-                    custom_state["node_pool_translation"][int(child.entryid)] = g.name
-        except Exception as e:
-            LOG.exception("Unable to get the ID to name translation for node pools")
 
 
 def init_thread(tid, custom_state, thread_custom_state):
