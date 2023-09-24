@@ -82,13 +82,11 @@ LOG = app.logger
 DATA_TYPE_PS = "powerscale"
 DATA_TYPE_DISKOVER = "diskover"
 DEFAULT_DATA_TYPE = DATA_TYPE_PS
-DEFAULT_ITEM_LIMIT = 10000
-DEFAULT_MAX_ITEM_LIMIT = 100000
-DEFAULT_CACHE_CLEANUP_INTERVAL = 10
-# DEFAULT_CACHE_SIZE_MAX = 1024 ^ 3
-DEFAULT_CACHE_SIZE_MAX = 8000
-# DEFAULT_CACHE_TIMEOUT = 1800  # Time in seconds after which a continuation token is considered expired and cleaned up
-DEFAULT_CACHE_TIMEOUT = 60  # Time in seconds after which a continuation token is considered expired and cleaned up
+DEFAULT_ITEM_LIMIT = 10000 # Default number of items to return in a single call
+DEFAULT_MAX_ITEM_LIMIT = 100000 # Allow up to 100,000 items to be returned in a single call
+DEFAULT_CACHE_CLEANUP_INTERVAL = 60 # Try to cleanup the cache every 60 seconds
+DEFAULT_CACHE_SIZE_MAX = 1024^4 # Default max cache size is 1 GiB
+DEFAULT_CACHE_TIMEOUT = 1800  # Time in seconds after which a continuation token is considered expired and cleaned up
 JSON_SER_ERR = "<not serializable>"
 MIME_TYPE_JSON = "application/json"
 STATS_FIELD_LIST = ["not_found", "processed", "skipped"]
@@ -627,6 +625,25 @@ def get_directory_listing(path):
     return dir_file_list
 
 
+def parse_arg_bool(arg, field, default):
+    val = arg.get(field, default)
+    if isinstance(val, bool):
+        return val
+    val = val.lower()
+    if val in ["false", "0"]:
+        return False
+    return True
+
+
+def parse_arg_int(arg, field, default, minimum=None, maximum=None):
+    val = int(arg.get(field, default))
+    if minimum and val < minimum:
+        val = minimum
+    if maximum and val > maximum:
+        val = maximum
+    return val
+
+
 def get_path_from_urlencoded(urlencoded_path):
     decoded_path = urlunquote(urlencoded_path)
     if decoded_path.endswith("/"):
@@ -705,19 +722,88 @@ def handle_cluster_storage_stats():
 
 @app.route("/ps_stat/list", methods=["GET"])
 def handle_ps_stat_list():
+    """Returns metadata for both the root path and all the immediate children of that path
+    In the case the root is a file, only the file metadata will be returned
+
+    Query arguments (common)
+    ----------
+    path: <string> URL encoded string representing the path in the file system that metadata will be returned
+            The path can start with /ifs or not. The /ifs part of the path will be prepended if necessary
+            A path with a trailing slash will have the slash removed.
+    limit: <int> Maximum number of entries to return in a single call. Defaults to 10000. Maximum value of 100000
+    token: <string> Token string to allow the continuation of a previous scan request when that request did not return
+            all the available data for a specific root path. Tokens expire and using an expired token results in a 404
+    type: <string> Type of scan result to return. One of: powerscale|diskover. The default is powerscale.
+
+    Query arguments (optional)
+    ----------
+    custom_tagging: <bool> When true call a custom handler for each file. Enabling this can slow down scan speed
+    extra_attr: <bool> When true, gets extra OneFS metadata. Enabling this can slow down scan speed
+    no_acl: <bool> When true, skip ACL parsing. Enabling this can speed up scanning but results will not have ACLs
+    strip_dot_snapshot: <bool> When true, strip the .snapshot name from the file path returned
+    user_attr: <bool> # When true, get user attribute data for files. Enabling this can slow down scan speed
+
+    Returns
+    ----------
+    dict - A dictionary representing the root and files scanned
+        {
+          "contents": {
+            "dirs": [<dict>]                  # List of directory metadata objects
+            "files": [<dict>]                 # List of file metadata objects
+            "root": <dict>                    # Metadata for the root path
+            "stats": {
+              "lstat_required": <bool>        # Number of times lstat was called vs. internal stat call
+              "not_found": <int>              # Number of files that were not found
+              "processed": <int>              # Number of files actually processed
+              "skipped": <int>                # Number of files skipped
+              "time_access_time": <int>       # Seconds spent getting the file access time
+              "time_acl": <int>               # Seconds spent getting file ACL
+              "time_custom_tagging": <int>    # Seconds spent processing custom tags
+              "time_dinode": <int>            # Seconds spent getting OneFS metadata
+              "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
+              "time_lstat": <int>             # Seconds spent in lstat
+              "time_scan_dir": <int>          # Seconds spent scanning the entire directory
+              "time_user_attr": <int>         # Seconds spent scanning user attributes
+            }
+          }
+          "items_total": <int>                # Total number of items remaining that could be returned
+          "items_returned": <int>             # Number of metadata items returned. This number includes the "root"
+          "token_continuation": <string>      # String that should be used in the "token" query argument to continue
+                                              # scanning a directory
+          "token_expiration": <int>           # Epoch seconds specifying when the token will expire
+          "stats": {
+            "lstat_required": <bool>          # Number of times lstat was called vs. internal stat call
+            "not_found": <int>                # Number of files that were not found
+            "processed": <int>                # Number of files actually processed
+            "skipped": <int>                  # Number of files skipped
+            "time_access_time": <int>         # Seconds spent getting the file access time
+            "time_acl": <int>                 # Seconds spent getting file ACL
+            "time_custom_tagging": <int>      # Seconds spent processing custom tags
+            "time_dinode": <int>              # Seconds spent getting OneFS metadata
+            "time_extra_attr": <int>          # Seconds spent getting extra OneFS metadata
+            "time_lstat": <int>               # Seconds spent in lstat
+            "time_scan_dir": <int>            # Seconds spent scanning the entire directory
+            "time_user_attr": <int>           # Seconds spent scanning user attributes
+          }
+        }
+    """
     args = request.args
-    param_path = args.get("path")
-    param_type = args.get("type", DEFAULT_DATA_TYPE)
-    param_limit = int(args.get("limit", DEFAULT_ITEM_LIMIT))
-    if param_limit < 1:
-        param_limit = 1
-    if param_limit > DEFAULT_MAX_ITEM_LIMIT:
-        param_limit = DEFAULT_MAX_ITEM_LIMIT
-    param_token = args.get("token")
-    if not param_path:
+    param = {
+        "custom_tagging": parse_arg_bool(args, "custom_tagging", False),
+        "extra_attr": parse_arg_bool(args, "extra_attr", False),
+        "limit": parse_arg_int(args, "limit", DEFAULT_ITEM_LIMIT, 1, DEFAULT_MAX_ITEM_LIMIT),
+        "no_acl": parse_arg_bool(args, "no_acl", False),
+        "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
+        "path": args.get("path"),
+        "strip_do_snapshot": parse_arg_bool(args, "strip_dot_snapshot", True),
+        "token": args.get("token"),
+        "type": args.get("type", DEFAULT_DATA_TYPE),
+        "user_attr": parse_arg_bool(args, "user_attr", False),
+    }
+    if not param["path"]:
         return make_response({"msg": TXT_QUERY_PATH_REQUIRED}, 404)
 
-    dir_handler = file_handler_pscale if param_type == DATA_TYPE_PS else file_handler_pscale_diskover
+    dir_handler = file_handler_pscale if param["type"] == DATA_TYPE_PS else file_handler_pscale_diskover
     dir_list = []
     dir_list_len = 0
     list_stat_data = {}
@@ -728,46 +814,46 @@ def handle_ps_stat_list():
     token_expiration = ""
 
     # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
-    base, file, full_path = get_path_from_urlencoded(param_path)
-    if not param_token:
-        stat_data = dir_handler(base, [file], app.config["ps_scan"])
+    base, file, full_path = get_path_from_urlencoded(param["path"])
+    if not param["token"]:
+        stat_data = dir_handler(base, [file], param)
         if stat_data["dirs"]:
             root = stat_data["dirs"][0]
             root_is_dir = True
-            param_limit -= 1
+            param["limit"] -= 1
         elif stat_data["files"]:
             root = stat_data["files"][0]
-            param_limit -= 1
+            param["limit"] -= 1
 
-    if root_is_dir or param_token:
+    if root_is_dir or param["token"]:
         # Get the list of files/directories to process either from the file system directly or a cache
-        if param_token:
+        if param["token"]:
             # Get the cached list and then set dir_list
             LOG.debug({"msg": "Getting cached directory listing", "path": full_path})
-            cached_item = app.config["cache"].get_item(param_token)
+            cached_item = app.config["cache"].get_item(param["token"])
             if not cached_item:
-                return make_response({"msg": TXT_INVALID_TOKEN, "token": param_token}, 404)
+                return make_response({"msg": TXT_INVALID_TOKEN, "token": param["token"]}, 404)
             base = cached_item["base"]
             dir_list = cached_item["dir_list"]
-            offset = cached_item["offset"] + param_limit
+            offset = cached_item["offset"] + param["limit"]
         else:
             # Process the direct children of the passed in path
             LOG.debug({"msg": "Getting directory listing", "path": full_path})
             dir_list = get_directory_listing(full_path)
-            offset = param_limit
+            offset = param["limit"]
         # Split this list up into chunks dependent on the 'limit' query value
         dir_list_len = len(dir_list)
-        if dir_list_len > param_limit:
+        if dir_list_len > param["limit"]:
             # Cache the remainder of the directory listing to avoid re-scanning the directory
             token_data = app.config["cache"].add_item(
-                {"base": full_path, "dir_list": dir_list[param_limit:], "offset": offset}
+                {"base": full_path, "dir_list": dir_list[param["limit"]:], "offset": offset}
             )
-            dir_list = dir_list[0:param_limit]
+            dir_list = dir_list[0:param["limit"]]
             token_continuation = token_data["token"]
             token_expiration = token_data["expiration"]
         # Perform the actual stat commands on each file/directory
         if dir_list:
-            list_stat_data = dir_handler(full_path, dir_list, app.config["ps_scan"])
+            list_stat_data = dir_handler(full_path, dir_list, param)
 
     # Calculate statistics to return in the response
     dirs_len = len(list_stat_data.get("dirs", []))
@@ -802,16 +888,81 @@ def handle_ps_stat_list():
 
 @app.route("/ps_stat/single", methods=["GET"])
 def handle_ps_stat_single():
+    """Returns metadata for a single file or directory specified by the "path" argument
+
+    Query arguments (common)
+    ----------
+    path: <string> URL encoded string representing the path in the file system that metadata will be returned
+            The path can start with /ifs or not. The /ifs part of the path will be prepended if necessary
+            A path with a trailing slash will have the slash removed.
+    type: <string> Type of scan result to return. One of: powerscale|diskover. The default is powerscale.
+
+    Query arguments (optional)
+    ----------
+    custom_tagging: <bool> When true call a custom handler for each file. Enabling this can slow down scan speed
+    extra_attr: <bool> When true, gets extra OneFS metadata. Enabling this can slow down scan speed
+    no_acl: <bool> When true, skip ACL parsing. Enabling this can speed up scanning but results will not have ACLs
+    strip_dot_snapshot: <bool> When true, strip the .snapshot name from the file path returned
+    user_attr: <bool> # When true, get user attribute data for files. Enabling this can slow down scan speed
+
+    Returns
+    ----------
+    dict - A dictionary representing the single item scanned
+        {
+          "contents": {
+            "dirs": []                        # Empty list
+            "files": []                       # Empty list
+            "root": <dict>                    # Metadata for the root path
+            "stats": {
+              "lstat_required": <bool>        # Number of times lstat was called vs. internal stat call
+              "not_found": <int>              # Number of files that were not found
+              "processed": <int>              # Number of files actually processed
+              "skipped": <int>                # Number of files skipped
+              "time_access_time": <int>       # Seconds spent getting the file access time
+              "time_acl": <int>               # Seconds spent getting file ACL
+              "time_custom_tagging": <int>    # Seconds spent processing custom tags
+              "time_dinode": <int>            # Seconds spent getting OneFS metadata
+              "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
+              "time_lstat": <int>             # Seconds spent in lstat
+              "time_scan_dir": <int>          # Seconds spent scanning the entire directory
+              "time_user_attr": <int>         # Seconds spent scanning user attributes
+            }
+          }
+          "items_total": <int>                # Total number of items remaining that could be returned
+          "items_returned": <int>             # Number of metadata items returned. This number includes the "root"
+          "stats": {
+            "lstat_required": <bool>          # Number of times lstat was called vs. internal stat call
+            "not_found": <int>                # Number of files that were not found
+            "processed": <int>                # Number of files actually processed
+            "skipped": <int>                  # Number of files skipped
+            "time_access_time": <int>         # Seconds spent getting the file access time
+            "time_acl": <int>                 # Seconds spent getting file ACL
+            "time_custom_tagging": <int>      # Seconds spent processing custom tags
+            "time_dinode": <int>              # Seconds spent getting OneFS metadata
+            "time_extra_attr": <int>          # Seconds spent getting extra OneFS metadata
+            "time_lstat": <int>               # Seconds spent in lstat
+            "time_scan_dir": <int>            # Seconds spent scanning the entire directory
+            "time_user_attr": <int>           # Seconds spent scanning user attributes
+          }
+        }
+    """
     args = request.args
-    param_path = args.get("path")
-    param_type = args.get("type", DEFAULT_DATA_TYPE)
-    if not param_path:
-        return make_response({"msg": TXT_QUERY_PATH_REQUIRED}, 404)
-    base, file, full = get_path_from_urlencoded(param_path)
-    if param_type == DATA_TYPE_PS:
-        stat_data = file_handler_pscale(base, [file], app.config["ps_scan"])
+    param = {
+        "custom_tagging": parse_arg_bool(args, "custom_tagging", False),
+        "extra_attr": parse_arg_bool(args, "extra_attr", False),
+        "no_acl": parse_arg_bool(args, "no_acl", False),
+        "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
+        "path": args.get("path"),
+        "strip_do_snapshot": parse_arg_bool(args, "strip_dot_snapshot", True),
+        "type": args.get("type", DEFAULT_DATA_TYPE),
+        "user_attr": parse_arg_bool(args, "user_attr", False),
+    }
+
+    base, file, full = get_path_from_urlencoded(param["path"])
+    if param["type"] == DATA_TYPE_PS:
+        stat_data = file_handler_pscale(base, [file], param)
     else:
-        stat_data = file_handler_pscale_diskover(base, [file], app.config["ps_scan"])
+        stat_data = file_handler_pscale_diskover(base, [file], param)
     if stat_data["dirs"]:
         root = stat_data["dirs"][0]
     elif stat_data["files"]:
@@ -824,9 +975,8 @@ def handle_ps_stat_single():
             "files": [],
             "root": root,
         },
-        "items_total": stat_data["stat_not_found"] + stat_data["stat_processed"] + stat_data["stat_skipped"],
-        "items_returned": stat_data["stat_processed"],
-        "items_remaining": stat_data["stat_skipped"] + stat_data["stat_not_found"],
+        "items_total": 1,
+        "items_returned": 1 * (not not root),
         "stats": stat_data["stats"],
     }
     return Response(json.dumps(resp_data, default=lambda o: JSON_SER_ERR), mimetype=MIME_TYPE_JSON)
