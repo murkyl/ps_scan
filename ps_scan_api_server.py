@@ -82,10 +82,10 @@ LOG = app.logger
 DATA_TYPE_PS = "powerscale"
 DATA_TYPE_DISKOVER = "diskover"
 DEFAULT_DATA_TYPE = DATA_TYPE_PS
-DEFAULT_ITEM_LIMIT = 10000 # Default number of items to return in a single call
-DEFAULT_MAX_ITEM_LIMIT = 100000 # Allow up to 100,000 items to be returned in a single call
-DEFAULT_CACHE_CLEANUP_INTERVAL = 60 # Try to cleanup the cache every 60 seconds
-DEFAULT_CACHE_SIZE_MAX = 1024**4 # Default max cache size is 1 GiB
+DEFAULT_ITEM_LIMIT = 10000  # Default number of items to return in a single call
+DEFAULT_MAX_ITEM_LIMIT = 100000  # Allow up to 100,000 items to be returned in a single call
+DEFAULT_CACHE_CLEANUP_INTERVAL = 60  # Try to cleanup the cache every 60 seconds
+DEFAULT_CACHE_SIZE_MAX = 1024**4  # Default max cache size is 1 GiB
 DEFAULT_CACHE_TIMEOUT = 1800  # Time in seconds after which a continuation token is considered expired and cleaned up
 JSON_SER_ERR = "<not serializable>"
 MIME_TYPE_JSON = "application/json"
@@ -381,9 +381,7 @@ def file_handler_pscale(root, filename_list, args={}):
                     stats["lstat_required"] += 1
                     LOG.debug({"msg": "Unable to call os.open. Using os.lstat instead", "file_path": full_path})
                     time_start = time.time()
-                    file_info = get_file_stat_diskover(
-                        root, filename, phys_block_size, strip_dot_snapshot=strip_dot_snapshot
-                    )
+                    file_info = get_file_stat(root, filename, phys_block_size, strip_dot_snapshot=strip_dot_snapshot)
                     stats["time_lstat"] += time.time() - time_start
                     if custom_tagging:
                         time_start = time.time()
@@ -625,6 +623,65 @@ def get_directory_listing(path):
     return dir_file_list
 
 
+def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE, strip_dot_snapshot=True):
+    full_path = os.path.join(root, filename)
+    fstats = os.lstat(full_path)
+    if strip_dot_snapshot:
+        file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
+    else:
+        file_path = root
+    file_info = {
+        # ========== Timestamps ==========
+        "atime": fstats.st_atime,
+        "atime_date": datetime.date.fromtimestamp(fstats.st_atime).isoformat(),
+        "btime": None,
+        "btime_date": None,
+        "ctime": fstats.st_ctime,
+        "ctime_date": datetime.date.fromtimestamp(fstats.st_ctime).isoformat(),
+        "mtime": fstats.st_mtime,
+        "mtime_date": datetime.date.fromtimestamp(fstats.st_mtime).isoformat(),
+        # ========== File and path strings ==========
+        "file_path": file_path,
+        "file_name": filename,
+        "file_ext": os.path.splitext(filename),
+        # ========== File attributes ==========
+        "file_hard_links": fstats.st_nlink,
+        "file_type": FILE_TYPE[stat.S_IFMT(fstats.st_mode) & FILE_TYPE_MASK],
+        "inode": fstats.st_ino,
+        # ========== Permissions ==========
+        "perms_unix_bitmask": stat.S_IMODE(fstats.st_mode),
+        "perms_unix_gid": fstats.st_gid,
+        "perms_unix_uid": fstats.st_uid,
+        # ========== File allocation size and blocks ==========
+        "size": fstats.st_size,
+        "size_logical": block_unit * (int(fstats.st_size / block_unit) + 1 * ((fstats.st_size % block_unit) > 0)),
+        # st_blocks includes metadata blocks
+        "size_physical": block_unit * (int(fstats.st_blocks * STAT_BLOCK_SIZE / block_unit)),
+    }
+    try:
+        file_info["btime"] = fstats.st_birthtime
+        file_info["btime_date"] = datetime.date.fromtimestamp(fstats.st_btime).isoformat()
+    except:
+        # No birthtime date so do not add those fields
+        pass
+    if file_info["size"] == 0 and file_info["size_physical"] == 0:
+        file_info["size_physical"] = file_info["size_logical"]
+    return file_info
+
+
+def get_path_from_urlencoded(urlencoded_path):
+    decoded_path = urlunquote(urlencoded_path)
+    if decoded_path.endswith("/"):
+        decoded_path = decoded_path[0:-1]
+    if not decoded_path.startswith("/"):
+        decoded_path = "/" + decoded_path
+    if not decoded_path.startswith("/ifs"):
+        decoded_path = "/ifs" + decoded_path
+    root = os.path.dirname(decoded_path)
+    file = os.path.basename(decoded_path)
+    return root, file, decoded_path
+
+
 def parse_arg_bool(arg, field, default):
     val = arg.get(field, default)
     if isinstance(val, bool):
@@ -642,19 +699,6 @@ def parse_arg_int(arg, field, default, minimum=None, maximum=None):
     if maximum and val > maximum:
         val = maximum
     return val
-
-
-def get_path_from_urlencoded(urlencoded_path):
-    decoded_path = urlunquote(urlencoded_path)
-    if decoded_path.endswith("/"):
-        decoded_path = decoded_path[0:-1]
-    if not decoded_path.startswith("/"):
-        decoded_path = "/" + decoded_path
-    if not decoded_path.startswith("/ifs"):
-        decoded_path = "/ifs" + decoded_path
-    root = os.path.dirname(decoded_path)
-    file = os.path.basename(decoded_path)
-    return root, file, decoded_path
 
 
 def translate_user_group_perms(full_path, file_info):
@@ -846,9 +890,9 @@ def handle_ps_stat_list():
         if dir_list_len > param["limit"]:
             # Cache the remainder of the directory listing to avoid re-scanning the directory
             token_data = app.config["cache"].add_item(
-                {"base": full_path, "dir_list": dir_list[param["limit"]:], "offset": offset}
+                {"base": full_path, "dir_list": dir_list[param["limit"] :], "offset": offset}
             )
-            dir_list = dir_list[0:param["limit"]]
+            dir_list = dir_list[0 : param["limit"]]
             token_continuation = token_data["token"]
             token_expiration = token_data["expiration"]
         # Perform the actual stat commands on each file/directory
@@ -983,7 +1027,20 @@ def handle_ps_stat_single():
 
 
 if __name__ == "__main__" or __file__ == None:
+    # DEBUG: Change user away from root
+    # os.setuid(2001)
+    options = {
+        "ulimit_memory": 4*1024**4, # 4 GiB memory limit
+    }
+
     # DEBUG: Add CLI parsing and populate the app.config["ps_scan"] with config variables
+    if misc.is_onefs_os():
+        # Set resource limits
+        old_limit, new_limit = misc.set_resource_limits(options["ulimit_memory"])
+        if new_limit:
+            LOG.debug({"msg": "VMEM ulimit value set", "new_value": new_limit})
+        else:
+            LOG.info({"msg": "VMEM ulimit setting failed"})
     app.config["cache"] = SimpleCache()
     app.config["ps_scan"] = {"nodepool_translation": misc.get_nodepool_translation()}
     serve(app, listen="*:4242")
