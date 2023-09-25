@@ -85,6 +85,9 @@ DATA_TYPE_DISKOVER = "diskover"
 DEFAULT_DATA_TYPE = DATA_TYPE_PS
 DEFAULT_ITEM_LIMIT = 10000  # Default number of items to return in a single call
 DEFAULT_MAX_ITEM_LIMIT = 100000  # Allow up to 100,000 items to be returned in a single call
+HTTP_HDR_ACCEPT_ENCODING = "Accept-Encoding"
+HTTP_HDR_CONTENT_ENCODING = "Content-Encoding"
+HTTP_HDR_CONTENT_LEN = "Content-Length"
 JSON_SER_ERR = "<not serializable>"
 MIME_TYPE_JSON = "application/json"
 STATS_FIELD_LIST = ["not_found", "processed", "skipped"]
@@ -547,20 +550,20 @@ def translate_user_group_perms(full_path, file_info):
 
 @app.after_request
 def compress(response):
-    accept_encoding = request.headers.get("accept-encoding", "").lower()
+    accept_encoding = request.headers.get(HTTP_HDR_ACCEPT_ENCODING, "").lower()
     if (
         response.status_code < 200
         or response.status_code >= 300
         or response.direct_passthrough
         or "gzip" not in accept_encoding
-        or "Content-Encoding" in response.headers
+        or HTTP_HDR_CONTENT_ENCODING in response.headers
     ):
         return response
     # 0: No compression, 1: Fastest, 9: Slowest
     content = gzip.zlib.compress(response.get_data(), 9)
     response.set_data(content)
-    response.headers["Content-Length"] = len(content)
-    response.headers["Content-Encoding"] = "gzip"
+    response.headers[HTTP_HDR_CONTENT_LEN] = len(content)
+    response.headers[HTTP_HDR_CONTENT_ENCODING] = "gzip"
     return response
 
 
@@ -809,6 +812,7 @@ def handle_ps_stat_single():
         "user_attr": parse_arg_bool(args, "user_attr", False),
     }
 
+    # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
     base, file, full = get_path_from_urlencoded(param["path"])
     if param["type"] == DATA_TYPE_PS:
         stat_data = file_handler_pscale(base, [file], param)
