@@ -214,6 +214,15 @@ Examples:
         default=DEFAULT_SERVER_PORT,
         help="Port number for client/server connection",
     )
+    parser.add_option(
+        "--default-item-limit",
+        action="store",
+        type="int",
+        default=DEFAULT_ITEM_LIMIT,
+        help="""Default number of items to return in a single request.
+Default: %default
+""",
+    )
     group = optparse.OptionGroup(parser, "Performance options")
     group.add_option(
         "--threads",
@@ -260,6 +269,15 @@ Default: %default
         default=libs.simple_cache.DEFAULT_CACHE_TIMEOUT,
         help="""Number of seconds that an entry in the cache will be  
 valid before it is cleaned up.                        
+Default: %default
+""",
+    )
+    parser.add_option(
+        "--max-item-limit",
+        action="store",
+        type="int",
+        default=DEFAULT_ITEM_LIMIT_MAX,
+        help="""Maximum number of items to return in a single request.
 Default: %default
 """,
     )

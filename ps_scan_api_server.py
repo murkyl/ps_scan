@@ -94,11 +94,6 @@ except:
 app = Flask(__name__)
 server = None
 LOG = app.logger
-DATA_TYPE_PS = "powerscale"
-DATA_TYPE_DISKOVER = "diskover"
-DEFAULT_DATA_TYPE = DATA_TYPE_PS
-DEFAULT_ITEM_LIMIT = 10000  # Default number of items to return in a single call
-DEFAULT_MAX_ITEM_LIMIT = 100000  # Allow up to 100,000 items to be returned in a single call
 HTTP_HDR_ACCEPT_ENCODING = "Accept-Encoding"
 HTTP_HDR_CONTENT_ENCODING = "Content-Encoding"
 HTTP_HDR_CONTENT_LEN = "Content-Length"
@@ -633,11 +628,12 @@ def handle_ps_stat_list():
         }
     """
     args = request.args
+    options = app.config["ps_scan"]["options"]
     param = {
         "custom_tagging": misc.parse_arg_bool(args, "custom_tagging", False),
         "extra_attr": misc.parse_arg_bool(args, "extra_attr", False),
         "include_root": misc.parse_arg_bool(args, "include_root", False),
-        "limit": misc.parse_arg_int(args, "limit", DEFAULT_ITEM_LIMIT, 1, DEFAULT_MAX_ITEM_LIMIT),
+        "limit": misc.parse_arg_int(args, "limit", options["default_item_limit"], 1, options["max_item_limit"]),
         "no_acl": misc.parse_arg_bool(args, "no_acl", False),
         "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
         "path": args.get("path"),
@@ -858,7 +854,10 @@ if __name__ == "__main__" or __file__ == None:
             LOG.info({"msg": "VMEM ulimit setting failed", "mem_size": options["ulimit_memory"]})
 
     app.config["cache"] = SimpleCache(options)
-    app.config["ps_scan"] = {"nodepool_translation": misc.get_nodepool_translation()}
+    app.config["ps_scan"] = {
+        "options": options,
+        "nodepool_translation": misc.get_nodepool_translation(),
+    }
 
     # DEBUG: Change user away from root
     # os.setuid(options.get("uid", 0))
