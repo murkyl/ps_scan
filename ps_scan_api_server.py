@@ -8,6 +8,7 @@ from logging.config import dictConfig
 import os
 import random
 import re
+import signal
 import stat
 import sys
 import tempfile
@@ -59,7 +60,7 @@ from libs.flask import Flask
 from libs.flask import make_response
 from libs.flask import request
 from libs.flask import Response
-from libs.waitress import serve
+from libs.waitress import create_server
 
 try:
     import isi.fs.attr as attr
@@ -78,6 +79,7 @@ except:
     FileNotFoundError = IOError
 
 app = Flask(__name__)
+server = None
 LOG = app.logger
 DATA_TYPE_PS = "powerscale"
 DATA_TYPE_DISKOVER = "diskover"
@@ -85,7 +87,7 @@ DEFAULT_DATA_TYPE = DATA_TYPE_PS
 DEFAULT_ITEM_LIMIT = 10000  # Default number of items to return in a single call
 DEFAULT_MAX_ITEM_LIMIT = 100000  # Allow up to 100,000 items to be returned in a single call
 DEFAULT_CACHE_CLEANUP_INTERVAL = 60  # Try to cleanup the cache every 60 seconds
-DEFAULT_CACHE_SIZE_MAX = 1024**4  # Default max cache size is 1 GiB
+DEFAULT_CACHE_SIZE_MAX = 1024**3  # Default max cache size is 1 GiB
 DEFAULT_CACHE_TIMEOUT = 1800  # Time in seconds after which a continuation token is considered expired and cleaned up
 JSON_SER_ERR = "<not serializable>"
 MIME_TYPE_JSON = "application/json"
@@ -95,11 +97,6 @@ TXT_QUERY_PATH_REQUIRED = "A URL encoded path is required in the 'path' query pa
 
 
 class SimpleCache:
-    class RepeatTimer(threading.Timer):
-        def run(self):
-            while not self.finished.wait(self.interval):
-                self.function(*self.args, **self.kwargs)
-
     def __init__(self, args=None):
         args = args or {}
         self.lock = threading.Lock()
@@ -121,13 +118,13 @@ class SimpleCache:
         # Number of seconds between cache cleanups
         self.cache_clean_interval = args.get("cache_cleanup_interval", DEFAULT_CACHE_CLEANUP_INTERVAL)
         # Cleanup timer thread
-        self.timer = self.RepeatTimer(self.cache_clean_interval, self._clean_cache)
+        self.timer = threading.Timer(self.cache_clean_interval, self._clean_cache_timeout)
+        self.timer.daemon = True
         self.timer.start()
 
     def __del__(self):
         self.timer.cancel()
         self._clean_cache(force=True)
-        self.lock.release()
 
     def _clean_cache(self, force=False):
         """Checks each cache entry to see if it has expired and cleans up expired entries
@@ -164,14 +161,20 @@ class SimpleCache:
         LOG.debug(
             {
                 "msg": "Clean cache complete",
-                "cache_size": self.cache_size,
                 "cache_count": self.cache_count,
+                "cache_entries": self.cached_files + self.cached_memory,
+                "cache_size": self.cache_size,
                 "cache_overflow_count": self.cache_overflow_count,
-                "cache_entries": len(self.cache.keys()),
                 "cached_files": self.cached_files,
                 "cached_memory": self.cached_memory,
             }
         )
+
+    def _clean_cache_timeout(self):
+        self.timer = threading.Timer(self.cache_clean_interval, self._clean_cache_timeout)
+        self.timer.daemon = True
+        self.timer.start()
+        self._clean_cache()
 
     def add_item(self, item, use_files=True):
         """Adds an item into the cache
@@ -239,7 +242,18 @@ class SimpleCache:
         finally:
             self.lock.release()
         # Released lock
-        LOG.debug({"msg": "Cached item", "len": comp_data_len, "cache_size": self.cache_size})
+        LOG.debug(
+            {
+                "msg": "Caching item",
+                "len": comp_data_len,
+                "cache_count": self.cache_count,
+                "cache_entries": self.cached_files + self.cached_memory,
+                "cache_size": self.cache_size,
+                "cache_overflow_count": self.cache_overflow_count,
+                "cached_files": self.cached_files,
+                "cached_memory": self.cached_memory,
+            }
+        )
         return {"token": token, "expiration": cache_entry["timeout"]}
 
     def get_item(self, token):
@@ -1026,21 +1040,43 @@ def handle_ps_stat_single():
     return Response(json.dumps(resp_data, default=lambda o: JSON_SER_ERR), mimetype=MIME_TYPE_JSON)
 
 
-if __name__ == "__main__" or __file__ == None:
-    # DEBUG: Change user away from root
-    # os.setuid(2001)
-    options = {
-        "ulimit_memory": 4*1024**4, # 4 GiB memory limit
-    }
+def handle_sigint(signum, frame):
+    global server
+    server.close()
+    # Cleanup SimpleCache
+    cache = app.config.get("cache")
+    if cache:
+        del app.config["cache"]
+        cache.__del__()
+        del cache
+    sys.exit(0)
 
+if __name__ == "__main__" or __file__ == None:
+    signal.signal(signal.SIGINT, handle_sigint)
+    signal.signal(signal.SIGTERM, handle_sigint)
     # DEBUG: Add CLI parsing and populate the app.config["ps_scan"] with config variables
+    options = {
+        "ulimit_memory": 4 * 1024**3,  # 4 GiB memory limit
+    }
     if misc.is_onefs_os():
         # Set resource limits
         old_limit, new_limit = misc.set_resource_limits(options["ulimit_memory"])
         if new_limit:
             LOG.debug({"msg": "VMEM ulimit value set", "new_value": new_limit})
         else:
-            LOG.info({"msg": "VMEM ulimit setting failed"})
+            LOG.info({"msg": "VMEM ulimit setting failed", "mem_size": options["ulimit_memory"]})
+
     app.config["cache"] = SimpleCache()
     app.config["ps_scan"] = {"nodepool_translation": misc.get_nodepool_translation()}
-    serve(app, listen="*:4242")
+
+    # DEBUG: Change user away from root
+    # os.setuid(2001)
+
+    server = create_server(app, listen="*:4242")
+    server.run()
+    # Cleanup SimpleCache
+    cache = app.config.get("cache")
+    if cache:
+        del app.config["cache"]
+        cache.__del__()
+        del cache
