@@ -240,6 +240,14 @@ Default: %default
         help="Flag to enable advanced options",
     )
     parser.add_option_group(group)
+    group = optparse.OptionGroup(parser, "Logging and debug options")
+    group.add_option(
+        "--debug",
+        default=0,
+        action="count",
+        help="Add multiple debug flags to increase debug",
+    )
+    parser.add_option_group(group)
 
 
 def add_parser_options_advanced(parser, hide_options=False):

@@ -61,7 +61,7 @@ dictConfig(
                 "formatter": "default",
             }
         },
-        "root": {"level": "DEBUG", "handlers": ["wsgi"]},
+        "root": {"level": "INFO", "handlers": ["wsgi"]},
     }
 )
 
@@ -99,7 +99,6 @@ HTTP_HDR_CONTENT_ENCODING = "Content-Encoding"
 HTTP_HDR_CONTENT_LEN = "Content-Length"
 JSON_SER_ERR = "<not serializable>"
 MIME_TYPE_JSON = "application/json"
-STATS_FIELD_LIST = ["not_found", "processed", "skipped"]
 TXT_INVALID_TOKEN = "Invalid continuation token received. Either the token does not exist or the token has expired"
 TXT_QUERY_PATH_REQUIRED = "A URL encoded path is required in the 'path' query parameter"
 
@@ -507,6 +506,32 @@ def get_path_from_urlencoded(urlencoded_path):
     return root, file, decoded_path
 
 
+def signal_handler(signum, frame):
+    global server
+    if signum in [signal.SIGINT, signal.SIGTERM]:
+        server.close()
+        # Cleanup SimpleCache
+        cache = app.config.get("cache")
+        if cache:
+            del app.config["cache"]
+            cache.__del__()
+        sys.exit(0)
+    if signum in [signal.SIGUSR1]:
+        root_logger = logging.getLogger("")
+        cur_level = root_logger.getEffectiveLevel()
+        if cur_level != logging.DEBUG:
+            root_logger.setLevel(logging.DEBUG)
+        else:
+            root_logger.setLevel(logging.INFO)
+        LOG.critical(
+            {
+                "msg": "SIGUSR1 signal received. Toggling debug.",
+                "prev_state": cur_level,
+                "next_state": root_logger.getEffectiveLevel(),
+            }
+        )
+
+
 def translate_user_group_perms(full_path, file_info):
     lstat_required = False
     # Populate the perms_user and perms_group fields from the avaialble SID and UID/GID data
@@ -828,23 +853,15 @@ def handle_ps_stat_single():
     return Response(json.dumps(resp_data, default=lambda o: JSON_SER_ERR), mimetype=MIME_TYPE_JSON)
 
 
-def handle_sigint(signum, frame):
-    global server
-    server.close()
-    # Cleanup SimpleCache
-    cache = app.config.get("cache")
-    if cache:
-        del app.config["cache"]
-        cache.__del__()
-    sys.exit(0)
-
-
 if __name__ == "__main__" or __file__ == None:
     # Setup command line parser and parse agruments
     (parser, options, args) = cli_parser.parse_cli(sys.argv, __version__, __date__)
+    if options["debug"]:
+        LOG.setLevel(logging.DEBUG)
 
-    signal.signal(signal.SIGINT, handle_sigint)
-    signal.signal(signal.SIGTERM, handle_sigint)
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGUSR1, signal_handler)
     if misc.is_onefs_os():
         # Set resource limits
         old_limit, new_limit = misc.set_resource_limits(options["ulimit_memory"])
@@ -859,9 +876,6 @@ if __name__ == "__main__" or __file__ == None:
         "nodepool_translation": misc.get_nodepool_translation(),
     }
 
-    # DEBUG: Change user away from root
-    # os.setuid(options.get("uid", 0))
-
     svr_addr = "*" if options["addr"] == DEFAULT_SERVER_ADDR else options["addr"]
     server = create_server(
         app,
@@ -871,6 +885,7 @@ if __name__ == "__main__" or __file__ == None:
         threads=options["threads"],
     )
     server.run()
+
     # Cleanup SimpleCache
     cache = app.config.get("cache")
     if cache:
