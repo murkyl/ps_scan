@@ -422,8 +422,10 @@ def get_directory_listing(path):
             dir_file_list = os.listdir(path)
     except IOError as ioe:
         dir_file_list = []
-        if ioe.errno == 13:
+        if ioe.errno == 13: # 13: No access
             LOG.debug({"msg": "Directory permission error", "path": path, "error": str(ioe)})
+        elif ioe.errno == 20: # 20: Not a directory
+            LOG.info({"msg": "Unable to list path that is not a directory", "path": path})
         else:
             LOG.debug({"msg": "Unknown error", "path": path, "error": str(ioe)})
     except PermissionError as pe:
@@ -594,6 +596,8 @@ def handle_ps_stat_list():
     ----------
     custom_tagging: <bool> When true call a custom handler for each file. Enabling this can slow down scan speed
     extra_attr: <bool> When true, gets extra OneFS metadata. Enabling this can slow down scan speed
+    include_root: <bool> When true, the metadata for the path specified in the path query parameter will be returned
+            in the "contents" object under the key "root"
     no_acl: <bool> When true, skip ACL parsing. Enabling this can speed up scanning but results will not have ACLs
     strip_dot_snapshot: <bool> When true, strip the .snapshot name from the file path returned
     user_attr: <bool> # When true, get user attribute data for files. Enabling this can slow down scan speed
@@ -634,6 +638,7 @@ def handle_ps_stat_list():
     param = {
         "custom_tagging": parse_arg_bool(args, "custom_tagging", False),
         "extra_attr": parse_arg_bool(args, "extra_attr", False),
+        "include_root": parse_arg_bool(args, "include_root", False),
         "limit": parse_arg_int(args, "limit", DEFAULT_ITEM_LIMIT, 1, DEFAULT_MAX_ITEM_LIMIT),
         "no_acl": parse_arg_bool(args, "no_acl", False),
         "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
@@ -659,14 +664,17 @@ def handle_ps_stat_list():
     # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
     base, file, full_path = get_path_from_urlencoded(param["path"])
     if not param["token"]:
-        stat_data = dir_handler(base, [file], param)
-        if stat_data["dirs"]:
-            root = stat_data["dirs"][0]
+        if param["include_root"]:
+            stat_data = dir_handler(base, [file], param)
+            if stat_data["dirs"]:
+                root = stat_data["dirs"][0]
+                root_is_dir = True
+                param["limit"] -= 1
+            elif stat_data["files"]:
+                root = stat_data["files"][0]
+                param["limit"] -= 1
+        else:
             root_is_dir = True
-            param["limit"] -= 1
-        elif stat_data["files"]:
-            root = stat_data["files"][0]
-            param["limit"] -= 1
 
     if root_is_dir or param["token"]:
         # Get the list of files/directories to process either from the file system directly or a cache
@@ -709,9 +717,9 @@ def handle_ps_stat_list():
             for key in list_stat_data["statistics"]:
                 total_stats[key] = list_stat_data["statistics"][key] + stat_data["statistics"][key]
         else:
-            total_stats = stat_data["statistics"]
+            total_stats = stat_data.get("statistics", {})
     else:
-        total_stats = list_stat_data["statistics"]
+        total_stats = list_stat_data.get("statistics", {})
 
     # Build response
     resp_data = {
