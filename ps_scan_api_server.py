@@ -135,7 +135,7 @@ def file_handler_pscale(root, filename_list, args={}):
             {
               "dirs": [<dict>]                  # List of directory metadata objects
               "files": [<dict>]                 # List of file metadata objects
-              "stats": {
+              "statistics": {
                 "lstat_required": <bool>        # Number of times lstat was called vs. internal stat call
                 "not_found": <int>              # Number of files that were not found
                 "processed": <int>              # Number of files actually processed
@@ -394,7 +394,7 @@ def file_handler_pscale(root, filename_list, args={}):
     results = {
         "dirs": result_dir_list,
         "files": result_list,
-        "stats": stats,
+        "statistics": stats,
     }
     return results
 
@@ -408,7 +408,7 @@ def file_handler_pscale_diskover(root, filename_list, args={}):
         dirs_list[i] = add_diskover_fields(dirs_list[i])
     for i in range(len(files_list)):
         files_list[i] = add_diskover_fields(files_list[i])
-    scan_results["stats"]["time_conversion"] = time.time() - now
+    scan_results["statistics"]["time_conversion"] = time.time() - now
     return scan_results
 
 
@@ -597,6 +597,8 @@ def handle_ps_stat_list():
     no_acl: <bool> When true, skip ACL parsing. Enabling this can speed up scanning but results will not have ACLs
     strip_dot_snapshot: <bool> When true, strip the .snapshot name from the file path returned
     user_attr: <bool> # When true, get user attribute data for files. Enabling this can slow down scan speed
+    
+    A bool value is false if the value is 0 or the string false. Any other value is interpreted as a true value.
 
     Returns
     ----------
@@ -605,28 +607,14 @@ def handle_ps_stat_list():
           "contents": {
             "dirs": [<dict>]                  # List of directory metadata objects
             "files": [<dict>]                 # List of file metadata objects
-            "root": <dict>                    # Metadata for the root path
-            "stats": {
-              "lstat_required": <bool>        # Number of times lstat was called vs. internal stat call
-              "not_found": <int>              # Number of files that were not found
-              "processed": <int>              # Number of files actually processed
-              "skipped": <int>                # Number of files skipped
-              "time_access_time": <int>       # Seconds spent getting the file access time
-              "time_acl": <int>               # Seconds spent getting file ACL
-              "time_custom_tagging": <int>    # Seconds spent processing custom tags
-              "time_dinode": <int>            # Seconds spent getting OneFS metadata
-              "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
-              "time_lstat": <int>             # Seconds spent in lstat
-              "time_scan_dir": <int>          # Seconds spent scanning the entire directory
-              "time_user_attr": <int>         # Seconds spent scanning user attributes
-            }
+            "root": <dict>                    # Metadata object for the root path
           }
           "items_total": <int>                # Total number of items remaining that could be returned
           "items_returned": <int>             # Number of metadata items returned. This number includes the "root"
           "token_continuation": <string>      # String that should be used in the "token" query argument to continue
                                               # scanning a directory
           "token_expiration": <int>           # Epoch seconds specifying when the token will expire
-          "stats": {
+          "statistics": {
             "lstat_required": <bool>          # Number of times lstat was called vs. internal stat call
             "not_found": <int>                # Number of files that were not found
             "processed": <int>                # Number of files actually processed
@@ -718,12 +706,12 @@ def handle_ps_stat_list():
     total_stats = {}
     if stat_data:
         if list_stat_data:
-            for key in list_stat_data["stats"]:
-                total_stats[key] = list_stat_data["stats"][key] + stat_data["stats"][key]
+            for key in list_stat_data["statistics"]:
+                total_stats[key] = list_stat_data["statistics"][key] + stat_data["statistics"][key]
         else:
-            total_stats = stat_data["stats"]
+            total_stats = stat_data["statistics"]
     else:
-        total_stats = list_stat_data["stats"]
+        total_stats = list_stat_data["statistics"]
 
     # Build response
     resp_data = {
@@ -736,7 +724,7 @@ def handle_ps_stat_list():
         "items_returned": items_returned,
         "token_continuation": token_continuation,
         "token_expiration": token_expiration,
-        "stats": total_stats,
+        "statistics": total_stats,
     }
     return Response(json.dumps(resp_data, default=lambda o: JSON_SER_ERR), mimetype=MIME_TYPE_JSON)
 
@@ -768,7 +756,7 @@ def handle_ps_stat_single():
             "dirs": []                        # Empty list
             "files": []                       # Empty list
             "root": <dict>                    # Metadata for the root path
-            "stats": {
+            "statistics": {
               "lstat_required": <bool>        # Number of times lstat was called vs. internal stat call
               "not_found": <int>              # Number of files that were not found
               "processed": <int>              # Number of files actually processed
@@ -785,7 +773,7 @@ def handle_ps_stat_single():
           }
           "items_total": <int>                # Total number of items remaining that could be returned
           "items_returned": <int>             # Number of metadata items returned. This number includes the "root"
-          "stats": {
+          "statistics": {
             "lstat_required": <bool>          # Number of times lstat was called vs. internal stat call
             "not_found": <int>                # Number of files that were not found
             "processed": <int>                # Number of files actually processed
@@ -832,7 +820,7 @@ def handle_ps_stat_single():
         },
         "items_total": 1,
         "items_returned": 1 * (not not root),
-        "stats": stat_data["stats"],
+        "statistics": stat_data["statistics"],
     }
     return Response(json.dumps(resp_data, default=lambda o: JSON_SER_ERR), mimetype=MIME_TYPE_JSON)
 
@@ -867,7 +855,7 @@ if __name__ == "__main__" or __file__ == None:
     app.config["ps_scan"] = {"nodepool_translation": misc.get_nodepool_translation()}
 
     # DEBUG: Change user away from root
-    # os.setuid(2001)
+    # os.setuid(options.get("uid", 0))
 
     server = create_server(app, listen="*:4242")
     server.run()
