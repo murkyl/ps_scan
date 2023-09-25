@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-# coding: utf-8
+# -*- coding: utf8 -*-
 """
 Misc helper functoons
 """
@@ -24,6 +24,8 @@ __all__ = [
     "humanize_seconds",
     "is_onefs_os",
     "merge_process_stats",
+    "parse_arg_bool",
+    "parse_arg_int",
     "parse_node_list",
     "read_es_options_file",
     "set_resource_limits",
@@ -271,6 +273,25 @@ def merge_process_stats(process_states):
                     continue
                 temp_stats[key] += state["stats"][key]
     return temp_stats
+
+
+def parse_arg_bool(arg, field, default):
+    val = arg.get(field, default)
+    if isinstance(val, bool):
+        return val
+    val = val.lower()
+    if val in ["false", "0"]:
+        return False
+    return True
+
+
+def parse_arg_int(arg, field, default, minimum=None, maximum=None):
+    val = int(arg.get(field, default))
+    if minimum and val < minimum:
+        val = minimum
+    if maximum and val > maximum:
+        val = maximum
+    return val
 
 
 def parse_node_list(node_str, min_node_list=[]):

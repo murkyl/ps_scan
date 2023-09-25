@@ -1,3 +1,17 @@
+#!/usr/bin/env python
+# -*- coding: utf8 -*-
+"""
+PowerScale file scanner
+"""
+# fmt: off
+__title__         = "ps_scan_api_server"
+__version__       = "0.1.0"
+__date__          = "25 September 2023"
+__license__       = "MIT"
+__author__        = "Andrew Chung <andrew.chung@dell.com>"
+__maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
+__email__         = "andrew.chung@dell.com"
+# fmt: on
 import datetime
 import errno
 import gzip
@@ -51,7 +65,7 @@ dictConfig(
     }
 )
 
-
+import helpers.cli_parser_api as cli_parser
 from helpers.constants import *
 import helpers.misc as misc
 from libs.flask import Flask
@@ -425,9 +439,9 @@ def get_directory_listing(path):
             dir_file_list = os.listdir(path)
     except IOError as ioe:
         dir_file_list = []
-        if ioe.errno == 13: # 13: No access
+        if ioe.errno == 13:  # 13: No access
             LOG.debug({"msg": "Directory permission error", "path": path, "error": str(ioe)})
-        elif ioe.errno == 20: # 20: Not a directory
+        elif ioe.errno == 20:  # 20: Not a directory
             LOG.info({"msg": "Unable to list path that is not a directory", "path": path})
         else:
             LOG.debug({"msg": "Unknown error", "path": path, "error": str(ioe)})
@@ -496,25 +510,6 @@ def get_path_from_urlencoded(urlencoded_path):
     root = os.path.dirname(decoded_path)
     file = os.path.basename(decoded_path)
     return root, file, decoded_path
-
-
-def parse_arg_bool(arg, field, default):
-    val = arg.get(field, default)
-    if isinstance(val, bool):
-        return val
-    val = val.lower()
-    if val in ["false", "0"]:
-        return False
-    return True
-
-
-def parse_arg_int(arg, field, default, minimum=None, maximum=None):
-    val = int(arg.get(field, default))
-    if minimum and val < minimum:
-        val = minimum
-    if maximum and val > maximum:
-        val = maximum
-    return val
 
 
 def translate_user_group_perms(full_path, file_info):
@@ -604,7 +599,7 @@ def handle_ps_stat_list():
     no_acl: <bool> When true, skip ACL parsing. Enabling this can speed up scanning but results will not have ACLs
     strip_dot_snapshot: <bool> When true, strip the .snapshot name from the file path returned
     user_attr: <bool> # When true, get user attribute data for files. Enabling this can slow down scan speed
-    
+
     A bool value is false if the value is 0 or the string false. Any other value is interpreted as a true value.
 
     Returns
@@ -639,17 +634,17 @@ def handle_ps_stat_list():
     """
     args = request.args
     param = {
-        "custom_tagging": parse_arg_bool(args, "custom_tagging", False),
-        "extra_attr": parse_arg_bool(args, "extra_attr", False),
-        "include_root": parse_arg_bool(args, "include_root", False),
-        "limit": parse_arg_int(args, "limit", DEFAULT_ITEM_LIMIT, 1, DEFAULT_MAX_ITEM_LIMIT),
-        "no_acl": parse_arg_bool(args, "no_acl", False),
+        "custom_tagging": misc.parse_arg_bool(args, "custom_tagging", False),
+        "extra_attr": misc.parse_arg_bool(args, "extra_attr", False),
+        "include_root": misc.parse_arg_bool(args, "include_root", False),
+        "limit": misc.parse_arg_int(args, "limit", DEFAULT_ITEM_LIMIT, 1, DEFAULT_MAX_ITEM_LIMIT),
+        "no_acl": misc.parse_arg_bool(args, "no_acl", False),
         "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
         "path": args.get("path"),
-        "strip_do_snapshot": parse_arg_bool(args, "strip_dot_snapshot", True),
+        "strip_do_snapshot": misc.parse_arg_bool(args, "strip_dot_snapshot", True),
         "token": args.get("token"),
         "type": args.get("type", DEFAULT_DATA_TYPE),
-        "user_attr": parse_arg_bool(args, "user_attr", False),
+        "user_attr": misc.parse_arg_bool(args, "user_attr", False),
     }
     if not param["path"]:
         return make_response({"msg": TXT_QUERY_PATH_REQUIRED}, 404)
@@ -802,14 +797,14 @@ def handle_ps_stat_single():
     """
     args = request.args
     param = {
-        "custom_tagging": parse_arg_bool(args, "custom_tagging", False),
-        "extra_attr": parse_arg_bool(args, "extra_attr", False),
-        "no_acl": parse_arg_bool(args, "no_acl", False),
+        "custom_tagging": misc.parse_arg_bool(args, "custom_tagging", False),
+        "extra_attr": misc.parse_arg_bool(args, "extra_attr", False),
+        "no_acl": misc.parse_arg_bool(args, "no_acl", False),
         "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
         "path": args.get("path"),
-        "strip_do_snapshot": parse_arg_bool(args, "strip_dot_snapshot", True),
+        "strip_do_snapshot": misc.parse_arg_bool(args, "strip_dot_snapshot", True),
         "type": args.get("type", DEFAULT_DATA_TYPE),
-        "user_attr": parse_arg_bool(args, "user_attr", False),
+        "user_attr": misc.parse_arg_bool(args, "user_attr", False),
     }
 
     # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
@@ -849,12 +844,11 @@ def handle_sigint(signum, frame):
 
 
 if __name__ == "__main__" or __file__ == None:
+    # Setup command line parser and parse agruments
+    (parser, options, args) = cli_parser.parse_cli(sys.argv, __version__, __date__)
+
     signal.signal(signal.SIGINT, handle_sigint)
     signal.signal(signal.SIGTERM, handle_sigint)
-    # DEBUG: Add CLI parsing and populate the app.config["ps_scan"] with config variables
-    options = {
-        "ulimit_memory": 4 * 1024**3,  # 4 GiB memory limit
-    }
     if misc.is_onefs_os():
         # Set resource limits
         old_limit, new_limit = misc.set_resource_limits(options["ulimit_memory"])
@@ -863,13 +857,20 @@ if __name__ == "__main__" or __file__ == None:
         else:
             LOG.info({"msg": "VMEM ulimit setting failed", "mem_size": options["ulimit_memory"]})
 
-    app.config["cache"] = SimpleCache()
+    app.config["cache"] = SimpleCache(options)
     app.config["ps_scan"] = {"nodepool_translation": misc.get_nodepool_translation()}
 
     # DEBUG: Change user away from root
     # os.setuid(options.get("uid", 0))
 
-    server = create_server(app, listen="*:4242")
+    svr_addr = "*" if options["addr"] == DEFAULT_SERVER_ADDR else options["addr"]
+    server = create_server(
+        app,
+        host=svr_addr,
+        ident="ps_scan_api_server/{ver}".format(ver=__version__),
+        port=options["port"],
+        threads=options["threads"],
+    )
     server.run()
     # Cleanup SimpleCache
     cache = app.config.get("cache")
