@@ -265,20 +265,20 @@ ACE_TYPE_FLAG_STR_MAP = {
     "254": "posix_mask",
 }
 
+CDEF = """
+char * get_dir_acl(int fd);
+char * get_file_acl(int fd);
+char * get_sd_text(int fd);
+void free(void *);
+"""
+
 try:
     ffi = FFI()
-    ffi.cdef(
-        """
-        char * get_dir_acl(int fd);
-        char * get_file_acl(int fd);
-        char * get_sd_text(int fd);
-        void free(void *);
-    """
-    )
+    ffi.cdef(CDEF)
     C_LIB = ffi.dlopen(None)
     ISI_ACL_LIB = ffi.dlopen("libisi_acl.so")
-except:
-    pass
+except Exception as e:
+    raise
 
 
 def flags_to_text_list(flags):
