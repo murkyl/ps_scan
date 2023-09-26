@@ -77,9 +77,9 @@ from libs.waitress import create_server
 
 try:
     import isi.fs.attr as attr
-    import isi.fs.diskpool as dp
     import isi.fs.userattr as uattr
     import libs.onefs_acl as onefs_acl
+    from libs.onefs_become_user import become_user
 except:
     pass
 try:
@@ -875,6 +875,13 @@ if __name__ == "__main__" or __file__ == None:
         "options": options,
         "nodepool_translation": misc.get_nodepool_translation(),
     }
+
+    if options["user"]:
+      try:
+          become_user(options["user"])
+      except Exception as e:
+          LOG.exception(e)
+          sys.exit(1)
 
     svr_addr = "*" if options["addr"] == DEFAULT_SERVER_ADDR else options["addr"]
     server = create_server(

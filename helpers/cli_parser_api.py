@@ -28,6 +28,12 @@ Start a PowerStore Scan API server
 This server will allow queries to return different PowerScale specific information that
 is not available through the standard PAPI or RAN methods.
 
+To improve server security, it is recommended to use the --user option to have the server run in the context of this
+user. The user needs to have the following RBAC privileges:
+Read - ISI_PRIV_LOGIN_PAPI - Required to access PAPI
+Read - ISI_PRIV_PERFORMANCE - Required to monitor system performance for throttling
+Read - ISI_PRIV_IFS_BACKUP - Required to read files in the file system for indexing
+
 
 Endpoints
 ====================
@@ -182,6 +188,7 @@ python ps_scan_api_server.py
 Return values
 ====================
 0   No errors
+1   CLI argument errors
 """
 
 
@@ -213,6 +220,12 @@ Examples:
         type="int",
         default=DEFAULT_SERVER_PORT,
         help="Port number for client/server connection",
+    )
+    parser.add_option(
+        "--user",
+        action="store",
+        default=None,
+        help="User in the current zone that the server will run as",
     )
     parser.add_option(
         "--default-item-limit",
