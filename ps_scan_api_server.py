@@ -877,11 +877,11 @@ if __name__ == "__main__" or __file__ == None:
     }
 
     if options["user"]:
-      try:
-          become_user(options["user"])
-      except Exception as e:
-          LOG.exception(e)
-          sys.exit(1)
+        try:
+            become_user(options["user"])
+        except Exception as e:
+            LOG.exception(e)
+            sys.exit(1)
 
     svr_addr = "*" if options["addr"] == DEFAULT_SERVER_ADDR else options["addr"]
     server = create_server(

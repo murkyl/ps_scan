@@ -30,9 +30,9 @@ is not available through the standard PAPI or RAN methods.
 
 To improve server security, it is recommended to use the --user option to have the server run in the context of this
 user. The user needs to have the following RBAC privileges:
-Read - ISI_PRIV_LOGIN_PAPI - Required to access PAPI
-Read - ISI_PRIV_PERFORMANCE - Required to monitor system performance for throttling
 Read - ISI_PRIV_IFS_BACKUP - Required to read files in the file system for indexing
+Read - ISI_PRIV_LOGIN_PAPI - Required to access PAPI
+Read - ISI_PRIV_STATISTICS - Required to monitor system performance for throttling
 
 
 Endpoints
