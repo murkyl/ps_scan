@@ -211,8 +211,13 @@ Examples:
     parser.add_option(
         "--addr",
         action="store",
-        default=DEFAULT_SERVER_ADDR,
-        help="Server address (IP or FQDN)",
+        default="*",
+        help="""Server address (IP or FQDN). When set to the value of 
+'*', the server listens to all interfaces on both     
+IPv4 and IPv6. When set to 0.0.0.0 the server listens 
+on all interfaces only for IPv4.                      
+Default: *
+""",
     )
     parser.add_option(
         "--port",
