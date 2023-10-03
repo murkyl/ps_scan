@@ -79,6 +79,7 @@ try:
     import isi.fs.attr as attr
     import isi.fs.userattr as uattr
     import libs.onefs_acl as onefs_acl
+    from libs.onefs_auth import GetPrincipalName
     from libs.onefs_become_user import become_user
 except:
     pass
@@ -93,24 +94,42 @@ except:
 
 app = Flask(__name__)
 server = None
+auth_cache = GetPrincipalName()
+
 LOG = app.logger
 HTTP_HDR_ACCEPT_ENCODING = "Accept-Encoding"
 HTTP_HDR_CONTENT_ENCODING = "Content-Encoding"
 HTTP_HDR_CONTENT_LEN = "Content-Length"
 JSON_SER_ERR = "<not serializable>"
 MIME_TYPE_JSON = "application/json"
+REQUIRED_RETURN_FIELDS = [
+    "atime",
+    "ctime",
+    "file_ext",
+    "file_hard_links",
+    "file_name",
+    "file_path",
+    "file_type",
+    "inode",
+    "mtime",
+    "perms_unix_gid",
+    "perms_unix_uid",
+    "size",
+    "size_logical",
+    "size_physical",
+]
 TXT_INVALID_TOKEN = "Invalid continuation token received. Either the token does not exist or the token has expired"
 TXT_QUERY_PATH_REQUIRED = "A URL encoded path is required in the 'path' query parameter"
 
 
-def add_diskover_fields(file_info):
-    return {
-        "atime": datetime.datetime.fromtimestamp(file_info["atime"]).strftime(DEFAULT_TIME_FORMAT_8601),
-        "ctime": datetime.datetime.fromtimestamp(file_info["ctime"]).strftime(DEFAULT_TIME_FORMAT_8601),
+def add_diskover_fields(file_info, remove_existing=False):
+    diskover_info = {
+        "atime": file_info["atime"],
+        "ctime": file_info["ctime"],
         "extension": file_info["file_ext"],
         "group": file_info["perms_unix_gid"],
         "ino": file_info["inode"],
-        "mtime": datetime.datetime.fromtimestamp(file_info["mtime"]).strftime(DEFAULT_TIME_FORMAT_8601),
+        "mtime": file_info["mtime"],
         "name": file_info["file_name"],
         "nlink": file_info["file_hard_links"],
         "owner": file_info["perms_unix_uid"],
@@ -120,6 +139,25 @@ def add_diskover_fields(file_info):
         "type": "directory" if file_info["file_type"] == "dir" else file_info["file_type"],
         "pscale": file_info,
     }
+    if remove_existing:
+        for field in [
+            "atime",
+            "ctime",
+            "file_ext",
+            "file_hard_links",
+            "file_name",
+            "file_path",
+            "file_type",
+            "inode",
+            "mtime",
+            "perms_unix_gid",
+            "perms_unix_uid",
+            "size",
+            "size_physical",
+        ]:
+            if field in file_info:
+                del file_info[field]
+    return diskover_info
 
 
 def file_handler_pscale(root, filename_list, args={}):
@@ -168,6 +206,7 @@ def file_handler_pscale(root, filename_list, args={}):
     no_acl = args.get("no_acl", DEFAULT_PARSE_SKIP_ACLS)
     phys_block_size = args.get("phys_block_size", IFS_BLOCK_SIZE)
     pool_translate = args.get("nodepool_translation", {})
+    return_set_fields = args.get("fields")
     strip_dot_snapshot = args.get("strip_dot_snapshot", DEFAULT_STRIP_DOT_SNAPSHOT)
     user_attr = args.get("user_attr", DEFAULT_PARSE_USER_ATTR)
 
@@ -210,12 +249,16 @@ def file_handler_pscale(root, filename_list, args={}):
                         file_info["user_tags"] = custom_tagging(file_info)
                         stats["time_custom_tagging"] += time.time() - time_start
                     if file_info["file_type"] == "dir":
-                        file_info["_scan_time"] = now
                         result_dir_list.append(file_info)
                         # Fix size issues with dirs
                         file_info["size_logical"] = 0
                         stats["processed"] += 1
                         continue
+                    # Filter out keys if requested
+                    if return_set_fields:
+                        for key in list(file_info.keys()):
+                            if key not in return_set_fields:
+                                del file_info[key]
                     result_list.append(file_info)
                     stats["processed"] += 1
                     continue
@@ -364,8 +407,12 @@ def file_handler_pscale(root, filename_list, args={}):
                 stats["lstat_required"] += 1
                 stats["time_lstat"] += time.time() - time_start
 
+            # Filter out keys if requested
+            if return_set_fields:
+                for key in list(file_info.keys()):
+                    if key not in return_set_fields:
+                        del file_info[key]
             if fstats["di_mode"] & 0o040000:
-                file_info["_scan_time"] = now
                 result_dir_list.append(file_info)
                 # Fix size issues with dirs
                 file_info["size_logical"] = 0
@@ -532,7 +579,7 @@ def signal_handler(signum, frame):
         )
 
 
-def translate_user_group_perms(full_path, file_info):
+def translate_user_group_perms(full_path, file_info, name_lookup=True):
     lstat_required = False
     # Populate the perms_user and perms_group fields from the avaialble SID and UID/GID data
     # Translate the numeric values into human readable user name and group names if possible
@@ -560,6 +607,9 @@ def translate_user_group_perms(full_path, file_info):
         file_info["perms_group"].replace("gid:", "")
     else:
         file_info["perms_group"] = file_info["perms_unix_gid"]
+    if name_lookup:
+        file_info["perms_user"] = auth_cache.get_user_name(file_info["perms_user"], full_path)
+        file_info["perms_group"] = auth_cache.get_group_name(file_info["perms_group"], full_path)
     return lstat_required
 
 
@@ -602,10 +652,12 @@ def handle_ps_stat_list():
 
     Query arguments (common)
     ----------
+    fields: <string> Comma separated string with a complete list of field names to return. Defaults to the empty string
+            which returns all fields.
+    limit: <int> Maximum number of entries to return in a single call. Defaults to 10000. Maximum value of 100000
     path: <string> URL encoded string representing the path in the file system that metadata will be returned
             The path can start with /ifs or not. The /ifs part of the path will be prepended if necessary
             A path with a trailing slash will have the slash removed.
-    limit: <int> Maximum number of entries to return in a single call. Defaults to 10000. Maximum value of 100000
     token: <string> Token string to allow the continuation of a previous scan request when that request did not return
             all the available data for a specific root path. Tokens expire and using an expired token results in a 404
     type: <string> Type of scan result to return. One of: powerscale|diskover. The default is powerscale.
@@ -658,6 +710,7 @@ def handle_ps_stat_list():
         "custom_tagging": misc.parse_arg_bool(args, "custom_tagging", False),
         "extra_attr": misc.parse_arg_bool(args, "extra_attr", False),
         "include_root": misc.parse_arg_bool(args, "include_root", False),
+        "fields": str(args.get("fields", "")),
         "limit": misc.parse_arg_int(args, "limit", options["default_item_limit"], 1, options["max_item_limit"]),
         "no_acl": misc.parse_arg_bool(args, "no_acl", False),
         "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
@@ -669,6 +722,16 @@ def handle_ps_stat_list():
     }
     if not param["path"]:
         return make_response({"msg": TXT_QUERY_PATH_REQUIRED}, 404)
+    if param["fields"]:
+        # Parse fields to return
+        fields = param["fields"].split(",")
+        param["fields"] = []
+        for field in fields:
+            if not re.match(r"[^a-zA-Z0-9_\-,.]", field):
+                param["fields"].append(field)
+        # Ensure we have a minimum set of fields
+        if param["fields"]:
+            param["fields"] = list(set(param["fields"] + REQUIRED_RETURN_FIELDS))
 
     dir_handler = file_handler_pscale if param["type"] == DATA_TYPE_PS else file_handler_pscale_diskover
     dir_list = []
@@ -762,6 +825,8 @@ def handle_ps_stat_single():
 
     Query arguments (common)
     ----------
+    fields: <string> Comma separated string with a complete list of field names to return. Defaults to the empty string
+            which returns all fields.
     path: <string> URL encoded string representing the path in the file system that metadata will be returned
             The path can start with /ifs or not. The /ifs part of the path will be prepended if necessary
             A path with a trailing slash will have the slash removed.
@@ -820,6 +885,7 @@ def handle_ps_stat_single():
     param = {
         "custom_tagging": misc.parse_arg_bool(args, "custom_tagging", False),
         "extra_attr": misc.parse_arg_bool(args, "extra_attr", False),
+        "fields": str(args.get("fields", "")),
         "no_acl": misc.parse_arg_bool(args, "no_acl", False),
         "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
         "path": args.get("path"),
@@ -827,6 +893,16 @@ def handle_ps_stat_single():
         "type": args.get("type", DEFAULT_DATA_TYPE),
         "user_attr": misc.parse_arg_bool(args, "user_attr", False),
     }
+    if param["fields"]:
+        # Parse fields to return
+        fields = param["fields"].split(",")
+        param["fields"] = []
+        for field in fields:
+            if not re.match(r"[^a-zA-Z0-9_\-,.]", field):
+                param["fields"].append(field)
+        # Ensure we have a minimum set of fields
+        if param["fields"]:
+            param["fields"] = list(set(param["fields"] + REQUIRED_RETURN_FIELDS))
 
     # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
     base, file, full = get_path_from_urlencoded(param["path"])
