@@ -20,7 +20,6 @@ __all__ = [
     "init_thread",
     "print_statistics",
     "shutdown",
-    "translate_user_group_perms",
     "update_config",
 ]
 # fmt: on
@@ -46,6 +45,7 @@ try:
     import isi.fs.diskpool as dp
     import isi.fs.userattr as uattr
     import libs.onefs_acl as onefs_acl
+    from libs.onefs_auth import translate_user_group_perms
 except:
     pass
 try:
@@ -393,10 +393,7 @@ def file_handler_pscale(root, filename_list, stats, now, args={}):
                 thread_stats["get_custom_tagging_time"] += time.time() - time_start
 
             time_start = time.time()
-            lstat_required = translate_user_group_perms(full_path, file_info)
-            if lstat_required:
-                thread_stats["lstat_required"] += 1
-                thread_stats["lstat_time"] += time.time() - time_start
+            translate_user_group_perms(full_path, file_info, fd=fd)
 
             if fstats["di_mode"] & 0o040000:
                 file_info["_scan_time"] = now
@@ -714,10 +711,7 @@ def file_handler_pscale_diskover(root, filename_list, stats, now, args={}):
                 thread_stats["get_custom_tagging_time"] += time.time() - time_start
 
             time_start = time.time()
-            lstat_required = translate_user_group_perms(full_path, file_info["pscale"])
-            if lstat_required:
-                thread_stats["lstat_required"] += 1
-                thread_stats["lstat_time"] += time.time() - time_start
+            translate_user_group_perms(full_path, file_info["pscale"], fd=fd)
 
             if fstats["di_mode"] & 0o040000:
                 file_info["pscale"]["_scan_time"] = now
@@ -969,37 +963,6 @@ def shutdown(custom_state, custom_threads_state):
         else:
             LOG.debug({"msg": "Send queue size", "qsize": custom_state.get("es_send_cmd_q").qsize()})
             LOG.debug({"msg": "Elastic Search send threads have all shutdown"})
-
-
-def translate_user_group_perms(full_path, file_info):
-    lstat_required = False
-    # Populate the perms_user and perms_group fields from the avaialble SID and UID/GID data
-    # Translate the numeric values into human readable user name and group names if possible
-    # TODO: Add translation to names from SID/UID/GID values
-    if file_info["perms_unix_uid"] == 0xFFFFFFFF or file_info["perms_unix_gid"] == 0xFFFFFFFF:
-        lstat_required = True
-        LOG.debug("lstat required for UID/GID: {filename}".format(filename=full_path))
-        # If the UID/GID is set to 0xFFFFFFFF then on cluster, the UID/GID is generated
-        # by the cluster.
-        # When this happens, use os.fstat to get the UID/GID information from the point
-        # of view of the access zone that is running the script, normally the System zone
-        try:
-            fstats = os.lstat(full_path)
-            file_info["perms_unix_gid"] = (fstats.st_gid,)
-            file_info["perms_unix_uid"] = (fstats.st_uid,)
-        except Exception as e:
-            LOG.info("Unable to get file UID/GID properly for: {filename}".format(filename=full_path))
-    if "perms_acl_user" in file_info:
-        file_info["perms_user"] = file_info["perms_acl_user"]
-        file_info["perms_user"].replace("uid:", "")
-    else:
-        file_info["perms_user"] = file_info["perms_unix_uid"]
-    if "perms_acl_group" in file_info:
-        file_info["perms_group"] = file_info["perms_acl_group"]
-        file_info["perms_group"].replace("gid:", "")
-    else:
-        file_info["perms_group"] = file_info["perms_unix_gid"]
-    return lstat_required
 
 
 def update_config(custom_state, new_config):
