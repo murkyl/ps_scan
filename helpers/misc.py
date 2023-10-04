@@ -16,10 +16,12 @@ __all__ = [
     "acl_group_to_str",
     "acl_user_to_str",
     "chunk_list",
+    "get_directory_listing",
     "get_local_internal_addr",
     "get_local_node_number",
     "get_local_storage_usage_stats",
     "get_nodepool_translation",
+    "get_path_from_urlencoded",
     "humanize_number",
     "humanize_seconds",
     "is_onefs_os",
@@ -35,14 +37,28 @@ __all__ = [
 ]
 # fmt: on
 import copy
+import errno
 import logging
+import os
 import platform
+import subprocess
 
 try:
     import resource
 except:
     pass
-import subprocess
+try:
+    import urllib.parse
+
+    urlencode = urllib.parse.urlencode
+    urlquote = urllib.parse.quote
+    urlunquote = urllib.parse.unquote
+except:
+    import urllib
+
+    urlencode = urllib.urlencode
+    urlquote = urllib.quote
+    urlunquote = urllib.unquote
 
 from .constants import *
 import libs.papi_lite as papi_lite
@@ -51,6 +67,11 @@ try:
     import isi.fs.diskpool as dp
 except:
     pass
+try:
+    dir(os.scandir)
+    USE_SCANDIR = 1
+except:
+    USE_SCANDIR = 0
 
 LOG = logging.getLogger(__name__)
 URI_STATISTICS_KEY = "/statistics/current"
@@ -131,6 +152,30 @@ def chunk_list(list_data, chunks):
         chunked_list[i] = list_data[index : index + chunk_sizes[i]]
         index += chunk_sizes[i]
     return chunked_list
+
+
+def get_directory_listing(path):
+    try:
+        if USE_SCANDIR:
+            dir_file_list = []
+            for entry in os.scandir(path):
+                dir_file_list.append(entry.name)
+        else:
+            dir_file_list = os.listdir(path)
+    except IOError as ioe:
+        dir_file_list = []
+        if ioe.errno == errno.EACCES:  # 13: No access
+            LOG.debug({"msg": "Directory permission error", "path": path, "error": str(ioe)})
+        elif ioe.errno == 20:  # 20: Not a directory
+            LOG.info({"msg": "Unable to list path that is not a directory", "path": path})
+        else:
+            LOG.debug({"msg": "Unknown error", "path": path, "error": str(ioe)})
+    except PermissionError as pe:
+        dir_file_list = []
+        LOG.debug({"msg": "Directory permission error", "path": path, "error": str(pe)})
+    except Exception as e:
+        LOG.debug({"msg": "Unknown error", "path": path, "error": str(e)})
+    return dir_file_list
 
 
 def get_local_internal_addr():
@@ -221,6 +266,19 @@ def get_nodepool_translation():
     else:
         LOG.info({"msg": "Cannot get nodepool translation table. Not running on a OneFS system"})
     return node_pool_translation
+
+
+def get_path_from_urlencoded(urlencoded_path):
+    decoded_path = urlunquote(urlencoded_path)
+    if decoded_path.endswith("/"):
+        decoded_path = decoded_path[0:-1]
+    if not decoded_path.startswith("/"):
+        decoded_path = "/" + decoded_path
+    if not decoded_path.startswith("/ifs"):
+        decoded_path = "/ifs" + decoded_path
+    root = os.path.dirname(decoded_path)
+    file = os.path.basename(decoded_path)
+    return root, file, decoded_path
 
 
 def humanize_number(num, suffix="B", base=10, truncate=True):
