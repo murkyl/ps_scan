@@ -597,7 +597,6 @@ def compress(response):
     # 0: No compression, 1: Fastest, 9: Slowest
     compress_level = 9
     accept_encoding = request.headers.get(HTTP_HDR_ACCEPT_ENCODING, "").lower()
-    LOG.critical("ACCEPT ENCODING: %s" % accept_encoding)
     if (
         response.status_code < 200
         or response.status_code >= 300
@@ -608,14 +607,12 @@ def compress(response):
         return response
     # Prefer gzip over deflate when available
     if ENCODING_GZIP in accept_encoding:
-        LOG.critical("DEBUG: USING GZIP")
         buffer = io.BytesIO()
         with gzip.GzipFile(mode="wb", compresslevel=compress_level, fileobj=buffer) as gz_file:
             gz_file.write(response.get_data())
         content = buffer.getvalue()
         encoding = ENCODING_GZIP
     elif ENCODING_DEFLATE in accept_encoding:
-        LOG.critical("DEBUG: USING DEFLATE")
         content = gzip.zlib.compress(response.get_data(), compress_level)
         encoding = ENCODING_DEFLATE
     response.set_data(content)
