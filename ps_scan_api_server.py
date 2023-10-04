@@ -15,16 +15,15 @@ __email__         = "andrew.chung@dell.com"
 import datetime
 import errno
 import gzip
+import io
 import json
 import logging
 from logging.config import dictConfig
 import os
-import random
 import re
 import signal
 import stat
 import sys
-import threading
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "libs"))
@@ -79,7 +78,7 @@ try:
     import isi.fs.attr as attr
     import isi.fs.userattr as uattr
     import libs.onefs_acl as onefs_acl
-    from libs.onefs_auth import GetPrincipalName
+    from libs.onefs_auth import translate_user_group_perms
     from libs.onefs_become_user import become_user
 except:
     pass
@@ -94,8 +93,9 @@ except:
 
 app = Flask(__name__)
 server = None
-auth_cache = GetPrincipalName()
 
+ENCODING_GZIP = "gzip"
+ENCODING_DEFLATE = "deflate"
 LOG = app.logger
 HTTP_HDR_ACCEPT_ENCODING = "Accept-Encoding"
 HTTP_HDR_CONTENT_ENCODING = "Content-Encoding"
@@ -112,8 +112,10 @@ REQUIRED_RETURN_FIELDS = [
     "file_type",
     "inode",
     "mtime",
+    "perms_group",
     "perms_unix_gid",
     "perms_unix_uid",
+    "perms_user",
     "size",
     "size_logical",
     "size_physical",
@@ -122,21 +124,21 @@ TXT_INVALID_TOKEN = "Invalid continuation token received. Either the token does 
 TXT_QUERY_PATH_REQUIRED = "A URL encoded path is required in the 'path' query parameter"
 
 
-def add_diskover_fields(file_info, remove_existing=False):
+def add_diskover_fields(file_info, remove_existing=True):
     diskover_info = {
         "atime": file_info["atime"],
         "ctime": file_info["ctime"],
         "extension": file_info["file_ext"],
-        "group": file_info["perms_unix_gid"],
+        "group": file_info["perms_group"],
         "ino": file_info["inode"],
         "mtime": file_info["mtime"],
         "name": file_info["file_name"],
         "nlink": file_info["file_hard_links"],
-        "owner": file_info["perms_unix_uid"],
+        "owner": file_info["perms_user"],
         "parent_path": file_info["file_path"],
         "size": file_info["size"],
         "size_du": file_info["size_physical"],
-        "type": "directory" if file_info["file_type"] == "dir" else file_info["file_type"],
+        "type": file_info["file_type"],
         "pscale": file_info,
     }
     if remove_existing:
@@ -150,14 +152,36 @@ def add_diskover_fields(file_info, remove_existing=False):
             "file_type",
             "inode",
             "mtime",
-            "perms_unix_gid",
-            "perms_unix_uid",
+            "perms_group",
+            "perms_user",
             "size",
             "size_physical",
         ]:
             if field in file_info:
                 del file_info[field]
     return diskover_info
+
+
+def convert_response_to_diskover(resp_data):
+    now = time.time()
+    dirs_list = resp_data["contents"]["dirs"]
+    files_list = resp_data["contents"]["files"]
+    root = resp_data["contents"]["root"]
+    stats = resp_data["statistics"]
+    resp_data["contents"] = {"entries": [], "root": root}
+    entries = resp_data["contents"]["entries"]
+    skipped_files = 0
+    for i in range(len(files_list)):
+        if files_list[i]["file_type"] != "file":
+            skipped_files += 1
+            continue
+        entries.append(add_diskover_fields(files_list[i]))
+    for i in range(len(dirs_list)):
+        entries.append(add_diskover_fields(dirs_list[i]))
+    stats["skipped"] += skipped_files
+    stats["processed"] -= skipped_files
+    stats["time_conversion"] = time.time() - now
+    return resp_data
 
 
 def file_handler_pscale(root, filename_list, args={}):
@@ -203,10 +227,10 @@ def file_handler_pscale(root, filename_list, args={}):
     now = time.time()
     custom_tagging = args.get("custom_tagging", False)
     extra_attr = args.get("extra_attr", DEFAULT_PARSE_EXTRA_ATTR)
+    filter_fields = args.get("fields")
     no_acl = args.get("no_acl", DEFAULT_PARSE_SKIP_ACLS)
     phys_block_size = args.get("phys_block_size", IFS_BLOCK_SIZE)
     pool_translate = args.get("nodepool_translation", {})
-    return_set_fields = args.get("fields")
     strip_dot_snapshot = args.get("strip_dot_snapshot", DEFAULT_STRIP_DOT_SNAPSHOT)
     user_attr = args.get("user_attr", DEFAULT_PARSE_USER_ATTR)
 
@@ -255,10 +279,11 @@ def file_handler_pscale(root, filename_list, args={}):
                         stats["processed"] += 1
                         continue
                     # Filter out keys if requested
-                    if return_set_fields:
+                    if filter_fields:
                         for key in list(file_info.keys()):
-                            if key not in return_set_fields:
+                            if key not in filter_fields:
                                 del file_info[key]
+                    translate_user_group_perms(full_path, file_info)
                     result_list.append(file_info)
                     stats["processed"] += 1
                     continue
@@ -408,9 +433,9 @@ def file_handler_pscale(root, filename_list, args={}):
                 stats["time_lstat"] += time.time() - time_start
 
             # Filter out keys if requested
-            if return_set_fields:
+            if filter_fields:
                 for key in list(file_info.keys()):
-                    if key not in return_set_fields:
+                    if key not in filter_fields:
                         del file_info[key]
             if fstats["di_mode"] & 0o040000:
                 result_dir_list.append(file_info)
@@ -442,6 +467,7 @@ def file_handler_pscale(root, filename_list, args={}):
             LOG.exception(pe)
         except Exception as e:
             stats["skipped"] += 1
+            LOG.warn({"msg": "General exception", "file_path": full_path})
             LOG.exception(e)
         finally:
             try:
@@ -455,19 +481,6 @@ def file_handler_pscale(root, filename_list, args={}):
         "statistics": stats,
     }
     return results
-
-
-def file_handler_pscale_diskover(root, filename_list, args={}):
-    scan_results = file_handler_pscale(root, filename_list, args)
-    now = time.time()
-    dirs_list = scan_results["dirs"]
-    files_list = scan_results["files"]
-    for i in range(len(dirs_list)):
-        dirs_list[i] = add_diskover_fields(dirs_list[i])
-    for i in range(len(files_list)):
-        files_list[i] = add_diskover_fields(files_list[i])
-    scan_results["statistics"]["time_conversion"] = time.time() - now
-    return scan_results
 
 
 def get_directory_listing(path):
@@ -579,56 +592,35 @@ def signal_handler(signum, frame):
         )
 
 
-def translate_user_group_perms(full_path, file_info, name_lookup=True):
-    lstat_required = False
-    # Populate the perms_user and perms_group fields from the avaialble SID and UID/GID data
-    # Translate the numeric values into human readable user name and group names if possible
-    # TODO: Add translation to names from SID/UID/GID values
-    if file_info["perms_unix_uid"] == 0xFFFFFFFF or file_info["perms_unix_gid"] == 0xFFFFFFFF:
-        lstat_required = True
-        LOG.debug({"msg": "lstat required for UID/GID", "file_path": full_path})
-        # If the UID/GID is set to 0xFFFFFFFF then on cluster, the UID/GID is generated
-        # by the cluster.
-        # When this happens, use os.fstat to get the UID/GID information from the point
-        # of view of the access zone that is running the script, normally the System zone
-        try:
-            fstats = os.lstat(full_path)
-            file_info["perms_unix_gid"] = (fstats.st_gid,)
-            file_info["perms_unix_uid"] = (fstats.st_uid,)
-        except Exception as e:
-            LOG.info({"msg": "Unable to get file UID/GID", "file_path": full_path})
-    if "perms_acl_user" in file_info:
-        file_info["perms_user"] = file_info["perms_acl_user"]
-        file_info["perms_user"].replace("uid:", "")
-    else:
-        file_info["perms_user"] = file_info["perms_unix_uid"]
-    if "perms_acl_group" in file_info:
-        file_info["perms_group"] = file_info["perms_acl_group"]
-        file_info["perms_group"].replace("gid:", "")
-    else:
-        file_info["perms_group"] = file_info["perms_unix_gid"]
-    if name_lookup:
-        file_info["perms_user"] = auth_cache.get_user_name(file_info["perms_user"], full_path)
-        file_info["perms_group"] = auth_cache.get_group_name(file_info["perms_group"], full_path)
-    return lstat_required
-
-
 @app.after_request
 def compress(response):
+    # 0: No compression, 1: Fastest, 9: Slowest
+    compress_level = 9
     accept_encoding = request.headers.get(HTTP_HDR_ACCEPT_ENCODING, "").lower()
+    LOG.critical("ACCEPT ENCODING: %s" % accept_encoding)
     if (
         response.status_code < 200
         or response.status_code >= 300
         or response.direct_passthrough
-        or "gzip" not in accept_encoding
+        or ((ENCODING_GZIP not in accept_encoding) and (ENCODING_DEFLATE not in accept_encoding))
         or HTTP_HDR_CONTENT_ENCODING in response.headers
     ):
         return response
-    # 0: No compression, 1: Fastest, 9: Slowest
-    content = gzip.zlib.compress(response.get_data(), 9)
+    # Prefer gzip over deflate when available
+    if ENCODING_GZIP in accept_encoding:
+        LOG.critical("DEBUG: USING GZIP")
+        buffer = io.BytesIO()
+        with gzip.GzipFile(mode="wb", compresslevel=compress_level, fileobj=buffer) as gz_file:
+            gz_file.write(response.get_data())
+        content = buffer.getvalue()
+        encoding = ENCODING_GZIP
+    elif ENCODING_DEFLATE in accept_encoding:
+        LOG.critical("DEBUG: USING DEFLATE")
+        content = gzip.zlib.compress(response.get_data(), compress_level)
+        encoding = ENCODING_DEFLATE
     response.set_data(content)
     response.headers[HTTP_HDR_CONTENT_LEN] = len(content)
-    response.headers[HTTP_HDR_CONTENT_ENCODING] = "gzip"
+    response.headers[HTTP_HDR_CONTENT_ENCODING] = encoding
     return response
 
 
@@ -733,7 +725,7 @@ def handle_ps_stat_list():
         if param["fields"]:
             param["fields"] = list(set(param["fields"] + REQUIRED_RETURN_FIELDS))
 
-    dir_handler = file_handler_pscale if param["type"] == DATA_TYPE_PS else file_handler_pscale_diskover
+    # dir_handler = file_handler_pscale if param["type"] == DATA_TYPE_PS else file_handler_pscale_diskover
     dir_list = []
     dir_list_len = 0
     list_stat_data = {}
@@ -747,7 +739,7 @@ def handle_ps_stat_list():
     base, file, full_path = get_path_from_urlencoded(param["path"])
     if not param["token"]:
         if param["include_root"]:
-            stat_data = dir_handler(base, [file], param)
+            stat_data = file_handler_pscale(base, [file], param)
             if stat_data["dirs"]:
                 root = stat_data["dirs"][0]
                 root_is_dir = True
@@ -786,7 +778,7 @@ def handle_ps_stat_list():
             token_expiration = token_data["expiration"]
         # Perform the actual stat commands on each file/directory
         if dir_list:
-            list_stat_data = dir_handler(full_path, dir_list, param)
+            list_stat_data = file_handler_pscale(full_path, dir_list, param)
 
     # Calculate statistics to return in the response
     dirs_len = len(list_stat_data.get("dirs", []))
@@ -816,6 +808,8 @@ def handle_ps_stat_list():
         "token_expiration": token_expiration,
         "statistics": total_stats,
     }
+    if param["type"] == DATA_TYPE_DISKOVER:
+        convert_response_to_diskover(resp_data)
     return Response(json.dumps(resp_data, default=lambda o: JSON_SER_ERR), mimetype=MIME_TYPE_JSON)
 
 
@@ -906,10 +900,9 @@ def handle_ps_stat_single():
 
     # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
     base, file, full = get_path_from_urlencoded(param["path"])
-    if param["type"] == DATA_TYPE_PS:
-        stat_data = file_handler_pscale(base, [file], param)
-    else:
-        stat_data = file_handler_pscale_diskover(base, [file], param)
+    # dir_handler = file_handler_pscale if param["type"] == DATA_TYPE_PS else file_handler_pscale_diskover
+
+    stat_data = file_handler_pscale(base, [file], param)
     if stat_data["dirs"]:
         root = stat_data["dirs"][0]
     elif stat_data["files"]:
@@ -926,6 +919,8 @@ def handle_ps_stat_single():
         "items_returned": 1 * (not not root),
         "statistics": stat_data["statistics"],
     }
+    if param["type"] == DATA_TYPE_DISKOVER:
+        convert_response_to_diskover(resp_data)
     return Response(json.dumps(resp_data, default=lambda o: JSON_SER_ERR), mimetype=MIME_TYPE_JSON)
 
 
