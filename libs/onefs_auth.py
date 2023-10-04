@@ -10,6 +10,7 @@ __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 __all__ = [
     "GetPrincipalName",
+    "translate_user_group_perms",
 ]
 # fmt: on
 import logging
@@ -17,8 +18,8 @@ import os
 import threading
 import time
 
+import isi.fs.attr as iattr
 import libs.papi_lite as papi_lite
-
 
 GET_AUTH_TYPE_AUTO = 0
 GET_AUTH_TYPE_GROUP = 1
@@ -118,3 +119,38 @@ class GetPrincipalName:
 
     def get_user_name(self, principal, path, strict=False):
         return self.get_principal_name(principal, path, GET_AUTH_TYPE_USER, strict)
+
+
+# Instantiate a global auth cache object
+auth_cache = GetPrincipalName()
+
+
+def translate_user_group_perms(full_path, file_info, fd=None, name_lookup=True):
+    # Populate the perms_user and perms_group fields from the avaialble SID and UID/GID data
+    # Translate the numeric values into human readable user name and group names if possible
+    # TODO: Add translation to names from SID/UID/GID values
+    if file_info["perms_unix_uid"] == 0xFFFFFFFF or file_info["perms_unix_gid"] == 0xFFFFFFFF:
+        lstat_required = True
+        LOG.debug({"msg": "UID/GID of -1. Using internal security owner call", "file_path": full_path})
+        # If the UID/GID is set to 0xFFFFFFFF then on cluster, the UID/GID does not exist and we have a SID owner
+        if not fd:
+            try:
+                fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
+            except:
+                LOG.warning({"msg": "Unable to get file descriptor to translate user/group", "path": full_path})
+                raise
+        file_info["perms_user"] = iattr.get_ifs_sec_group(fd)
+        file_info["perms_group"] = iattr.get_ifs_sec_owner(fd)
+    if "perms_acl_user" in file_info:
+        file_info["perms_user"] = file_info["perms_acl_user"]
+        file_info["perms_user"].replace("uid:", "")
+    elif "perms_user" not in file_info:
+        file_info["perms_user"] = file_info["perms_unix_uid"]
+    if "perms_acl_group" in file_info:
+        file_info["perms_group"] = file_info["perms_acl_group"]
+        file_info["perms_group"].replace("gid:", "")
+    elif "perms_group" not in file_info:
+        file_info["perms_group"] = file_info["perms_unix_gid"]
+    if name_lookup:
+        file_info["perms_user"] = auth_cache.get_user_name(file_info["perms_user"], full_path)
+        file_info["perms_group"] = auth_cache.get_group_name(file_info["perms_group"], full_path)
