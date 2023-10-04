@@ -27,23 +27,7 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.realpath(__file__)), "libs"))
-try:
-    import urllib.parse
 
-    urlencode = urllib.parse.urlencode
-    urlquote = urllib.parse.quote
-    urlunquote = urllib.parse.unquote
-except:
-    import urllib
-
-    urlencode = urllib.urlencode
-    urlquote = urllib.quote
-    urlunquote = urllib.unquote
-try:
-    dir(os.scandir)
-    use_scandir = 1
-except:
-    use_scandir = 0
 
 dictConfig(
     {
@@ -129,12 +113,12 @@ def add_diskover_fields(file_info, remove_existing=True):
         "atime": file_info["atime"],
         "ctime": file_info["ctime"],
         "extension": file_info["file_ext"],
-        "group": file_info["perms_group"],
+        "group": file_info["perms_unix_gid"],
         "ino": file_info["inode"],
         "mtime": file_info["mtime"],
         "name": file_info["file_name"],
         "nlink": file_info["file_hard_links"],
-        "owner": file_info["perms_user"],
+        "owner": file_info["perms_unix_uid"],
         "parent_path": file_info["file_path"],
         "size": file_info["size"],
         "size_du": file_info["size_physical"],
@@ -166,7 +150,7 @@ def convert_response_to_diskover(resp_data):
     now = time.time()
     dirs_list = resp_data["contents"]["dirs"]
     files_list = resp_data["contents"]["files"]
-    root = resp_data["contents"]["root"]
+    root = resp_data["contents"].get("root", {})
     stats = resp_data["statistics"]
     resp_data["contents"] = {"entries": [], "root": root}
     entries = resp_data["contents"]["entries"]
@@ -178,6 +162,8 @@ def convert_response_to_diskover(resp_data):
         entries.append(add_diskover_fields(files_list[i]))
     for i in range(len(dirs_list)):
         entries.append(add_diskover_fields(dirs_list[i]))
+    if root:
+        resp_data["contents"]["root"] = add_diskover_fields(root)
     stats["skipped"] += skipped_files
     stats["processed"] -= skipped_files
     stats["time_conversion"] = time.time() - now
@@ -483,30 +469,6 @@ def file_handler_pscale(root, filename_list, args={}):
     return results
 
 
-def get_directory_listing(path):
-    try:
-        if use_scandir:
-            dir_file_list = []
-            for entry in os.scandir(path):
-                dir_file_list.append(entry.name)
-        else:
-            dir_file_list = os.listdir(path)
-    except IOError as ioe:
-        dir_file_list = []
-        if ioe.errno == 13:  # 13: No access
-            LOG.debug({"msg": "Directory permission error", "path": path, "error": str(ioe)})
-        elif ioe.errno == 20:  # 20: Not a directory
-            LOG.info({"msg": "Unable to list path that is not a directory", "path": path})
-        else:
-            LOG.debug({"msg": "Unknown error", "path": path, "error": str(ioe)})
-    except PermissionError as pe:
-        dir_file_list = []
-        LOG.debug({"msg": "Directory permission error", "path": path, "error": str(pe)})
-    except Exception as e:
-        LOG.debug({"msg": "Unknown error", "path": path, "error": str(e)})
-    return dir_file_list
-
-
 def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE, strip_dot_snapshot=True):
     full_path = os.path.join(root, filename)
     fstats = os.lstat(full_path)
@@ -551,19 +513,6 @@ def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE, strip_dot_snapshot
     if file_info["size"] == 0 and file_info["size_physical"] == 0:
         file_info["size_physical"] = file_info["size_logical"]
     return file_info
-
-
-def get_path_from_urlencoded(urlencoded_path):
-    decoded_path = urlunquote(urlencoded_path)
-    if decoded_path.endswith("/"):
-        decoded_path = decoded_path[0:-1]
-    if not decoded_path.startswith("/"):
-        decoded_path = "/" + decoded_path
-    if not decoded_path.startswith("/ifs"):
-        decoded_path = "/ifs" + decoded_path
-    root = os.path.dirname(decoded_path)
-    file = os.path.basename(decoded_path)
-    return root, file, decoded_path
 
 
 def signal_handler(signum, frame):
@@ -722,7 +671,6 @@ def handle_ps_stat_list():
         if param["fields"]:
             param["fields"] = list(set(param["fields"] + REQUIRED_RETURN_FIELDS))
 
-    # dir_handler = file_handler_pscale if param["type"] == DATA_TYPE_PS else file_handler_pscale_diskover
     dir_list = []
     dir_list_len = 0
     list_stat_data = {}
@@ -733,7 +681,7 @@ def handle_ps_stat_list():
     token_expiration = ""
 
     # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
-    base, file, full_path = get_path_from_urlencoded(param["path"])
+    base, file, full_path = misc.get_path_from_urlencoded(param["path"])
     if not param["token"]:
         if param["include_root"]:
             stat_data = file_handler_pscale(base, [file], param)
@@ -758,10 +706,12 @@ def handle_ps_stat_list():
             base = cached_item["base"]
             dir_list = cached_item["dir_list"]
             offset = cached_item["offset"] + param["limit"]
+            LOG.debug({"msg": "Cached directory listing complete", "path": full_path})
         else:
             # Process the direct children of the passed in path
             LOG.debug({"msg": "Getting directory listing", "path": full_path})
-            dir_list = get_directory_listing(full_path)
+            dir_list = misc.get_directory_listing(full_path)
+            LOG.debug({"msg": "Directory listing complete", "path": full_path})
             offset = param["limit"]
         # Split this list up into chunks dependent on the 'limit' query value
         dir_list_len = len(dir_list)
@@ -774,8 +724,9 @@ def handle_ps_stat_list():
             token_continuation = token_data["token"]
             token_expiration = token_data["expiration"]
         # Perform the actual stat commands on each file/directory
-        if dir_list:
-            list_stat_data = file_handler_pscale(full_path, dir_list, param)
+        LOG.debug({"msg": "Parsing directory", "path": full_path})
+        list_stat_data = file_handler_pscale(full_path, dir_list, param)
+        LOG.debug({"msg": "Parsing complete", "path": full_path})
 
     # Calculate statistics to return in the response
     dirs_len = len(list_stat_data.get("dirs", []))
@@ -896,9 +847,7 @@ def handle_ps_stat_single():
             param["fields"] = list(set(param["fields"] + REQUIRED_RETURN_FIELDS))
 
     # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
-    base, file, full = get_path_from_urlencoded(param["path"])
-    # dir_handler = file_handler_pscale if param["type"] == DATA_TYPE_PS else file_handler_pscale_diskover
-
+    base, file, full = misc.get_path_from_urlencoded(param["path"])
     stat_data = file_handler_pscale(base, [file], param)
     if stat_data["dirs"]:
         root = stat_data["dirs"][0]
