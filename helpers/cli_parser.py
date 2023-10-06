@@ -162,6 +162,12 @@ Examples:
         help="Skip parsing ACL file permissions on OneFS systems",
     )
     parser.add_option(
+        "--no-names",
+        action="store_true",
+        default=DEFAULT_PARSE_SKIP_NAMES,
+        help="Skip translation of UID/GID/SID into names on OneFS systems",
+    )
+    parser.add_option(
         "--extra",
         action="store_true",
         default=DEFAULT_PARSE_EXTRA_ATTR,
