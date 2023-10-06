@@ -366,7 +366,7 @@ class ScanIt(threading.Thread):
         self.dir_q_threads_count += 1
         self.dir_q_lock.release()
 
-    def _process_list_dir(self, path, dir_object):
+    def _process_list_dir(self, path):
         start = time.time()
         dirs_skipped = 0
         try:
@@ -387,8 +387,7 @@ class ScanIt(threading.Thread):
             dirs_skipped = 1
             LOG.info(TXT_STR[T_LIST_DIR_UNKNOWN_ERR].format(file=path))
             LOG.exception(e)
-        # Put all files into a single chunk
-        self._enqueue_chunks(dir_object, dir_file_list, len(dir_file_list), self.file_q, CMD_PROC_FILE)
+        self._enqueue_chunks(path, dir_file_list, self.file_chunk, self.file_q, CMD_PROC_FILE)
         # files_queued includes all potential directories. Adjust the count when we actually know how many dirs
         return {
             "dir_scan_time": (time.time() - start),
@@ -417,9 +416,9 @@ class ScanIt(threading.Thread):
         }
 
     def _process_queues(self, state, ptype=PROCESS_TYPE_SIMPLE):
-        dir_handler = self._process_walk_dir
+        handler = self._process_walk_dir
         if ptype == PROCESS_TYPE_ADVANCED:
-            dir_handler = self._process_list_dir
+            handler = self._process_list_dir
         name = state["handle"].name
         reset_idle_required = False
         state["run_state"] = S_RUNNING
@@ -450,30 +449,25 @@ class ScanIt(threading.Thread):
                 cmd = work_item[0]
                 start = time.time()
                 if cmd == CMD_PROC_DIR:
-                    for dir_object in work_item[2]:
-                        dir_name = dir_object.get("file_name", dir_object.get("name"))
-                        if isinstance(work_item[1], dict):
-                            dir_path = work_item[1]["file_path"]
-                        else:
-                            dir_path = work_item[1]
+                    for dirname in work_item[2]:
                         # If the directory name is in our skip directory list, skip this directory
-                        if dir_name in self.default_skip_dirs:
-                            LOG.debug({"msg": "Skipping directory", "filename": dir_name})
+                        if dirname in self.default_skip_dirs:
+                            LOG.debug({"msg": "Skipping directory", "filename": dirname})
                             stats["dirs_skipped"] += 1
                             continue
                         # If handler_dir returns True, we should skip this directory
-                        if self.handler_dir and self.handler_dir(work_item[1], dir_name):
-                            LOG.debug({"msg": "Skipping directory", "filename": dir_name})
+                        if self.handler_dir and self.handler_dir(work_item[1], dirname):
+                            LOG.debug({"msg": "Skipping directory", "filename": dirname})
                             stats["dirs_skipped"] += 1
                             continue
                         stats["dirs_processed"] += 1
                         try:
-                            handler_stats = dir_handler(os.path.join(dir_path, dir_name), dir_object)
+                            handler_stats = handler(os.path.join(work_item[1], dirname))
                         except MemoryError:
-                            LOG.exception(TXT_STR[T_OOM_PROCESS_NEW_DIR].format(tid=name, r=dir_path, d=dir_name))
+                            LOG.exception(TXT_STR[T_OOM_PROCESS_NEW_DIR].format(tid=name, r=work_item[1], d=dirname))
                             raise TerminateThread
                         except:
-                            LOG.exception(TXT_STR[T_EX_PROCESS_NEW_DIR].format(tid=name, r=dir_path, d=dir_name))
+                            LOG.exception(TXT_STR[T_EX_PROCESS_NEW_DIR].format(tid=name, r=work_item[1], d=dirname))
                             raise TerminateThread
                         for key in handler_stats.keys():
                             stats[key] += handler_stats[key]
@@ -498,13 +492,7 @@ class ScanIt(threading.Thread):
                         dirs_to_queue = handler_stats.get("q_dirs", [])
                         if dirs_to_queue:
                             dir_queue_length = len(dirs_to_queue)
-                            if isinstance(work_item[1], dict):
-                                dir_obj_path = work_item[1].get("file_path", work_item[1].get("parent_path"))
-                                dir_obj_filename = work_item[1].get("file_name", work_item[1].get("name"))
-                                root_path = os.path.join(dir_obj_path, dir_obj_filename)
-                            else:
-                                root_path = work_item[1]
-                            self._enqueue_chunks(root_path, dirs_to_queue, self.dir_chunk, self.dir_q, CMD_PROC_DIR)
+                            self._enqueue_chunks(work_item[1], dirs_to_queue, self.dir_chunk, self.dir_q, CMD_PROC_DIR)
                             stats["dirs_queued"] += dir_queue_length
                             # Fix the files queued count to adjust for the directories queued as files
                             stats["files_queued"] -= dir_queue_length
@@ -573,39 +561,25 @@ class ScanIt(threading.Thread):
         3) A list of tuples where the first element of the tuple is a root and the second element is a list of
            directory names that start at that root
            e.g. [["/ifs/root1", ["dir1", "dir2", "dir3", ...]], ["/ifs/root2", ["dirA", ...]]]
-        4) A list of tuples where the first element of the tuple is a root and the second element is a list of
-           directory objects that start at that root.
-           e.g. [["/ifs/root1", [{dir_obj1}, {dir_obj2}]], ["/ifs/root2", [{dir_obj3}, {dir_obj4}]]]
+
         """
-        skip_standard_path_processing = False
         if not paths:
             return
         if not isinstance(paths, list):
             # We have a simple string path
             paths = [paths]
         elif isinstance(paths[0], list):
-            # Check if the first item in the path list is a dictionary
-            if isinstance(paths[0][1][0], dict):
-                # We have case 4. This case is simple and we just enqueue each item in the paths variables as is
-                skip_standard_path_processing = True
-            else:
-                # We have case 3 with a list of tuples/lists
-                temp_paths = []
-                for path_set in paths:
-                    for entry in path_set[1]:
-                        temp_paths.append(os.path.join(path_set[0], entry))
-                paths = temp_paths
-        if not skip_standard_path_processing:
-            paths = self._glob_paths(paths)
-            for p in paths:
-                if p.endswith("/"):
-                    p = p[0:-1]
-                self._enqueue_chunks(
-                    os.path.dirname(p), [os.path.basename(p)], self.file_chunk, self.file_q, CMD_PROC_FILE
-                )
-        else:
-            for p in paths:
-                self._enqueue_chunks(p[0], p[1], len(p[1]), self.dir_q, CMD_PROC_DIR)
+            # We have case 3 with a list of tuples/lists
+            temp_paths = []
+            for path_set in paths:
+                for entry in path_set[1]:
+                    temp_paths.append(os.path.join(path_set[0], entry))
+            paths = temp_paths
+        paths = self._glob_paths(paths)
+        for p in paths:
+            if p.endswith("/"):
+                p = p[0:-1]
+            self._enqueue_chunks(os.path.dirname(p), [os.path.basename(p)], self.dir_chunk, self.dir_q, CMD_PROC_DIR)
         self.common_stats["files_queued"] += len(paths)
 
     def is_processing(self):
