@@ -24,7 +24,9 @@ import time
 
 DEFAULT_CACHE_CLEANUP_INTERVAL = 60  # Try to cleanup the cache every 60 seconds
 DEFAULT_CACHE_SIZE_MAX = 1024**3  # Default max cache size is 1 GiB
+DEFAULT_CACHE_SIZE_NON_SERIALIZE_MAX = 32  # When not serializing the incoming data, how many in-memory items to keep
 DEFAULT_CACHE_TIMEOUT = 1800  # Time in seconds after which a continuation token is considered expired and cleaned up
+DEFAULT_SERIALIZE = True
 LOG = logging.getLogger(__name__)
 
 
@@ -43,16 +45,22 @@ class SimpleCache:
         self.cache_overflow_count = 0
         # Size of the current cache in bytes
         self.cache_size = 0
-        # Maximum size of the in memory cache in bytes
-        self.cache_size_max = args.get("cache_size_max", DEFAULT_CACHE_SIZE_MAX)
         # Number of seconds until a cached entry expires
         self.cache_timeout = args.get("cache_timeout", DEFAULT_CACHE_TIMEOUT)
         # Number of seconds between cache cleanups
         self.cache_clean_interval = args.get("cache_cleanup_interval", DEFAULT_CACHE_CLEANUP_INTERVAL)
+        #
+        self.serialize = args.get("serialize", DEFAULT_SERIALIZE)
         # Cleanup timer thread
         self.timer = threading.Timer(self.cache_clean_interval, self._clean_cache_timeout)
         self.timer.daemon = True
         self.timer.start()
+
+        # Maximum size of the in memory cache in bytes/items
+        if self.serialize:
+            self.cache_size_max = args.get("cache_size_max", DEFAULT_CACHE_SIZE_MAX)
+        else:
+            self.cache_size_max = args.get("cache_size_max", DEFAULT_CACHE_SIZE_NON_SERIALIZE_MAX)
 
     def __del__(self):
         if self.timer:
@@ -128,10 +136,14 @@ class SimpleCache:
                     "expiration": <int> Epoch time in seconds specifying when the token will expire in the future
                 }
         """
-        json_data = json.dumps(item)
-        comp_data = gzip.zlib.compress(bytes(str(json_data).encode("utf-8")), 9)
-        json_data = None
-        comp_data_len = len(comp_data)
+        if self.serialize:
+            json_data = json.dumps(item)
+            comp_data = gzip.zlib.compress(bytes(str(json_data).encode("utf-8")), 9)
+            json_data = None
+            comp_data_len = len(comp_data)
+        else:
+            comp_data = item
+            comp_data_len = 1
         cache_entry = {
             "timeout": time.time() + self.cache_timeout,
             "data": comp_data,
@@ -146,6 +158,10 @@ class SimpleCache:
             LOG.debug({"msg": "Cache full. Writing item to disk", "len": comp_data_len, "cache_size": self.cache_size})
             # If a cache clean does not free enough space, we need to write this cache item to disk
             tfile = tempfile.TemporaryFile()
+            if not self.serialize:
+                json_data = json.dumps(item)
+                comp_data = gzip.zlib.compress(bytes(str(json_data).encode("utf-8")), 9)
+                json_data = None
             tfile.write(comp_data)
             tfile.seek(0)
             cache_entry.update(
@@ -227,5 +243,8 @@ class SimpleCache:
             cache_item["file"].close()
         else:
             comp_data = cache_item["data"]
-        cache_item = json.loads(gzip.zlib.decompress(comp_data).decode("utf-8"))
+        if self.serialize:
+            cache_item = json.loads(gzip.zlib.decompress(comp_data).decode("utf-8"))
+        else:
+            cache_item = comp_data
         return cache_item
