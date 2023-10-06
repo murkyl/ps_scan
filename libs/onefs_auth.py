@@ -102,7 +102,7 @@ class GetPrincipalName:
                     base_uri + "/" + principal, "GET", query_args={"query_member_of": "false", "zone": zone_name}
                 )
                 if principal_data[0] != 200:
-                    # When strict is True, if we made it this far, then we foudn the longest matching path already
+                    # When strict is True, if we made it this far, then we found the longest matching path already
                     # If the user doesn't exist at this level, don't continue to go toward the root at /ifs
                     # We short circuit future lookups by saving the passed in principal as the name and returning it
                     if strict:
