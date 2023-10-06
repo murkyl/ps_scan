@@ -34,7 +34,7 @@ dictConfig(
         "version": 1,
         "formatters": {
             "default": {
-                "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s",
+                "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d][tid:%(threadName)s] %(message)s",
             }
         },
         "handlers": {
@@ -86,63 +86,35 @@ HTTP_HDR_CONTENT_ENCODING = "Content-Encoding"
 HTTP_HDR_CONTENT_LEN = "Content-Length"
 JSON_SER_ERR = "<not serializable>"
 MIME_TYPE_JSON = "application/json"
-REQUIRED_RETURN_FIELDS = [
-    "atime",
-    "ctime",
-    "file_ext",
-    "file_hard_links",
-    "file_name",
-    "file_path",
-    "file_type",
-    "inode",
-    "mtime",
-    "perms_group",
-    "perms_unix_gid",
-    "perms_unix_uid",
-    "perms_user",
-    "size",
-    "size_logical",
-    "size_physical",
+PSCALE_DISKOVER_FIELD_MAPPING = [
+    # PScale field, Diskover field
+    ["atime", "atime"],
+    ["ctime", "ctime"],
+    ["file_ext", "extension"],
+    ["file_hard_links", "nlink"],
+    ["file_name", "name"],
+    ["file_path", "parent_path"],
+    ["file_type", "type"],
+    ["inode", "ino"],
+    ["mtime", "mtime"],
+    ["perms_unix_gid", "group"],
+    ["perms_unix_uid", "owner"],
+    ["size", "size"],
+    ["size_physical", "size_du"],
 ]
+REQUIRED_RETURN_FIELDS = [x[0] for x in PSCALE_DISKOVER_FIELD_MAPPING]
 TXT_INVALID_TOKEN = "Invalid continuation token received. Either the token does not exist or the token has expired"
 TXT_QUERY_PATH_REQUIRED = "A URL encoded path is required in the 'path' query parameter"
+TXT_UNABLE_TO_SCAN_DIRECTORY = "Unable to scan directory"
+TXT_UNABLE_TO_SCAN_FILE_OR_DIR = "Unable to scan file/directory"
 
 
 def add_diskover_fields(file_info, remove_existing=True):
-    diskover_info = {
-        "atime": file_info["atime"],
-        "ctime": file_info["ctime"],
-        "extension": file_info["file_ext"],
-        "group": file_info["perms_unix_gid"],
-        "ino": file_info["inode"],
-        "mtime": file_info["mtime"],
-        "name": file_info["file_name"],
-        "nlink": file_info["file_hard_links"],
-        "owner": file_info["perms_unix_uid"],
-        "parent_path": file_info["file_path"],
-        "size": file_info["size"],
-        "size_du": file_info["size_physical"],
-        "type": file_info["file_type"],
-        "pscale": file_info,
-    }
-    if remove_existing:
-        for field in [
-            "atime",
-            "ctime",
-            "file_ext",
-            "file_hard_links",
-            "file_name",
-            "file_path",
-            "file_type",
-            "inode",
-            "mtime",
-            "perms_group",
-            "perms_user",
-            "size",
-            "size_physical",
-        ]:
-            if field in file_info:
-                del file_info[field]
+    diskover_info = {"pscale": file_info}
+    for mapping in PSCALE_DISKOVER_FIELD_MAPPING:
+        diskover_info[mapping[1]] = file_info.get(mapping[0])
+        if remove_existing and mapping[0] in file_info:
+            del file_info[mapping[0]]
     return diskover_info
 
 
@@ -202,8 +174,11 @@ def file_handler_pscale(root, filename_list, args={}):
                 "time_access_time": <int>       # Seconds spent getting the file access time
                 "time_acl": <int>               # Seconds spent getting file ACL
                 "time_custom_tagging": <int>    # Seconds spent processing custom tags
+                "time_data_save": <int>         # Seconds spent creating response
                 "time_dinode": <int>            # Seconds spent getting OneFS metadata
                 "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
+                "time_filter": <int>            # Seconds spent filtering fields
+                "time_name": <int>              # Seconds spend translating UID/GID/SID to names
                 "time_lstat": <int>             # Seconds spent in lstat
                 "time_scan_dir": <int>          # Seconds spent scanning the entire directory
                 "time_user_attr": <int>         # Seconds spent scanning user attributes
@@ -215,6 +190,7 @@ def file_handler_pscale(root, filename_list, args={}):
     extra_attr = args.get("extra_attr", DEFAULT_PARSE_EXTRA_ATTR)
     filter_fields = args.get("fields")
     no_acl = args.get("no_acl", DEFAULT_PARSE_SKIP_ACLS)
+    no_names = args.get("no_names", DEFAULT_PARSE_SKIP_NAMES)
     phys_block_size = args.get("phys_block_size", IFS_BLOCK_SIZE)
     pool_translate = args.get("nodepool_translation", {})
     strip_dot_snapshot = args.get("strip_dot_snapshot", DEFAULT_STRIP_DOT_SNAPSHOT)
@@ -230,11 +206,15 @@ def file_handler_pscale(root, filename_list, args={}):
         "time_access_time": 0,
         "time_acl": 0,
         "time_custom_tagging": 0,
+        "time_data_save": 0,
         "time_dinode": 0,
         "time_extra_attr": 0,
+        "time_filter": 0,
+        "time_name": 0,
         "time_lstat": 0,
         "time_scan_dir": 0,
         "time_user_attr": 0,
+        "time_open": 0,
     }
 
     for filename in filename_list:
@@ -242,7 +222,9 @@ def file_handler_pscale(root, filename_list, args={}):
             full_path = os.path.join(root, filename)
             fd = None
             try:
+                time_start = time.time()
                 fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
+                stats["time_open"] += time.time() - time_start
             except FileNotFoundError:
                 LOG.debug({"msg": "File not found", "file_path": full_path})
                 stats["not_found"] += 1
@@ -269,25 +251,26 @@ def file_handler_pscale(root, filename_list, args={}):
                         for key in list(file_info.keys()):
                             if key not in filter_fields:
                                 del file_info[key]
-                    translate_user_group_perms(full_path, file_info)
+                    translate_user_group_perms(full_path, file_info, fd=fd, name_lookup=not no_names)
                     result_list.append(file_info)
                     stats["processed"] += 1
                     continue
                 LOG.exception({"msg": "Error found when calling os.open", "file_path": full_path, "error": str(e)})
                 continue
-            time_start = time.time()
+            time_start_dinode = time.time()
             fstats = attr.get_dinode(fd)
-            stats["time_dinode"] += time.time() - time_start
+            time_end_dinode = time.time()
+            stats["time_dinode"] += time_end_dinode - time_start_dinode
             # atime call can return empty if the file does not have an atime or atime tracking is disabled
-            time_start = time.time()
             atime = attr.get_access_time(fd)
-            stats["time_access_time"] += time.time() - time_start
             if atime:
                 atime = atime[0]
             else:
                 # If atime does not exist, use the last metadata change time as this captures the last time someone
                 # modified either the data or the inode of the file
                 atime = fstats["di_ctime"]
+            time_end_atime = time.time()
+            stats["time_access_time"] += time_end_atime - time_end_dinode
             di_data_blocks = fstats.get("di_data_blocks", fstats["di_physical_blocks"] - fstats["di_protection_blocks"])
             logical_blocks = fstats["di_logical_size"] // phys_block_size
             comp_blocks = logical_blocks - fstats["di_shadow_refs"]
@@ -365,13 +348,14 @@ def file_handler_pscale(root, filename_list, args={}):
                 "ssd_status": fstats["di_la_ssd_status"],
                 "ssd_status_name": SSD_STATUS[fstats["di_la_ssd_status"]],
             }
+            stats["time_data_save"] += time.time() - time_end_atime
             if not no_acl:
                 time_start = time.time()
                 acl = onefs_acl.get_acl_dict(fd)
-                stats["time_acl"] += time.time() - time_start
                 file_info["perms_acl_aces"] = misc.ace_list_to_str_list(acl.get("aces"))
                 file_info["perms_acl_group"] = misc.acl_group_to_str(acl)
                 file_info["perms_acl_user"] = misc.acl_user_to_str(acl)
+                stats["time_acl"] += time.time() - time_start
             if extra_attr:
                 # di_flags may have other bits we need to translate
                 #     Coalescer setting (on|off|endurant all|coalescer only)
@@ -381,7 +365,6 @@ def file_handler_pscale(root, filename_list, args={}):
                 # Extended attributes/custom attributes?
                 time_start = time.time()
                 estats = attr.get_expattr(fd)
-                stats["time_extra_attr"] += time.time() - time_start
                 # Add up all the inode sizes
                 metadata_size = 0
                 for inode in estats["ge_iaddrs"]:
@@ -399,30 +382,33 @@ def file_handler_pscale(root, filename_list, args={}):
                     file_info["file_coalescer"] = "coalescer off, ec on"
                 else:
                     file_info["file_coalescer"] = "coalescer off, ec off"
+                stats["time_extra_attr"] += time.time() - time_start
             if user_attr:
-                extended_attr = {}
                 time_start = time.time()
+                extended_attr = {}
                 keys = uattr.userattr_list(fd)
                 for key in keys:
                     extended_attr[key] = uattr.userattr_get(fd, key)
-                stats["time_user_attr"] += time.time() - time_start
                 file_info["user_attributes"] = extended_attr
+                stats["time_user_attr"] += time.time() - time_start
             if custom_tagging:
                 time_start = time.time()
                 file_info["user_tags"] = custom_tagging(file_info)
                 stats["time_custom_tagging"] += time.time() - time_start
-
-            time_start = time.time()
-            lstat_required = translate_user_group_perms(full_path, file_info)
+            
+            time_start_translate = time.time()
+            lstat_required = translate_user_group_perms(full_path, file_info, fd=fd, name_lookup=not no_names)
             if lstat_required:
                 stats["lstat_required"] += 1
-                stats["time_lstat"] += time.time() - time_start
+            time_end_translate = time.time()
+            stats["time_name"] += time_end_translate - time_start_translate
 
             # Filter out keys if requested
             if filter_fields:
                 for key in list(file_info.keys()):
                     if key not in filter_fields:
                         del file_info[key]
+            stats["time_filter"] += time.time() - time_end_translate
             if fstats["di_mode"] & 0o040000:
                 result_dir_list.append(file_info)
                 # Fix size issues with dirs
@@ -607,6 +593,7 @@ def handle_ps_stat_list():
     include_root: <bool> When true, the metadata for the path specified in the path query parameter will be returned
             in the "contents" object under the key "root"
     no_acl: <bool> When true, skip ACL parsing. Enabling this can speed up scanning but results will not have ACLs
+    no_names: <bool> When true, skip UIG/GID/SID to name translation. Enabling this can speed up scanning
     strip_dot_snapshot: <bool> When true, strip the .snapshot name from the file path returned
     user_attr: <bool> # When true, get user attribute data for files. Enabling this can slow down scan speed
 
@@ -631,14 +618,17 @@ def handle_ps_stat_list():
             "not_found": <int>                # Number of files that were not found
             "processed": <int>                # Number of files actually processed
             "skipped": <int>                  # Number of files skipped
-            "time_access_time": <int>         # Seconds spent getting the file access time
-            "time_acl": <int>                 # Seconds spent getting file ACL
-            "time_custom_tagging": <int>      # Seconds spent processing custom tags
-            "time_dinode": <int>              # Seconds spent getting OneFS metadata
-            "time_extra_attr": <int>          # Seconds spent getting extra OneFS metadata
-            "time_lstat": <int>               # Seconds spent in lstat
-            "time_scan_dir": <int>            # Seconds spent scanning the entire directory
-            "time_user_attr": <int>           # Seconds spent scanning user attributes
+              "time_access_time": <int>       # Seconds spent getting the file access time
+              "time_acl": <int>               # Seconds spent getting file ACL
+              "time_custom_tagging": <int>    # Seconds spent processing custom tags
+              "time_data_save": <int>         # Seconds spent creating response
+              "time_dinode": <int>            # Seconds spent getting OneFS metadata
+              "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
+              "time_filter": <int>            # Seconds spent filtering fields
+              "time_name": <int>              # Seconds spend translating UID/GID/SID to names
+              "time_lstat": <int>             # Seconds spent in lstat
+              "time_scan_dir": <int>          # Seconds spent scanning the entire directory
+              "time_user_attr": <int>         # Seconds spent scanning user attributes
           }
         }
     """
@@ -651,6 +641,7 @@ def handle_ps_stat_list():
         "fields": str(args.get("fields", "")),
         "limit": misc.parse_arg_int(args, "limit", options["default_item_limit"], 1, options["max_item_limit"]),
         "no_acl": misc.parse_arg_bool(args, "no_acl", False),
+        "no_names": misc.parse_arg_bool(args, "no_names", False),
         "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
         "path": args.get("path"),
         "strip_do_snapshot": misc.parse_arg_bool(args, "strip_dot_snapshot", True),
@@ -677,6 +668,7 @@ def handle_ps_stat_list():
     root = {}
     root_is_dir = False
     stat_data = None
+    time_list_dir = 0
     token_continuation = ""
     token_expiration = ""
 
@@ -696,6 +688,7 @@ def handle_ps_stat_list():
             root_is_dir = True
 
     if root_is_dir or param["token"]:
+        start = time.time()
         # Get the list of files/directories to process either from the file system directly or a cache
         if param["token"]:
             # Get the cached list and then set dir_list
@@ -706,27 +699,37 @@ def handle_ps_stat_list():
             base = cached_item["base"]
             dir_list = cached_item["dir_list"]
             offset = cached_item["offset"] + param["limit"]
-            LOG.debug({"msg": "Cached directory listing complete", "path": full_path})
+            LOG.debug({"msg": "Cached directory listing complete", "path": full_path, "length": cached_item["length"]})
         else:
             # Process the direct children of the passed in path
             LOG.debug({"msg": "Getting directory listing", "path": full_path})
             dir_list = misc.get_directory_listing(full_path)
             LOG.debug({"msg": "Directory listing complete", "path": full_path})
             offset = param["limit"]
+            if dir_list is None:
+                return make_response({"msg": TXT_UNABLE_TO_SCAN_DIRECTORY, "path": full_path}, 404)
+        time_list_dir = time.time() - start
         # Split this list up into chunks dependent on the 'limit' query value
         dir_list_len = len(dir_list)
         if dir_list_len > param["limit"]:
+            start - time.time()
             # Cache the remainder of the directory listing to avoid re-scanning the directory
             token_data = app.config["cache"].add_item(
-                {"base": full_path, "dir_list": dir_list[param["limit"] :], "offset": offset}
+                {
+                    "base": full_path,
+                    "dir_list": dir_list[param["limit"] :],
+                    "length": dir_list_len - param["limit"],
+                    "offset": offset,
+                }
             )
             dir_list = dir_list[0 : param["limit"]]
             token_continuation = token_data["token"]
             token_expiration = token_data["expiration"]
+            LOG.debug({"msg": "Caching directory listing", "time": time.time() - start})
         # Perform the actual stat commands on each file/directory
         LOG.debug({"msg": "Parsing directory", "path": full_path})
         list_stat_data = file_handler_pscale(full_path, dir_list, param)
-        LOG.debug({"msg": "Parsing complete", "path": full_path})
+        LOG.debug({"msg": "Parsing complete", "path": full_path, "stats": list_stat_data["statistics"]})
 
     # Calculate statistics to return in the response
     dirs_len = len(list_stat_data.get("dirs", []))
@@ -742,6 +745,7 @@ def handle_ps_stat_list():
             total_stats = stat_data.get("statistics", {})
     else:
         total_stats = list_stat_data.get("statistics", {})
+    total_stats["time_list_dir"] = time_list_dir
 
     # Build response
     resp_data = {
@@ -779,6 +783,7 @@ def handle_ps_stat_single():
     custom_tagging: <bool> When true call a custom handler for each file. Enabling this can slow down scan speed
     extra_attr: <bool> When true, gets extra OneFS metadata. Enabling this can slow down scan speed
     no_acl: <bool> When true, skip ACL parsing. Enabling this can speed up scanning but results will not have ACLs
+    no_names: <bool> When true, skip UIG/GID/SID to name translation. Enabling this can speed up scanning
     strip_dot_snapshot: <bool> When true, strip the .snapshot name from the file path returned
     user_attr: <bool> # When true, get user attribute data for files. Enabling this can slow down scan speed
 
@@ -815,8 +820,11 @@ def handle_ps_stat_single():
             "time_access_time": <int>         # Seconds spent getting the file access time
             "time_acl": <int>                 # Seconds spent getting file ACL
             "time_custom_tagging": <int>      # Seconds spent processing custom tags
+            "time_data_save": <int>           # Seconds spent creating response
             "time_dinode": <int>              # Seconds spent getting OneFS metadata
             "time_extra_attr": <int>          # Seconds spent getting extra OneFS metadata
+            "time_filter": <int>              # Seconds spent filtering fields
+            "time_name": <int>                # Seconds spend translating UID/GID/SID to names
             "time_lstat": <int>               # Seconds spent in lstat
             "time_scan_dir": <int>            # Seconds spent scanning the entire directory
             "time_user_attr": <int>           # Seconds spent scanning user attributes
@@ -829,12 +837,15 @@ def handle_ps_stat_single():
         "extra_attr": misc.parse_arg_bool(args, "extra_attr", False),
         "fields": str(args.get("fields", "")),
         "no_acl": misc.parse_arg_bool(args, "no_acl", False),
+        "no_names": misc.parse_arg_bool(args, "no_names", False),
         "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
         "path": args.get("path"),
         "strip_do_snapshot": misc.parse_arg_bool(args, "strip_dot_snapshot", True),
         "type": args.get("type", DEFAULT_DATA_TYPE),
         "user_attr": misc.parse_arg_bool(args, "user_attr", False),
     }
+    if not param["path"]:
+        return make_response({"msg": TXT_QUERY_PATH_REQUIRED}, 404)
     if param["fields"]:
         # Parse fields to return
         fields = param["fields"].split(",")
@@ -847,7 +858,7 @@ def handle_ps_stat_single():
             param["fields"] = list(set(param["fields"] + REQUIRED_RETURN_FIELDS))
 
     # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
-    base, file, full = misc.get_path_from_urlencoded(param["path"])
+    base, file, full_path = misc.get_path_from_urlencoded(param["path"])
     stat_data = file_handler_pscale(base, [file], param)
     if stat_data["dirs"]:
         root = stat_data["dirs"][0]
@@ -855,6 +866,8 @@ def handle_ps_stat_single():
         root = stat_data["files"][0]
     else:
         root = {}
+    if not root:
+        return make_response({"msg": TXT_UNABLE_TO_SCAN_FILE_OR_DIR, "path": full_path}, 404)
     resp_data = {
         "contents": {
             "dirs": [],
@@ -887,6 +900,8 @@ if __name__ == "__main__" or __file__ == None:
         else:
             LOG.info({"msg": "VMEM ulimit setting failed", "mem_size": options["ulimit_memory"]})
 
+    # Turn of serialization of cache items into JSON
+    options.update({"serialize": False})
     app.config["cache"] = SimpleCache(options)
     app.config["ps_scan"] = {
         "options": options,
