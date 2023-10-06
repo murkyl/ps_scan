@@ -163,7 +163,7 @@ def get_directory_listing(path):
         else:
             dir_file_list = os.listdir(path)
     except IOError as ioe:
-        dir_file_list = []
+        dir_file_list = None
         if ioe.errno == errno.EACCES:  # 13: No access
             LOG.debug({"msg": "Directory permission error", "path": path, "error": str(ioe)})
         elif ioe.errno == 20:  # 20: Not a directory
@@ -171,9 +171,10 @@ def get_directory_listing(path):
         else:
             LOG.debug({"msg": "Unknown error", "path": path, "error": str(ioe)})
     except PermissionError as pe:
-        dir_file_list = []
+        dir_file_list = None
         LOG.debug({"msg": "Directory permission error", "path": path, "error": str(pe)})
     except Exception as e:
+        dir_file_list = None
         LOG.debug({"msg": "Unknown error", "path": path, "error": str(e)})
     return dir_file_list
 
