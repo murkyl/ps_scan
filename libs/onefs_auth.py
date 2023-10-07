@@ -103,16 +103,15 @@ class GetPrincipalName:
                     # Double check if another thread has already added this entry
                     principal_entry = name_cache.get(principal)
                     if principal_entry:
-                        LOG.critical("Was going to query for user: %s" % principal)
                         continue
                     principal_data = self.papi_handle.rest_call(
                         base_uri + "/" + principal, "GET", query_args={"query_member_of": "false", "zone": zone_name}
                     )
                     if principal_data[0] != 200:
-                        # When strict is True, if we made it this far, then we found the longest matching path already
-                        # If the user doesn't exist at this level, don't continue to go toward the root at /ifs
-                        # We short circuit future lookups by saving the passed in principal as the name and returning it
-                        if strict:
+                        # When strict is True and we cannot find the user. Do not continue toward the root at /ifs
+                        # If we are at the System zone and we cannot find the user, the user does not exist.
+                        # Short circuit future lookups by saving the passed in principal and then returning it
+                        if strict or zone_name == "System":
                             name_cache[principal] = principal
                             break
                         continue
