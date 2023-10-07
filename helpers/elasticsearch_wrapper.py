@@ -31,7 +31,7 @@ import time
 import zlib
 
 import libs.elasticsearch_lite as es_lite
-import libs.scanit as scanit
+import helpers.scanit as scanit
 from helpers.constants import *
 import helpers.misc as misc
 
