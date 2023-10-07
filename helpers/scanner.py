@@ -146,18 +146,10 @@ def file_handler_basic(root, filename_list, args={}):
             "not_found": <int>              # Number of files that were not found
             "processed": <int>              # Number of files actually processed
             "skipped": <int>                # Number of files skipped
-            "time_access_time": <int>       # Seconds spent getting the file access time
-            "time_acl": <int>               # Seconds spent getting file ACL
             "time_custom_tagging": <int>    # Seconds spent processing custom tags
-            "time_data_save": <int>         # Seconds spent creating response
-            "time_dinode": <int>            # Seconds spent getting OneFS metadata
-            "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
             "time_filter": <int>            # Seconds spent filtering fields
-            "time_name": <int>              # Seconds spend translating UID/GID/SID to names
-            "time_open": <int>              # Seconds required to acquire file descriptor
             "time_lstat": <int>             # Seconds spent in lstat
             "time_scan_dir": <int>          # Seconds spent scanning the entire directory
-            "time_user_attr": <int>         # Seconds spent scanning user attributes
           }
         }
     """
