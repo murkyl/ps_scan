@@ -26,6 +26,7 @@ import helpers.misc as misc
 import helpers.ps_scan_client as psc
 import helpers.ps_scan_server as pss
 import helpers.user_handlers as user_handlers
+import helpers.scanner as scanner
 import libs.hydra as Hydra
 
 
@@ -96,9 +97,7 @@ def main():
             LOG.debug({"msg": "VMEM ulimit value set", "new_value": new_limit})
         else:
             LOG.info({"msg": "VMEM ulimit setting failed"})
-        file_handler = user_handlers.file_handler_pscale
-        if options.get("es_type") == ES_TYPE_DISKOVER:
-            file_handler = user_handlers.file_handler_pscale_diskover
+        file_handler = scanner.file_handler_pscale
     else:
         file_handler = user_handlers.file_handler_basic
     LOG.debug({"msg": "Parsed options", "options": json.dumps(options, indent=2, sort_keys=True)})
