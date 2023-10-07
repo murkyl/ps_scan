@@ -12,8 +12,6 @@ __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 # fmt: on
-import datetime
-import errno
 import gzip
 import io
 import json
@@ -22,7 +20,6 @@ from logging.config import dictConfig
 import os
 import re
 import signal
-import stat
 import sys
 import time
 
@@ -50,6 +47,7 @@ dictConfig(
 
 import helpers.cli_parser_api as cli_parser
 from helpers.constants import *
+import helpers.scanner as scanner
 import helpers.misc as misc
 from libs.flask import Flask
 from libs.flask import make_response
@@ -59,456 +57,35 @@ from libs.simple_cache import SimpleCache
 from libs.waitress import create_server
 
 try:
-    import isi.fs.attr as attr
-    import isi.fs.userattr as uattr
-    import libs.onefs_acl as onefs_acl
-    from libs.onefs_auth import translate_user_group_perms
     from libs.onefs_become_user import become_user
 except:
     pass
-try:
-    dir(PermissionError)
-except:
-    PermissionError = Exception
-try:
-    dir(FileNotFoundError)
-except:
-    FileNotFoundError = IOError
 
-app = Flask(__name__)
-server = None
-
+APP = Flask(__name__)
 ENCODING_GZIP = "gzip"
 ENCODING_DEFLATE = "deflate"
-LOG = app.logger
 HTTP_HDR_ACCEPT_ENCODING = "Accept-Encoding"
 HTTP_HDR_CONTENT_ENCODING = "Content-Encoding"
 HTTP_HDR_CONTENT_LEN = "Content-Length"
 JSON_SER_ERR = "<not serializable>"
+LOG = APP.logger
 MIME_TYPE_JSON = "application/json"
-PSCALE_DISKOVER_FIELD_MAPPING = [
-    # PScale field, Diskover field
-    ["atime", "atime"],
-    ["ctime", "ctime"],
-    ["file_ext", "extension"],
-    ["file_hard_links", "nlink"],
-    ["file_name", "name"],
-    ["file_path", "parent_path"],
-    ["file_type", "type"],
-    ["inode", "ino"],
-    ["mtime", "mtime"],
-    ["perms_unix_gid", "group"],
-    ["perms_unix_uid", "owner"],
-    ["size", "size"],
-    ["size_physical", "size_du"],
-]
-REQUIRED_RETURN_FIELDS = [x[0] for x in PSCALE_DISKOVER_FIELD_MAPPING]
+REQUIRED_RETURN_FIELDS = [x[0] for x in scanner.PSCALE_DISKOVER_FIELD_MAPPING]
+SERVER = None
 TXT_INVALID_TOKEN = "Invalid continuation token received. Either the token does not exist or the token has expired"
 TXT_QUERY_PATH_REQUIRED = "A URL encoded path is required in the 'path' query parameter"
 TXT_UNABLE_TO_SCAN_DIRECTORY = "Unable to scan directory"
 TXT_UNABLE_TO_SCAN_FILE_OR_DIR = "Unable to scan file/directory"
 
 
-def add_diskover_fields(file_info, remove_existing=True):
-    diskover_info = {"pscale": file_info}
-    for mapping in PSCALE_DISKOVER_FIELD_MAPPING:
-        diskover_info[mapping[1]] = file_info.get(mapping[0])
-        if remove_existing and mapping[0] in file_info:
-            del file_info[mapping[0]]
-    return diskover_info
-
-
-def convert_response_to_diskover(resp_data):
-    now = time.time()
-    dirs_list = resp_data["contents"]["dirs"]
-    files_list = resp_data["contents"]["files"]
-    root = resp_data["contents"].get("root", {})
-    stats = resp_data["statistics"]
-    resp_data["contents"] = {"entries": [], "root": root}
-    entries = resp_data["contents"]["entries"]
-    skipped_files = 0
-    for i in range(len(files_list)):
-        if files_list[i]["file_type"] != "file":
-            skipped_files += 1
-            continue
-        entries.append(add_diskover_fields(files_list[i]))
-    for i in range(len(dirs_list)):
-        entries.append(add_diskover_fields(dirs_list[i]))
-    if root:
-        resp_data["contents"]["root"] = add_diskover_fields(root)
-    stats["skipped"] += skipped_files
-    stats["processed"] -= skipped_files
-    stats["time_conversion"] = time.time() - now
-    return resp_data
-
-
-def file_handler_pscale(root, filename_list, args={}):
-    """Gets the metadata for the files/directories based at root and given the file/dir names in filename_list
-
-    Parameters
-    ----------
-    root: <string> Root directory to start the scan
-    filename_list: <list:string> List of file and directory names to retrieve metadata
-    args: <dict> Dictionary containing parameters to control the scan
-            {
-              "custom_tagging": <bool>          # When true call a custom handler for each file
-              "extra_attr": <bool>              # When true, gets extra OneFS metadata
-              "no_acl": <bool>                  # When true, skip ACL parsing
-              "phys_block_size": <int>          # Number of bytes in a block for the underlying storage device
-              "nodepool_translation": <dict>    # Dictionary with a node pool number to text string translation
-              "strip_dot_snapshot": <bool>      # When true, strip the .snapshot name from the file path returned
-              "user_attr": <bool>               # When true, get user attribute data for files
-            }
-
-    Returns
-    ----------
-    dict - A dictionary representing the root and files scanned
-            {
-              "dirs": [<dict>]                  # List of directory metadata objects
-              "files": [<dict>]                 # List of file metadata objects
-              "statistics": {
-                "lstat_required": <bool>        # Number of times lstat was called vs. internal stat call
-                "not_found": <int>              # Number of files that were not found
-                "processed": <int>              # Number of files actually processed
-                "skipped": <int>                # Number of files skipped
-                "time_access_time": <int>       # Seconds spent getting the file access time
-                "time_acl": <int>               # Seconds spent getting file ACL
-                "time_custom_tagging": <int>    # Seconds spent processing custom tags
-                "time_data_save": <int>         # Seconds spent creating response
-                "time_dinode": <int>            # Seconds spent getting OneFS metadata
-                "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
-                "time_filter": <int>            # Seconds spent filtering fields
-                "time_name": <int>              # Seconds spend translating UID/GID/SID to names
-                "time_lstat": <int>             # Seconds spent in lstat
-                "time_scan_dir": <int>          # Seconds spent scanning the entire directory
-                "time_user_attr": <int>         # Seconds spent scanning user attributes
-              }
-            }
-    """
-    now = time.time()
-    custom_tagging = args.get("custom_tagging", False)
-    extra_attr = args.get("extra_attr", DEFAULT_PARSE_EXTRA_ATTR)
-    filter_fields = args.get("fields")
-    no_acl = args.get("no_acl", DEFAULT_PARSE_SKIP_ACLS)
-    no_names = args.get("no_names", DEFAULT_PARSE_SKIP_NAMES)
-    phys_block_size = args.get("phys_block_size", IFS_BLOCK_SIZE)
-    pool_translate = args.get("nodepool_translation", {})
-    strip_dot_snapshot = args.get("strip_dot_snapshot", DEFAULT_STRIP_DOT_SNAPSHOT)
-    user_attr = args.get("user_attr", DEFAULT_PARSE_USER_ATTR)
-
-    result_list = []
-    result_dir_list = []
-    stats = {
-        "lstat_required": 0,
-        "not_found": 0,
-        "processed": 0,
-        "skipped": 0,
-        "time_access_time": 0,
-        "time_acl": 0,
-        "time_custom_tagging": 0,
-        "time_data_save": 0,
-        "time_dinode": 0,
-        "time_extra_attr": 0,
-        "time_filter": 0,
-        "time_name": 0,
-        "time_lstat": 0,
-        "time_scan_dir": 0,
-        "time_user_attr": 0,
-        "time_open": 0,
-    }
-
-    for filename in filename_list:
-        try:
-            full_path = os.path.join(root, filename)
-            fd = None
-            try:
-                time_start = time.time()
-                fd = os.open(full_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_OPENLINK)
-                stats["time_open"] += time.time() - time_start
-            except FileNotFoundError:
-                LOG.debug({"msg": "File not found", "file_path": full_path})
-                stats["not_found"] += 1
-                continue
-            except Exception as e:
-                if e.errno in (errno.ENOTSUP, errno.EACCES):  # 45: Not supported, 13: No access
-                    stats["lstat_required"] += 1
-                    LOG.debug({"msg": "Unable to call os.open. Using os.lstat instead", "file_path": full_path})
-                    time_start = time.time()
-                    file_info = get_file_stat(root, filename, phys_block_size, strip_dot_snapshot=strip_dot_snapshot)
-                    stats["time_lstat"] += time.time() - time_start
-                    if custom_tagging:
-                        time_start = time.time()
-                        file_info["user_tags"] = custom_tagging(file_info)
-                        stats["time_custom_tagging"] += time.time() - time_start
-                    if file_info["file_type"] == "dir":
-                        result_dir_list.append(file_info)
-                        # Fix size issues with dirs
-                        file_info["size_logical"] = 0
-                        stats["processed"] += 1
-                        continue
-                    # Filter out keys if requested
-                    if filter_fields:
-                        for key in list(file_info.keys()):
-                            if key not in filter_fields:
-                                del file_info[key]
-                    translate_user_group_perms(full_path, file_info, fd=fd, name_lookup=not no_names)
-                    result_list.append(file_info)
-                    stats["processed"] += 1
-                    continue
-                LOG.exception({"msg": "Error found when calling os.open", "file_path": full_path, "error": str(e)})
-                continue
-            time_start_dinode = time.time()
-            fstats = attr.get_dinode(fd)
-            time_end_dinode = time.time()
-            stats["time_dinode"] += time_end_dinode - time_start_dinode
-            # atime call can return empty if the file does not have an atime or atime tracking is disabled
-            atime = attr.get_access_time(fd)
-            if atime:
-                atime = atime[0]
-            else:
-                # If atime does not exist, use the last metadata change time as this captures the last time someone
-                # modified either the data or the inode of the file
-                atime = fstats["di_ctime"]
-            time_end_atime = time.time()
-            stats["time_access_time"] += time_end_atime - time_end_dinode
-            di_data_blocks = fstats.get("di_data_blocks", fstats["di_physical_blocks"] - fstats["di_protection_blocks"])
-            logical_blocks = fstats["di_logical_size"] // phys_block_size
-            comp_blocks = logical_blocks - fstats["di_shadow_refs"]
-            compressed_file = True if (di_data_blocks and comp_blocks) else False
-            stubbed_file = (fstats["di_flags"] & IFLAG_COMBO_STUBBED) > 0
-            if strip_dot_snapshot:
-                file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
-            else:
-                file_path = root
-            file_info = {
-                # ========== Timestamps ==========
-                "atime": atime,
-                "atime_date": datetime.date.fromtimestamp(atime).isoformat(),
-                "btime": fstats["di_create_time"],
-                "btime_date": datetime.date.fromtimestamp(fstats["di_create_time"]).isoformat(),
-                "ctime": fstats["di_ctime"],
-                "ctime_date": datetime.date.fromtimestamp(fstats["di_ctime"]).isoformat(),
-                "mtime": fstats["di_mtime"],
-                "mtime_date": datetime.date.fromtimestamp(fstats["di_mtime"]).isoformat(),
-                # ========== File and path strings ==========
-                "file_path": file_path,
-                "file_name": filename,
-                "file_ext": os.path.splitext(filename)[1],
-                # ========== File attributes ==========
-                "file_access_pattern": ACCESS_PATTERN[fstats["di_la_pattern"]],
-                "file_compression_ratio": comp_blocks / di_data_blocks if compressed_file else 1,
-                "file_hard_links": fstats["di_nlink"],
-                "file_is_ads": ((fstats["di_flags"] & IFLAGS_UF_HASADS) != 0),
-                "file_is_compressed": (comp_blocks > di_data_blocks) if compressed_file else False,
-                "file_is_dedupe_disabled": not not fstats["di_no_dedupe"],
-                "file_is_deduped": (fstats["di_shadow_refs"] > 0),
-                "file_is_inlined": (
-                    (fstats["di_physical_blocks"] == 0)
-                    and (fstats["di_shadow_refs"] == 0)
-                    and (fstats["di_logical_size"] > 0)
-                ),
-                "file_is_packed": not not fstats["di_packing_policy"],
-                "file_is_smartlinked": stubbed_file,
-                "file_is_sparse": ((fstats["di_logical_size"] < fstats["di_size"]) and not stubbed_file),
-                "file_type": FILE_TYPE[fstats["di_mode"] & FILE_TYPE_MASK],
-                "inode": fstats["di_lin"],
-                "inode_mirror_count": fstats["di_inode_mc"],
-                "inode_parent": fstats["di_parent_lin"],
-                "inode_revision": fstats["di_rev"],
-                # ========== Storage pool targets ==========
-                "pool_target_data": fstats["di_data_pool_target"],
-                "pool_target_data_name": pool_translate.get(
-                    int(fstats["di_data_pool_target"]), str(fstats["di_data_pool_target"])
-                ),
-                "pool_target_metadata": fstats["di_metadata_pool_target"],
-                "pool_target_metadata_name": pool_translate.get(
-                    int(fstats["di_metadata_pool_target"]), str(fstats["di_metadata_pool_target"])
-                ),
-                # ========== Permissions ==========
-                "perms_unix_bitmask": stat.S_IMODE(fstats["di_mode"]),
-                "perms_unix_gid": fstats["di_gid"],
-                "perms_unix_uid": fstats["di_uid"],
-                # ========== File protection level ==========
-                "protection_current": fstats["di_current_protection"],
-                "protection_target": fstats["di_protection_policy"],
-                # ========== File allocation size and blocks ==========
-                # The apparent size of the file. Sparse files include the sparse area
-                "size": fstats["di_size"],
-                # Logical size in 8K blocks. Sparse files only show the real data portion
-                "size_logical": fstats["di_logical_size"],
-                # Physical size on disk including protection overhead, including extension blocks and excluding metadata
-                "size_physical": fstats["di_physical_blocks"] * phys_block_size,
-                # Physical size on disk excluding protection overhead and excluding metadata
-                "size_physical_data": di_data_blocks * phys_block_size,
-                # Physical size on disk of the protection overhead
-                "size_protection": fstats["di_protection_blocks"] * phys_block_size,
-                # ========== SSD usage ==========
-                "ssd_strategy": fstats["di_la_ssd_strategy"],
-                "ssd_strategy_name": SSD_STRATEGY[fstats["di_la_ssd_strategy"]],
-                "ssd_status": fstats["di_la_ssd_status"],
-                "ssd_status_name": SSD_STATUS[fstats["di_la_ssd_status"]],
-            }
-            stats["time_data_save"] += time.time() - time_end_atime
-            if not no_acl:
-                time_start = time.time()
-                acl = onefs_acl.get_acl_dict(fd)
-                file_info["perms_acl_aces"] = misc.ace_list_to_str_list(acl.get("aces"))
-                file_info["perms_acl_group"] = misc.acl_group_to_str(acl)
-                file_info["perms_acl_user"] = misc.acl_user_to_str(acl)
-                stats["time_acl"] += time.time() - time_start
-            if extra_attr:
-                # di_flags may have other bits we need to translate
-                #     Coalescer setting (on|off|endurant all|coalescer only)
-                #     IFLAGS_UF_WRITECACHE and IFLAGS_UF_WC_ENDURANT flags
-                # Do we want inode locations? how many on SSD and spinning disk?
-                #   - Get data from estats["ge_iaddrs"], e.g. ge_iaddrs: [(1, 13, 1098752, 512)]
-                # Extended attributes/custom attributes?
-                time_start = time.time()
-                estats = attr.get_expattr(fd)
-                # Add up all the inode sizes
-                metadata_size = 0
-                for inode in estats["ge_iaddrs"]:
-                    metadata_size += inode[3]
-                # Sum of the size of all the inodes. This includes inodes that mix both 512 byte and 8192 byte inodes
-                file_info["size_metadata"] = metadata_size
-                file_info["file_is_manual_access"] = not not estats["ge_manually_manage_access"]
-                file_info["file_is_manual_packing"] = not not estats["ge_manually_manage_packing"]
-                file_info["file_is_manual_protection"] = not not estats["ge_manually_manage_protection"]
-                if estats["ge_coalescing_ec"] & estats["ge_coalescing_on"]:
-                    file_info["file_coalescer"] = "coalescer on, ec off"
-                elif estats["ge_coalescing_on"]:
-                    file_info["file_coalescer"] = "coalescer on, ec on"
-                elif estats["ge_coalescing_ec"]:
-                    file_info["file_coalescer"] = "coalescer off, ec on"
-                else:
-                    file_info["file_coalescer"] = "coalescer off, ec off"
-                stats["time_extra_attr"] += time.time() - time_start
-            if user_attr:
-                time_start = time.time()
-                extended_attr = {}
-                keys = uattr.userattr_list(fd)
-                for key in keys:
-                    extended_attr[key] = uattr.userattr_get(fd, key)
-                file_info["user_attributes"] = extended_attr
-                stats["time_user_attr"] += time.time() - time_start
-            if custom_tagging:
-                time_start = time.time()
-                file_info["user_tags"] = custom_tagging(file_info)
-                stats["time_custom_tagging"] += time.time() - time_start
-            
-            time_start_translate = time.time()
-            lstat_required = translate_user_group_perms(full_path, file_info, fd=fd, name_lookup=not no_names)
-            if lstat_required:
-                stats["lstat_required"] += 1
-            time_end_translate = time.time()
-            stats["time_name"] += time_end_translate - time_start_translate
-
-            # Filter out keys if requested
-            if filter_fields:
-                for key in list(file_info.keys()):
-                    if key not in filter_fields:
-                        del file_info[key]
-            stats["time_filter"] += time.time() - time_end_translate
-            if fstats["di_mode"] & 0o040000:
-                result_dir_list.append(file_info)
-                # Fix size issues with dirs
-                file_info["size_logical"] = 0
-                stats["processed"] += 1
-                continue
-            result_list.append(file_info)
-            if (
-                (fstats["di_mode"] & 0o010000 == 0o010000)
-                or (fstats["di_mode"] & 0o120000 == 0o120000)
-                or (fstats["di_mode"] & 0o140000 == 0o140000)
-            ):
-                # Fix size issues with symlinks, sockets, and FIFOs
-                file_info["size_logical"] = 0
-            stats["processed"] += 1
-        except IOError as ioe:
-            stats["skipped"] += 1
-            if ioe.errno == errno.EACCES:  # 13: No access
-                LOG.warn({"msg": "Permission error", "file_path": full_path})
-            else:
-                LOG.exception(ioe)
-        except FileNotFoundError as fnfe:
-            stats["not_found"] += 1
-            LOG.warn({"msg": "File not found", "file_path": full_path})
-        except PermissionError as pe:
-            stats["skipped"] += 1
-            LOG.warn({"msg": "Permission error", "file_path": full_path})
-            LOG.exception(pe)
-        except Exception as e:
-            stats["skipped"] += 1
-            LOG.warn({"msg": "General exception", "file_path": full_path})
-            LOG.exception(e)
-        finally:
-            try:
-                os.close(fd)
-            except:
-                pass
-    stats["time_scan_dir"] = time.time() - now
-    results = {
-        "dirs": result_dir_list,
-        "files": result_list,
-        "statistics": stats,
-    }
-    return results
-
-
-def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE, strip_dot_snapshot=True):
-    full_path = os.path.join(root, filename)
-    fstats = os.lstat(full_path)
-    if strip_dot_snapshot:
-        file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
-    else:
-        file_path = root
-    file_info = {
-        # ========== Timestamps ==========
-        "atime": fstats.st_atime,
-        "atime_date": datetime.date.fromtimestamp(fstats.st_atime).isoformat(),
-        "btime": None,
-        "btime_date": None,
-        "ctime": fstats.st_ctime,
-        "ctime_date": datetime.date.fromtimestamp(fstats.st_ctime).isoformat(),
-        "mtime": fstats.st_mtime,
-        "mtime_date": datetime.date.fromtimestamp(fstats.st_mtime).isoformat(),
-        # ========== File and path strings ==========
-        "file_path": file_path,
-        "file_name": filename,
-        "file_ext": os.path.splitext(filename),
-        # ========== File attributes ==========
-        "file_hard_links": fstats.st_nlink,
-        "file_type": FILE_TYPE[stat.S_IFMT(fstats.st_mode) & FILE_TYPE_MASK],
-        "inode": fstats.st_ino,
-        # ========== Permissions ==========
-        "perms_unix_bitmask": stat.S_IMODE(fstats.st_mode),
-        "perms_unix_gid": fstats.st_gid,
-        "perms_unix_uid": fstats.st_uid,
-        # ========== File allocation size and blocks ==========
-        "size": fstats.st_size,
-        "size_logical": block_unit * (int(fstats.st_size / block_unit) + 1 * ((fstats.st_size % block_unit) > 0)),
-        # st_blocks includes metadata blocks
-        "size_physical": block_unit * (int(fstats.st_blocks * STAT_BLOCK_SIZE / block_unit)),
-    }
-    try:
-        file_info["btime"] = fstats.st_birthtime
-        file_info["btime_date"] = datetime.date.fromtimestamp(fstats.st_btime).isoformat()
-    except:
-        # No birthtime date so do not add those fields
-        pass
-    if file_info["size"] == 0 and file_info["size_physical"] == 0:
-        file_info["size_physical"] = file_info["size_logical"]
-    return file_info
-
-
 def signal_handler(signum, frame):
-    global server
+    global SERVER
     if signum in [signal.SIGINT, signal.SIGTERM]:
-        server.close()
+        SERVER.close()
         # Cleanup SimpleCache
-        cache = app.config.get("cache")
+        cache = APP.config.get("cache")
         if cache:
-            del app.config["cache"]
+            del APP.config["cache"]
             cache.__del__()
         sys.exit(0)
     if signum in [signal.SIGUSR1]:
@@ -527,7 +104,7 @@ def signal_handler(signum, frame):
         )
 
 
-@app.after_request
+@APP.after_request
 def compress(response):
     # 0: No compression, 1: Fastest, 9: Slowest
     compress_level = 9
@@ -556,7 +133,7 @@ def compress(response):
     return response
 
 
-@app.route("/cluster_storage_stats", methods=["GET"])
+@APP.route("/cluster_storage_stats", methods=["GET"])
 def handle_cluster_storage_stats():
     args = request.args
     storage_usage_stats = {}
@@ -569,7 +146,7 @@ def handle_cluster_storage_stats():
     return resp
 
 
-@app.route("/ps_stat/list", methods=["GET"])
+@APP.route("/ps_stat/list", methods=["GET"])
 def handle_ps_stat_list():
     """Returns metadata for both the root path and all the immediate children of that path
     In the case the root is a file, only the file metadata will be returned
@@ -618,22 +195,23 @@ def handle_ps_stat_list():
             "not_found": <int>                # Number of files that were not found
             "processed": <int>                # Number of files actually processed
             "skipped": <int>                  # Number of files skipped
-              "time_access_time": <int>       # Seconds spent getting the file access time
-              "time_acl": <int>               # Seconds spent getting file ACL
-              "time_custom_tagging": <int>    # Seconds spent processing custom tags
-              "time_data_save": <int>         # Seconds spent creating response
-              "time_dinode": <int>            # Seconds spent getting OneFS metadata
-              "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
-              "time_filter": <int>            # Seconds spent filtering fields
-              "time_name": <int>              # Seconds spend translating UID/GID/SID to names
-              "time_lstat": <int>             # Seconds spent in lstat
-              "time_scan_dir": <int>          # Seconds spent scanning the entire directory
-              "time_user_attr": <int>         # Seconds spent scanning user attributes
+            "time_access_time": <int>         # Seconds spent getting the file access time
+            "time_acl": <int>                 # Seconds spent getting file ACL
+            "time_custom_tagging": <int>      # Seconds spent processing custom tags
+            "time_data_save": <int>           # Seconds spent creating response
+            "time_dinode": <int>              # Seconds spent getting OneFS metadata
+            "time_extra_attr": <int>          # Seconds spent getting extra OneFS metadata
+            "time_filter": <int>              # Seconds spent filtering fields
+            "time_open": <int>                # Seconds spent in os.open
+            "time_name": <int>                # Seconds spend translating UID/GID/SID to names
+            "time_lstat": <int>               # Seconds spent in lstat
+            "time_scan_dir": <int>            # Seconds spent scanning the entire directory
+            "time_user_attr": <int>           # Seconds spent scanning user attributes
           }
         }
     """
     args = request.args
-    options = app.config["ps_scan"]["options"]
+    options = APP.config["ps_scan"]["options"]
     param = {
         "custom_tagging": misc.parse_arg_bool(args, "custom_tagging", False),
         "extra_attr": misc.parse_arg_bool(args, "extra_attr", False),
@@ -642,7 +220,7 @@ def handle_ps_stat_list():
         "limit": misc.parse_arg_int(args, "limit", options["default_item_limit"], 1, options["max_item_limit"]),
         "no_acl": misc.parse_arg_bool(args, "no_acl", False),
         "no_names": misc.parse_arg_bool(args, "no_names", False),
-        "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
+        "nodepool_translation": APP.config["ps_scan"]["nodepool_translation"],
         "path": args.get("path"),
         "strip_do_snapshot": misc.parse_arg_bool(args, "strip_dot_snapshot", True),
         "token": args.get("token"),
@@ -676,7 +254,7 @@ def handle_ps_stat_list():
     base, file, full_path = misc.get_path_from_urlencoded(param["path"])
     if not param["token"]:
         if param["include_root"]:
-            stat_data = file_handler_pscale(base, [file], param)
+            stat_data = scanner.file_handler_pscale(base, [file], param)
             if stat_data["dirs"]:
                 root = stat_data["dirs"][0]
                 root_is_dir = True
@@ -693,7 +271,7 @@ def handle_ps_stat_list():
         if param["token"]:
             # Get the cached list and then set dir_list
             LOG.debug({"msg": "Getting cached directory listing", "path": full_path})
-            cached_item = app.config["cache"].get_item(param["token"])
+            cached_item = APP.config["cache"].get_item(param["token"])
             if not cached_item:
                 return make_response({"msg": TXT_INVALID_TOKEN, "token": param["token"]}, 404)
             base = cached_item["base"]
@@ -714,7 +292,7 @@ def handle_ps_stat_list():
         if dir_list_len > param["limit"]:
             start - time.time()
             # Cache the remainder of the directory listing to avoid re-scanning the directory
-            token_data = app.config["cache"].add_item(
+            token_data = APP.config["cache"].add_item(
                 {
                     "base": full_path,
                     "dir_list": dir_list[param["limit"] :],
@@ -728,7 +306,7 @@ def handle_ps_stat_list():
             LOG.debug({"msg": "Caching directory listing", "time": time.time() - start})
         # Perform the actual stat commands on each file/directory
         LOG.debug({"msg": "Parsing directory", "path": full_path})
-        list_stat_data = file_handler_pscale(full_path, dir_list, param)
+        list_stat_data = scanner.file_handler_pscale(full_path, dir_list, param)
         LOG.debug({"msg": "Parsing complete", "path": full_path, "stats": list_stat_data["statistics"]})
 
     # Calculate statistics to return in the response
@@ -761,11 +339,11 @@ def handle_ps_stat_list():
         "statistics": total_stats,
     }
     if param["type"] == DATA_TYPE_DISKOVER:
-        convert_response_to_diskover(resp_data)
+        scanner.convert_response_to_diskover(resp_data)
     return Response(json.dumps(resp_data, default=lambda o: JSON_SER_ERR), mimetype=MIME_TYPE_JSON)
 
 
-@app.route("/ps_stat/single", methods=["GET"])
+@APP.route("/ps_stat/single", methods=["GET"])
 def handle_ps_stat_single():
     """Returns metadata for a single file or directory specified by the "path" argument
 
@@ -795,20 +373,6 @@ def handle_ps_stat_single():
             "dirs": []                        # Empty list
             "files": []                       # Empty list
             "root": <dict>                    # Metadata for the root path
-            "statistics": {
-              "lstat_required": <bool>        # Number of times lstat was called vs. internal stat call
-              "not_found": <int>              # Number of files that were not found
-              "processed": <int>              # Number of files actually processed
-              "skipped": <int>                # Number of files skipped
-              "time_access_time": <int>       # Seconds spent getting the file access time
-              "time_acl": <int>               # Seconds spent getting file ACL
-              "time_custom_tagging": <int>    # Seconds spent processing custom tags
-              "time_dinode": <int>            # Seconds spent getting OneFS metadata
-              "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
-              "time_lstat": <int>             # Seconds spent in lstat
-              "time_scan_dir": <int>          # Seconds spent scanning the entire directory
-              "time_user_attr": <int>         # Seconds spent scanning user attributes
-            }
           }
           "items_total": <int>                # Total number of items remaining that could be returned
           "items_returned": <int>             # Number of metadata items returned. This number includes the "root"
@@ -825,6 +389,7 @@ def handle_ps_stat_single():
             "time_extra_attr": <int>          # Seconds spent getting extra OneFS metadata
             "time_filter": <int>              # Seconds spent filtering fields
             "time_name": <int>                # Seconds spend translating UID/GID/SID to names
+            "time_open": <int>                # Seconds spent in os.open
             "time_lstat": <int>               # Seconds spent in lstat
             "time_scan_dir": <int>            # Seconds spent scanning the entire directory
             "time_user_attr": <int>           # Seconds spent scanning user attributes
@@ -838,7 +403,7 @@ def handle_ps_stat_single():
         "fields": str(args.get("fields", "")),
         "no_acl": misc.parse_arg_bool(args, "no_acl", False),
         "no_names": misc.parse_arg_bool(args, "no_names", False),
-        "nodepool_translation": app.config["ps_scan"]["nodepool_translation"],
+        "nodepool_translation": APP.config["ps_scan"]["nodepool_translation"],
         "path": args.get("path"),
         "strip_do_snapshot": misc.parse_arg_bool(args, "strip_dot_snapshot", True),
         "type": args.get("type", DEFAULT_DATA_TYPE),
@@ -859,7 +424,7 @@ def handle_ps_stat_single():
 
     # Get the base directory, the last path component, and the full path. e.g. /ifs, foo, /ifs/foo
     base, file, full_path = misc.get_path_from_urlencoded(param["path"])
-    stat_data = file_handler_pscale(base, [file], param)
+    stat_data = scanner.file_handler_pscale(base, [file], param)
     if stat_data["dirs"]:
         root = stat_data["dirs"][0]
     elif stat_data["files"]:
@@ -879,7 +444,7 @@ def handle_ps_stat_single():
         "statistics": stat_data["statistics"],
     }
     if param["type"] == DATA_TYPE_DISKOVER:
-        convert_response_to_diskover(resp_data)
+        scanner.convert_response_to_diskover(resp_data)
     return Response(json.dumps(resp_data, default=lambda o: JSON_SER_ERR), mimetype=MIME_TYPE_JSON)
 
 
@@ -902,8 +467,8 @@ if __name__ == "__main__" or __file__ == None:
 
     # Turn of serialization of cache items into JSON
     options.update({"serialize": False})
-    app.config["cache"] = SimpleCache(options)
-    app.config["ps_scan"] = {
+    APP.config["cache"] = SimpleCache(options)
+    APP.config["ps_scan"] = {
         "options": options,
         "nodepool_translation": misc.get_nodepool_translation(),
     }
@@ -916,17 +481,17 @@ if __name__ == "__main__" or __file__ == None:
             sys.exit(1)
 
     svr_addr = "*" if options["addr"] == DEFAULT_SERVER_ADDR else options["addr"]
-    server = create_server(
-        app,
+    SERVER = create_server(
+        APP,
         host=svr_addr,
         ident="ps_scan_api_server/{ver}".format(ver=__version__),
         port=options["port"],
         threads=options["threads"],
     )
-    server.run()
+    SERVER.run()
 
     # Cleanup SimpleCache
-    cache = app.config.get("cache")
+    cache = APP.config.get("cache")
     if cache:
-        del app.config["cache"]
+        del APP.config["cache"]
         cache.__del__()
