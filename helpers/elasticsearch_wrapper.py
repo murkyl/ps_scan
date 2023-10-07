@@ -590,10 +590,6 @@ def es_query_match(es_client, es_cmd_idx, query_match=None, query_ops=None):
         index_names = list(set(index_names))
     for idx in index_names:
         resp = es_client.search(body_str=query, index_name=idx)
-        LOG.critical("DEBUG: RESPONSE DUMP: %s" % json.dumps(resp, sort_keys=True))
-        # if resp.get("status", 200) not in [200, 404]:
-        #    LOG.error(json.dumps(resp.get("error", {})))
-        # LOG.debug("Query [match] index (%s) response: %s" % (idx, resp))
 
 
 def es_start_processing(es_client, es_cmd_idx, start_options={}, options={}):
