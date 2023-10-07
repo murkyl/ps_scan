@@ -25,12 +25,13 @@ import time
 
 from helpers.constants import *
 import helpers.misc as misc
+import helpers.scanit as scanit
+import helpers.scanner as scanner
 import helpers.user_handlers as user_handlers
 import libs.hydra as Hydra
-import libs.scanit as scanit
 
 
-LOG = logging.getLogger()
+LOG = logging.getLogger(__name__)
 
 
 class PSScanClient(object):
@@ -76,7 +77,7 @@ class PSScanClient(object):
         self.poll_interval = args.get("poll_interval", DEFAULT_CMD_POLL_INTERVAL)
         self.scanner = scanit.ScanIt()
         # TODO: Change how file handler is called
-        self.scanner_file_handler = args.get("scanner_file_handler", user_handlers.file_handler_basic)
+        self.scanner_file_handler = args.get("scanner_file_handler", scanner.file_handler_basic)
         self.sent_data = 0
         self.server_addr = args.get("server_addr", Hydra.DEFAULT_SERVER_ADDR)
         self.server_port = args.get("server_port", Hydra.DEFAULT_SERVER_PORT)
@@ -406,6 +407,7 @@ class PSScanClient(object):
             else:
                 log_handler = logging.StreamHandler()
             log_handler.setFormatter(logging.Formatter(logger_block["format"]))
+            LOG = logging.getLogger("")
             LOG.handlers[:] = []
             LOG.addHandler(log_handler)
             LOG.setLevel(logger_block["level"])
