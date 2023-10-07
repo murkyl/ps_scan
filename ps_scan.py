@@ -99,7 +99,7 @@ def main():
             LOG.info({"msg": "VMEM ulimit setting failed"})
         file_handler = scanner.file_handler_pscale
     else:
-        file_handler = user_handlers.file_handler_basic
+        file_handler = scanner.file_handler_basic
     LOG.debug({"msg": "Parsed options", "options": json.dumps(options, indent=2, sort_keys=True)})
     LOG.debug({"msg": "Initial scan paths", "paths": ", ".join(args)})
 
