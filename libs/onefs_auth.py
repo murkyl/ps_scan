@@ -98,22 +98,31 @@ class GetPrincipalName:
             principal_entry = name_cache.get(principal)
             add_entry_to_name_cache.append(name_cache)
             if not principal_entry:
-                principal_data = self.papi_handle.rest_call(
-                    base_uri + "/" + principal, "GET", query_args={"query_member_of": "false", "zone": zone_name}
-                )
-                if principal_data[0] != 200:
-                    # When strict is True, if we made it this far, then we found the longest matching path already
-                    # If the user doesn't exist at this level, don't continue to go toward the root at /ifs
-                    # We short circuit future lookups by saving the passed in principal as the name and returning it
-                    if strict:
-                        name_cache[principal] = principal
-                        break
-                    continue
-                principal_entry = {"ts": time.time(), "name": principal_data[2][base_type][0]["name"]}
-                self.lock.acquire()
-                for cache in add_entry_to_name_cache:
-                    cache[principal] = principal_entry
-                self.lock.release()
+                try:
+                    self.lock.acquire()
+                    # Double check if another thread has already added this entry
+                    principal_entry = name_cache.get(principal)
+                    if principal_entry:
+                        LOG.critical("Was going to query for user: %s" % principal)
+                        continue
+                    principal_data = self.papi_handle.rest_call(
+                        base_uri + "/" + principal, "GET", query_args={"query_member_of": "false", "zone": zone_name}
+                    )
+                    if principal_data[0] != 200:
+                        # When strict is True, if we made it this far, then we found the longest matching path already
+                        # If the user doesn't exist at this level, don't continue to go toward the root at /ifs
+                        # We short circuit future lookups by saving the passed in principal as the name and returning it
+                        if strict:
+                            name_cache[principal] = principal
+                            break
+                        continue
+                    principal_entry = {"ts": time.time(), "name": principal_data[2][base_type][0]["name"]}
+                    for cache in add_entry_to_name_cache:
+                        cache[principal] = principal_entry
+                except:
+                    raise
+                finally:
+                    self.lock.release()
             return principal_entry["name"]
         return principal
 
