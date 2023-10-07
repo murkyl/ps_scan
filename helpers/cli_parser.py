@@ -16,7 +16,7 @@ __all__ = [
 # fmt: on
 import optparse
 
-import libs.scanit as scanit
+import helpers.scanit as scanit
 from helpers.constants import *
 
 USAGE = "usage: %prog [OPTION...] PATH... [PATH..]"
@@ -154,6 +154,12 @@ Examples:
         type="int",
         default=DEFAULT_SERVER_PORT,
         help="Port number for client/server connection",
+    )
+    parser.add_option(
+        "--user",
+        action="store",
+        default=None,
+        help="User in the current zone that the server will run as",
     )
     parser.add_option(
         "--no-acl",
