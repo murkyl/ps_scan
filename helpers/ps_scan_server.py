@@ -250,6 +250,8 @@ class PSScanServer(Hydra.HydraServer):
             self.connect_addr,
             "--threads",
             self.cli_options.get("threads"),
+            "--type",
+            self.cli_options.get("type"),
         ]
         if self.cli_options.get("es_type"):
             run_cmd.append("--es-type")
