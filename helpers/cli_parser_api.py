@@ -75,7 +75,9 @@ Endpoints
     ----------
     custom_tagging: <bool> When true call a custom handler for each file. Enabling this can slow down scan speed
     extra_attr: <bool> When true, gets extra OneFS metadata. Enabling this can slow down scan speed
+    fields: <str> Comma separated string of the field names that shoudl be returned in a response
     no_acl: <bool> When true, skip ACL parsing. Enabling this can speed up scanning but results will not have ACLs
+    no_names: <bool> When true, skip translation of UID/GID/SID to a name
     strip_dot_snapshot: <bool> When true, strip the .snapshot name from the file path returned
     user_attr: <bool> # When true, get user attribute data for files. Enabling this can slow down scan speed
 
@@ -87,20 +89,6 @@ Endpoints
             "dirs": []                        # Empty list
             "files": []                       # Empty list
             "root": <dict>                    # Metadata for the root path
-            "statistics": {
-              "lstat_required": <bool>        # Number of times lstat was called vs. internal stat call
-              "not_found": <int>              # Number of files that were not found
-              "processed": <int>              # Number of files actually processed
-              "skipped": <int>                # Number of files skipped
-              "time_access_time": <int>       # Seconds spent getting the file access time
-              "time_acl": <int>               # Seconds spent getting file ACL
-              "time_custom_tagging": <int>    # Seconds spent processing custom tags
-              "time_dinode": <int>            # Seconds spent getting OneFS metadata
-              "time_extra_attr": <int>        # Seconds spent getting extra OneFS metadata
-              "time_lstat": <int>             # Seconds spent in lstat
-              "time_scan_dir": <int>          # Seconds spent scanning the entire directory
-              "time_user_attr": <int>         # Seconds spent scanning user attributes
-            }
           }
           "items_total": <int>                # Total number of items remaining that could be returned
           "items_returned": <int>             # Number of metadata items returned. This number includes the "root"
@@ -112,8 +100,12 @@ Endpoints
             "time_access_time": <int>         # Seconds spent getting the file access time
             "time_acl": <int>                 # Seconds spent getting file ACL
             "time_custom_tagging": <int>      # Seconds spent processing custom tags
+            "time_data_save": <int>           # Seconds spent creating response
             "time_dinode": <int>              # Seconds spent getting OneFS metadata
             "time_extra_attr": <int>          # Seconds spent getting extra OneFS metadata
+            "time_filter": <int>              # Seconds spent filtering fields
+            "time_name": <int>                # Seconds spend translating UID/GID/SID to names
+            "time_open": <int>                # Seconds required to acquire file descriptor
             "time_lstat": <int>               # Seconds spent in lstat
             "time_scan_dir": <int>            # Seconds spent scanning the entire directory
             "time_user_attr": <int>           # Seconds spent scanning user attributes
@@ -140,9 +132,11 @@ Endpoints
     ----------
     custom_tagging: <bool> When true call a custom handler for each file. Enabling this can slow down scan speed
     extra_attr: <bool> When true, gets extra OneFS metadata. Enabling this can slow down scan speed
+    fields: <str> Comma separated string of the field names that shoudl be returned in a response
     include_root: <bool> When true, the metadata for the path specified in the path query parameter will be returned
             in the "contents" object under the key "root"
     no_acl: <bool> When true, skip ACL parsing. Enabling this can speed up scanning but results will not have ACLs
+    no_names: <bool> When true, skip translation of UID/GID/SID to a name
     strip_dot_snapshot: <bool> When true, strip the .snapshot name from the file path returned
     user_attr: <bool> # When true, get user attribute data for files. Enabling this can slow down scan speed
 
@@ -170,8 +164,12 @@ Endpoints
             "time_access_time": <int>         # Seconds spent getting the file access time
             "time_acl": <int>                 # Seconds spent getting file ACL
             "time_custom_tagging": <int>      # Seconds spent processing custom tags
+            "time_data_save": <int>           # Seconds spent creating response
             "time_dinode": <int>              # Seconds spent getting OneFS metadata
             "time_extra_attr": <int>          # Seconds spent getting extra OneFS metadata
+            "time_filter": <int>              # Seconds spent filtering fields
+            "time_name": <int>                # Seconds spend translating UID/GID/SID to names
+            "time_open": <int>                # Seconds required to acquire file descriptor
             "time_lstat": <int>               # Seconds spent in lstat
             "time_scan_dir": <int>            # Seconds spent scanning the entire directory
             "time_user_attr": <int>           # Seconds spent scanning user attributes
