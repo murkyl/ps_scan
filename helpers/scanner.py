@@ -177,12 +177,12 @@ def file_handler_basic(root, filename_list, args={}):
                 stats["time_custom_tagging"] += time.time() - time_start
 
             # Filter out keys if requested
-            time_start = time.time()
             if filter_fields:
+                time_start = time.time()
                 for key in list(file_info.keys()):
                     if key not in filter_fields:
                         del file_info[key]
-            stats["time_filter"] += time.time() - time_start()
+                stats["time_filter"] += time.time() - time_start()
 
             if file_info["file_type"] == "dir":
                 # Set values for directories
@@ -195,10 +195,10 @@ def file_handler_basic(root, filename_list, args={}):
             stats["processed"] += 1
         except FileNotFoundError as fnfe:
             stats["skipped"] += 1
-            LOG.warn({"msg": "File not found", "file_path": full_path})
+            LOG.warn({"msg": "File not found", "file_path": os.path.join(root, filename)})
         except Exception as e:
             stats["skipped"] += 1
-            LOG.warn({"msg": "Exception during file scan", "file_path": full_path})
+            LOG.warn({"msg": "Exception during file scan", "file_path": os.path.join(root, filename)})
             LOG.exception(e)
     stats["time_scan_dir"] = time.time() - start_scanner
     results = {
