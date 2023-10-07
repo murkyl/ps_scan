@@ -100,15 +100,6 @@ FILE_TYPE = {
     0o120000: "symlink",
     0o140000: "socket",
 }
-FILE_TYPE_DISKOVER = {
-    0o010000: "fifo",
-    0o020000: "char",
-    0o040000: "directory",
-    0o060000: "block",
-    0o100000: "file",
-    0o120000: "symlink",
-    0o140000: "socket",
-}
 FILE_TYPE_MASK = 0o170000
 # Inode flag bit fields
 # fmt: off
