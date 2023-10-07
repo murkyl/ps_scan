@@ -31,7 +31,7 @@ import libs.remote_run as rr
 import libs.sliding_window_stats as sliding_window_stats
 
 
-LOG = logging.getLogger()
+LOG = logging.getLogger(__name__)
 
 
 class PSScanServer(Hydra.HydraServer):
