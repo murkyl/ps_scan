@@ -112,7 +112,7 @@ class GetPrincipalName:
                         # If we are at the System zone and we cannot find the user, the user does not exist.
                         # Short circuit future lookups by saving the passed in principal and then returning it
                         if strict or zone_name == "System":
-                            name_cache[principal] = principal
+                            name_cache[principal] = {"ts": time.time(), "name": principal}
                             break
                         continue
                     principal_entry = {"ts": time.time(), "name": principal_data[2][base_type][0]["name"]}
