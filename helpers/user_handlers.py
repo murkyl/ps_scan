@@ -39,9 +39,7 @@ import helpers.misc as misc
 import helpers.scanner as scanner
 
 LOG = logging.getLogger(__name__)
-CUSTOM_STATS_FIELDS = [
-    "es_queue_wait_count",
-] + scanner.STATS_FIELDS
+CUSTOM_STATS_FIELDS = scanner.STATS_FIELDS
 
 
 def custom_stats_handler(common_stats, custom_state, custom_threads_state, thread_state):
@@ -124,7 +122,7 @@ def print_statistics(output_type, log, stats, custom_stats, now, start_time, wal
         for client in custom_stats:
             consolidated_custom_stats[field] += client[field]
         if "_time" in field:
-            consolidated_custom_stats[field] = consolidated_custom_stats[field] / stats["threads"]
+            consolidated_custom_stats[field] = consolidated_custom_stats[field] / stats.get("threads", 1)
     output_string = (
         "===== Custom stats (average over all threads) =====\n"
         + json.dumps(consolidated_custom_stats, indent=2, sort_keys=True)
