@@ -486,7 +486,7 @@ def file_handler_pscale(root, filename_list, args={}):
             LOG.exception(pe)
         except Exception as e:
             stats["skipped"] += 1
-            LOG.warn({"msg": "Exception during file scan", "file_path": full_path})
+            LOG.warn({"msg": "Exception during file scan", "file_path": full_path, "error": str(e)})
             LOG.exception(e)
         finally:
             try:

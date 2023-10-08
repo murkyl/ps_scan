@@ -107,7 +107,7 @@ class PSScanServer(Hydra.HydraServer):
         if self.cli_options.get("log"):
             base, ext = os.path.splitext(self.cli_options.get("log", DEFAULT_LOG_FILE_PREFIX + DEFAULT_LOG_FILE_SUFFIX))
             client_logger = {
-                "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s",
+                "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d][%(threadName)s] - %(message)s",
                 "debug_count": self.cli_options.get("debug", 0),
                 "destination": "file",
                 "filename": self.cli_options.get("log_file_format", DEFAULT_LOG_FILE_FORMAT),
