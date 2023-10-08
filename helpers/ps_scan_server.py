@@ -401,6 +401,7 @@ class PSScanServer(Hydra.HydraServer):
                             "command": data_type,
                         }
                     )
+                LOG.critical("DEBUG: CLIENT STATS: %s" % data["data"])
                 cur_client["stats"] = data["data"]
                 cur_client["stats_time"] = now
             elif data_type == MSG_TYPE_CLIENT_REQ_DIR_LIST:
