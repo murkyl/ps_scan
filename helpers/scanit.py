@@ -17,6 +17,7 @@ __all__ = [
 ]
 # fmt: on
 import copy
+import errno
 import glob
 import logging
 import math
@@ -28,10 +29,12 @@ import stat
 import threading
 import time
 
+from helpers.constants import *
+
 try:
     dir(PermissionError)
 except:
-    PermissionError = Exception
+    PermissionError = NotImplementedError
 try:
     dir(os.scandir)
     USE_SCANDIR = 1
@@ -55,10 +58,6 @@ CMD_PROC_FILE = next_int()
 CMD_PROC_DIR = next_int()
 CMD_EXIT = next_int()
 # ================================================================================
-# Selection for type of processing to perform
-PROCESS_TYPE_SIMPLE = next_int(True)
-PROCESS_TYPE_ADVANCED = next_int()
-# ================================================================================
 # Default values
 #   Size of the underlying storage block size
 DEFAULT_BLOCK_SIZE = 8192
@@ -72,7 +71,6 @@ DEFAULT_FILE_QUEUE_MIN_CUTOFF = DEFAULT_FILE_QUEUE_CUTOFF // 10
 #   Maximum number of work items to return in a single call to return work
 DEFAULT_MAX_WORK_ITEMS = 100
 DEFAULT_POLL_INTERVAL = 0.1
-DEFAULT_PROCESS_TYPE = PROCESS_TYPE_SIMPLE
 #   Size of directory or file chunks
 DEFAULT_QUEUE_DIR_CHUNK_SIZE = 5
 DEFAULT_QUEUE_FILE_CHUNK_SIZE = 50
@@ -105,6 +103,7 @@ T_EX_PROCESS_NEW_DIR = next_int()
 T_EXIT = next_int()
 T_INCONSISTENT_THREAD_STATE = next_int()
 T_JOIN_THREADS = next_int()
+T_LIST_DIR_NOT_FOUND = next_int()
 T_LIST_DIR_PERM_ERR = next_int()
 T_LIST_DIR_UNKNOWN_ERR = next_int()
 T_OOM_PROCESS_FILE = next_int()
@@ -121,6 +120,7 @@ TXT_STR = {
     T_EXIT: "({tid}) Thread exiting",
     T_INCONSISTENT_THREAD_STATE: "({tid}) Dead thread did not set run state to idle. Forcing idle status.",
     T_JOIN_THREADS: "Joining threads",
+    T_LIST_DIR_NOT_FOUND: "Directory not found {file}",
     T_LIST_DIR_PERM_ERR: "Permission error listing directory: {file}",
     T_LIST_DIR_UNKNOWN_ERR: "Unhandled exception error while listing directory: {file}",
     T_OOM_PROCESS_FILE: "({tid}) - Out of memory in file handler for root: {r}",
@@ -132,6 +132,23 @@ TXT_STR = {
 }
 # ================================================================================
 LOG = logging.getLogger(__name__)
+STANDARD_STATS_FIELD_NAMES = [
+    "dir_scan_time",
+    "dir_handler_time",
+    "dirs_processed",
+    "dirs_queued",
+    "dirs_skipped",
+    "es_queue_wait_count",
+    "file_handler_time",
+    "file_size_total",
+    "file_size_physical_total",
+    "files_not_found",
+    "files_processed",
+    "files_queued",
+    "files_skipped",
+    "q_wait_time",
+    "time_es_queue",
+]
 
 
 class TerminateThread(Exception):
@@ -177,12 +194,6 @@ class ScanIt(threading.Thread):
         # Number of total threads to use for scanning. This is inclusive of directory processing threads and file
         # processing threads
         self.num_threads = DEFAULT_THREAD_COUNT
-        # What type of handlers will be used. The default is PROCESS_TYPE_SIMPLE which uses os.walk and assumes
-        # the file handler will perform a simple stat call on each file only. When the type is set to
-        # PROCESS_TYPE_ADVANCED, the file handler is expected to use the isi.fs.attr.get_dinode call and to also
-        # return a list of directory entries for further processing. PROCESS_TYPE_ADVANCED can only be used if the
-        # script detects it is running on a PowerScale cluster
-        self.processing_type = DEFAULT_PROCESS_TYPE
         # Set with directory names to skip processing
         self.default_skip_dirs = DEFAULT_SKIP_DIRS
         #
@@ -205,21 +216,9 @@ class ScanIt(threading.Thread):
         return base
 
     def _create_stats_state(self):
-        stats_state = {
-            "dir_scan_time": 0,
-            "dir_handler_time": 0,
-            "dirs_processed": 0,
-            "dirs_queued": 0,
-            "dirs_skipped": 0,
-            "file_handler_time": 0,
-            "file_size_total": 0,
-            "file_size_physical_total": 0,
-            "files_not_found": 0,
-            "files_processed": 0,
-            "files_queued": 0,
-            "files_skipped": 0,
-            "q_wait_time": 0,
-        }
+        stats_state = {}
+        for field in STANDARD_STATS_FIELD_NAMES:
+            stats_state[field] = 0
         return stats_state
 
     def _create_thread_instance_state(self):
@@ -310,7 +309,9 @@ class ScanIt(threading.Thread):
                 paths.append(os.path.join(p, "*"))
                 paths.append(os.path.join(p, ".*"))
                 continue
-            expanded_paths.extend(glob.glob(p))
+            # When performing globbing, an empty list can result if the path does not exist. In case the path does not
+            # exist, return the unglobbed path for further processing
+            expanded_paths.extend(glob.glob(p) or [p])
         return expanded_paths
 
     def _incr_dir_q_thread_count(self):
@@ -329,22 +330,23 @@ class ScanIt(threading.Thread):
             else:
                 dir_file_list = os.listdir(path)
         except IOError as ioe:
-            dir_file_list = None
-            dirs_skipped = 1
-            if ioe.errno == 13:
+            if ioe.errno == errno.EACCES:  # 13: No access
                 LOG.info(TXT_STR[T_LIST_DIR_PERM_ERR].format(file=path))
             else:
                 LOG.info(TXT_STR[T_LIST_DIR_UNKNOWN_ERR].format(file=path))
                 LOG.exception(ioe)
-        except PermissionError:
-            dir_file_list = None
-            dirs_skipped = 1
+            return False
+        except PermissionError as pe:
             LOG.info(TXT_STR[T_LIST_DIR_PERM_ERR].format(file=path))
+            LOG.exception(pe)
+            return False
         except Exception as e:
-            dir_file_list = None
-            dirs_skipped = 1
-            LOG.info(TXT_STR[T_LIST_DIR_UNKNOWN_ERR].format(file=path))
-            LOG.exception(e)
+            if e.errno == errno.ENOENT:  # 2: No such file or directory
+                LOG.info(TXT_STR[T_LIST_DIR_NOT_FOUND].format(file=path))
+            else:
+                LOG.info(TXT_STR[T_LIST_DIR_UNKNOWN_ERR].format(file=path))
+                LOG.exception(e)
+            return False
         self._enqueue_chunks(path, dir_file_list, self.file_chunk, self.file_q, CMD_PROC_FILE)
         # files_queued includes all potential directories. Adjust the count when we actually know how many dirs
         return {
@@ -373,10 +375,7 @@ class ScanIt(threading.Thread):
             "files_queued": num_files,
         }
 
-    def _process_queues(self, state, ptype=PROCESS_TYPE_SIMPLE):
-        handler = self._process_walk_dir
-        if ptype == PROCESS_TYPE_ADVANCED:
-            handler = self._process_list_dir
+    def _process_queues(self, state):
         name = state["handle"].name
         reset_idle_required = False
         state["run_state"] = S_RUNNING
@@ -413,20 +412,24 @@ class ScanIt(threading.Thread):
                             LOG.debug({"msg": "Skipping directory", "filename": dirname})
                             stats["dirs_skipped"] += 1
                             continue
-                        # If handler_dir returns True, we should skip this directory
-                        if self.handler_dir and self.handler_dir(work_item[1], dirname):
+                        # If user supplied handler_dir returns False, we should skip this directory
+                        if self.handler_dir and not self.handler_dir(work_item[1], dirname):
                             LOG.debug({"msg": "Skipping directory", "filename": dirname})
                             stats["dirs_skipped"] += 1
                             continue
-                        stats["dirs_processed"] += 1
                         try:
-                            handler_stats = handler(os.path.join(work_item[1], dirname))
+                            handler_stats = self._process_list_dir(os.path.join(work_item[1], dirname))
+                            if not handler_stats:
+                                LOG.debug({"msg": "Skipping directory", "filename": dirname})
+                                stats["dirs_skipped"] += 1
+                                continue
                         except MemoryError:
                             LOG.exception(TXT_STR[T_OOM_PROCESS_NEW_DIR].format(tid=name, r=work_item[1], d=dirname))
                             raise TerminateThread
                         except:
                             LOG.exception(TXT_STR[T_EX_PROCESS_NEW_DIR].format(tid=name, r=work_item[1], d=dirname))
                             raise TerminateThread
+                        stats["dirs_processed"] += 1
                         for key in handler_stats.keys():
                             stats[key] += handler_stats[key]
                     stats["dir_handler_time"] += time.time() - start
@@ -436,6 +439,7 @@ class ScanIt(threading.Thread):
                             work_item[1],  # root path
                             work_item[2],  # List of filenames in the root path
                             {
+                                "custom_state": state["custom"],
                                 "custom_tagging": self.custom_state["custom_tagging"],
                                 "extra_attr": self.custom_state["extra_attr"],
                                 "fields": self.custom_state["fields"],
@@ -464,11 +468,11 @@ class ScanIt(threading.Thread):
                                 self.custom_state["es_send_q"].put([CMD_SEND_DIR, result_dir_list])
                             for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
                                 if self.custom_state["es_send_q"].qsize() > self.custom_state["max_send_q_size"]:
-                                    state["custom"]["stats"]["es_queue_wait_count"] += 1
+                                    stats["es_queue_wait_count"] += 1
                                     time.sleep(self.custom_state["send_q_sleep"])
                                 else:
                                     break
-                            state["custom"]["stats"]["time_es_queue"] += time.time() - time_start
+                            stats["time_es_queue"] += time.time() - time_start
 
                         dirs_to_queue = [x["file_name"] for x in result_dir_list]
                         if dirs_to_queue:
@@ -522,7 +526,6 @@ class ScanIt(threading.Thread):
                 target=self._process_queues,
                 kwargs={
                     "state": thread_instance,
-                    "ptype": self.processing_type,
                 },
             )
             thandle.daemon = True
