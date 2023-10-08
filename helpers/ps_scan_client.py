@@ -176,7 +176,6 @@ class PSScanClient(object):
         ]:
             setattr(s, attrib, getattr(self, "scanner_" + attrib))
         s.exit_on_idle = False
-        s.processing_type = scanit.PROCESS_TYPE_ADVANCED
         # TODO: Change how custom states, init and file handler work
         s.handler_custom_stats = user_handlers.custom_stats_handler
         s.handler_init_thread = user_handlers.init_thread
@@ -407,10 +406,10 @@ class PSScanClient(object):
             else:
                 log_handler = logging.StreamHandler()
             log_handler.setFormatter(logging.Formatter(logger_block["format"]))
-            LOG = logging.getLogger("")
-            LOG.handlers[:] = []
-            LOG.addHandler(log_handler)
-            LOG.setLevel(logger_block["level"])
+            rootlogger = logging.getLogger("")
+            rootlogger.handlers[:] = []
+            rootlogger.addHandler(log_handler)
+            rootlogger.setLevel(logger_block["level"])
             self.debug_count = logger_block.get("debug_count", 0)
             LOG.debug(
                 {
@@ -515,6 +514,7 @@ class PSScanClient(object):
         scanner_stats = {}
         try:
             scanner_stats = self.scanner.get_stats()
+            scanner_stats["threads"] = self.scanner.num_threads
         except Exception as e:
             LOG.exception({"msg": "Unable to get scanner stats", "exception": str(e)})
         return scanner_stats
