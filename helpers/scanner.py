@@ -43,11 +43,11 @@ except:
 try:
     dir(PermissionError)
 except:
-    PermissionError = Exception
+    PermissionError = NotImplementedError
 try:
     dir(FileNotFoundError)
 except:
-    FileNotFoundError = IOError
+    FileNotFoundError = NotImplementedError
 
 
 LOG = logging.getLogger(__name__)
@@ -154,6 +154,7 @@ def file_handler_basic(root, filename_list, args={}):
         }
     """
     start_scanner = time.time()
+    custom_state = args.get("custom_state")
     custom_tagging = args.get("custom_tagging", False)
     filter_fields = args.get("fields")
     phys_block_size = args.get("phys_block_size", IFS_BLOCK_SIZE)
@@ -170,6 +171,9 @@ def file_handler_basic(root, filename_list, args={}):
             stats["lstat_required"] += 1
             time_start = time.time()
             file_info = get_file_stat(root, filename, phys_block_size, strip_dot_snapshot=strip_dot_snapshot)
+            if not file_info:
+                stats["skipped"] += 1
+                continue
             stats["time_lstat"] += time.time() - time_start
             if custom_tagging:
                 time_start = time.time()
@@ -201,6 +205,11 @@ def file_handler_basic(root, filename_list, args={}):
             LOG.warn({"msg": "Exception during file scan", "file_path": os.path.join(root, filename)})
             LOG.exception(e)
     stats["time_scan_dir"] = time.time() - start_scanner
+    if custom_state:
+        custom_stats = custom_state.get("stats")
+        if custom_stats:
+            for field in STATS_FIELDS:
+                custom_stats[field] += stats[field]
     results = {
         "dirs": result_dir_list,
         "files": result_list,
@@ -256,6 +265,7 @@ def file_handler_pscale(root, filename_list, args={}):
         }
     """
     start_scanner = time.time()
+    custom_state = args.get("custom_state")
     custom_tagging = args.get("custom_tagging", False)
     extra_attr = args.get("extra_attr", DEFAULT_PARSE_EXTRA_ATTR)
     filter_fields = args.get("fields")
@@ -286,175 +296,152 @@ def file_handler_pscale(root, filename_list, args={}):
                 continue
             except Exception as e:
                 if e.errno in (errno.ENOTSUP, errno.EACCES):  # 45: Not supported, 13: No access
-                    stats["lstat_required"] += 1
-                    LOG.debug({"msg": "Unable to call os.open. Using os.lstat instead", "file_path": full_path})
-                    time_start = time.time()
-                    file_info = get_file_stat(root, filename, phys_block_size, strip_dot_snapshot=strip_dot_snapshot)
-                    stats["time_lstat"] += time.time() - time_start
-                    if custom_tagging:
-                        time_start = time.time()
-                        file_info["user_tags"] = custom_tagging(file_info)
-                        stats["time_custom_tagging"] += time.time() - time_start
-
-                    # Translate UID/GID/SID to names
-                    time_start_translate = time.time()
-                    translate_user_group_perms(full_path, file_info, fd=fd, name_lookup=not no_names)
-                    time_end_translate = time.time()
-                    stats["time_name"] += time_end_translate - time_start_translate
-
-                    # Filter out keys if requested
-                    if filter_fields:
-                        for key in list(file_info.keys()):
-                            if key not in filter_fields:
-                                del file_info[key]
-                    stats["time_filter"] += time.time() - time_end_translate
-
-                    if file_info["file_type"] == "dir":
-                        # Set values for directories
-                        file_info["file_is_inlined"] = False
-                        file_info["size_logical"] = 0
-                        result_dir_list.append(file_info)
-                        continue
-
-                    result_list.append(file_info)
-                    stats["processed"] += 1
-                    continue
-                LOG.exception({"msg": "Error found when calling os.open", "file_path": full_path, "error": str(e)})
-                continue
-            time_start_dinode = time.time()
-            fstats = attr.get_dinode(fd)
-            time_end_dinode = time.time()
-            stats["time_dinode"] += time_end_dinode - time_start_dinode
-            # atime call can return empty if the file does not have an atime or atime tracking is disabled
-            atime = attr.get_access_time(fd)
-            if atime:
-                atime = atime[0]
-            else:
-                # If atime does not exist, use the last metadata change time as this captures the last time someone
-                # modified either the data or the inode of the file
-                atime = fstats["di_ctime"]
-            time_end_atime = time.time()
-            stats["time_access_time"] += time_end_atime - time_end_dinode
-            di_data_blocks = fstats.get("di_data_blocks", fstats["di_physical_blocks"] - fstats["di_protection_blocks"])
-            logical_blocks = fstats["di_logical_size"] // phys_block_size
-            comp_blocks = logical_blocks - fstats["di_shadow_refs"]
-            compressed_file = True if (di_data_blocks and comp_blocks) else False
-            stubbed_file = (fstats["di_flags"] & IFLAG_COMBO_STUBBED) > 0
-            if strip_dot_snapshot:
-                file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
-            else:
-                file_path = root
-            file_info = {
-                # ========== Timestamps ==========
-                "atime": atime,
-                "atime_date": datetime.date.fromtimestamp(atime).isoformat(),
-                "btime": fstats["di_create_time"],
-                "btime_date": datetime.date.fromtimestamp(fstats["di_create_time"]).isoformat(),
-                "ctime": fstats["di_ctime"],
-                "ctime_date": datetime.date.fromtimestamp(fstats["di_ctime"]).isoformat(),
-                "mtime": fstats["di_mtime"],
-                "mtime_date": datetime.date.fromtimestamp(fstats["di_mtime"]).isoformat(),
-                # ========== File and path strings ==========
-                "file_path": file_path,
-                "file_name": filename,
-                "file_ext": os.path.splitext(filename)[1],
-                # ========== File attributes ==========
-                "file_access_pattern": ACCESS_PATTERN[fstats["di_la_pattern"]],
-                "file_compression_ratio": comp_blocks / di_data_blocks if compressed_file else 1,
-                "file_hard_links": fstats["di_nlink"],
-                "file_is_ads": ((fstats["di_flags"] & IFLAGS_UF_HASADS) != 0),
-                "file_is_compressed": (comp_blocks > di_data_blocks) if compressed_file else False,
-                "file_is_dedupe_disabled": not not fstats["di_no_dedupe"],
-                "file_is_deduped": (fstats["di_shadow_refs"] > 0),
-                "file_is_inlined": (
-                    (fstats["di_physical_blocks"] == 0)
-                    and (fstats["di_shadow_refs"] == 0)
-                    and (fstats["di_logical_size"] > 0)
-                ),
-                "file_is_packed": not not fstats["di_packing_policy"],
-                "file_is_smartlinked": stubbed_file,
-                "file_is_sparse": ((fstats["di_logical_size"] < fstats["di_size"]) and not stubbed_file),
-                "file_type": FILE_TYPE[fstats["di_mode"] & FILE_TYPE_MASK],
-                "inode": fstats["di_lin"],
-                "inode_mirror_count": fstats["di_inode_mc"],
-                "inode_parent": fstats["di_parent_lin"],
-                "inode_revision": fstats["di_rev"],
-                # ========== Storage pool targets ==========
-                "pool_target_data": fstats["di_data_pool_target"],
-                "pool_target_data_name": pool_translate.get(
-                    int(fstats["di_data_pool_target"]), str(fstats["di_data_pool_target"])
-                ),
-                "pool_target_metadata": fstats["di_metadata_pool_target"],
-                "pool_target_metadata_name": pool_translate.get(
-                    int(fstats["di_metadata_pool_target"]), str(fstats["di_metadata_pool_target"])
-                ),
-                # ========== Permissions ==========
-                "perms_unix_bitmask": stat.S_IMODE(fstats["di_mode"]),
-                "perms_unix_gid": fstats["di_gid"],
-                "perms_unix_uid": fstats["di_uid"],
-                # ========== File protection level ==========
-                "protection_current": fstats["di_current_protection"],
-                "protection_target": fstats["di_protection_policy"],
-                # ========== File allocation size and blocks ==========
-                # The apparent size of the file. Sparse files include the sparse area
-                "size": fstats["di_size"],
-                # Logical size in 8K blocks. Sparse files only show the real data portion
-                "size_logical": fstats["di_logical_size"],
-                # Physical size on disk including protection overhead, including extension blocks and excluding metadata
-                "size_physical": fstats["di_physical_blocks"] * phys_block_size,
-                # Physical size on disk excluding protection overhead and excluding metadata
-                "size_physical_data": di_data_blocks * phys_block_size,
-                # Physical size on disk of the protection overhead
-                "size_protection": fstats["di_protection_blocks"] * phys_block_size,
-                # ========== SSD usage ==========
-                "ssd_strategy": fstats["di_la_ssd_strategy"],
-                "ssd_strategy_name": SSD_STRATEGY[fstats["di_la_ssd_strategy"]],
-                "ssd_status": fstats["di_la_ssd_status"],
-                "ssd_status_name": SSD_STATUS[fstats["di_la_ssd_status"]],
-            }
-            stats["time_data_save"] += time.time() - time_end_atime
-            if not no_acl:
-                time_start = time.time()
-                acl = onefs_acl.get_acl_dict(fd)
-                file_info["perms_acl_aces"] = misc.ace_list_to_str_list(acl.get("aces"))
-                file_info["perms_acl_group"] = misc.acl_group_to_str(acl)
-                file_info["perms_acl_user"] = misc.acl_user_to_str(acl)
-                stats["time_acl"] += time.time() - time_start
-            if extra_attr:
-                # di_flags may have other bits we need to translate
-                #     Coalescer setting (on|off|endurant all|coalescer only)
-                #     IFLAGS_UF_WRITECACHE and IFLAGS_UF_WC_ENDURANT flags
-                # Do we want inode locations? how many on SSD and spinning disk?
-                #   - Get data from estats["ge_iaddrs"], e.g. ge_iaddrs: [(1, 13, 1098752, 512)]
-                # Extended attributes/custom attributes?
-                time_start = time.time()
-                estats = attr.get_expattr(fd)
-                # Add up all the inode sizes
-                metadata_size = 0
-                for inode in estats["ge_iaddrs"]:
-                    metadata_size += inode[3]
-                # Sum of the size of all the inodes. This includes inodes that mix both 512 byte and 8192 byte inodes
-                file_info["size_metadata"] = metadata_size
-                file_info["file_is_manual_access"] = not not estats["ge_manually_manage_access"]
-                file_info["file_is_manual_packing"] = not not estats["ge_manually_manage_packing"]
-                file_info["file_is_manual_protection"] = not not estats["ge_manually_manage_protection"]
-                if estats["ge_coalescing_ec"] & estats["ge_coalescing_on"]:
-                    file_info["file_coalescer"] = "coalescer on, ec off"
-                elif estats["ge_coalescing_on"]:
-                    file_info["file_coalescer"] = "coalescer on, ec on"
-                elif estats["ge_coalescing_ec"]:
-                    file_info["file_coalescer"] = "coalescer off, ec on"
+                    # Change how the file stat data will be retrieved
+                    fd = 0
                 else:
-                    file_info["file_coalescer"] = "coalescer off, ec off"
-                stats["time_extra_attr"] += time.time() - time_start
-            if user_attr:
+                    LOG.exception({"msg": "Error found when calling os.open", "file_path": full_path, "error": str(e)})
+                    continue
+            if fd: # Use OneFS specific calls
+                time_start_dinode = time.time()
+                fstats = attr.get_dinode(fd)
+                time_end_dinode = time.time()
+                stats["time_dinode"] += time_end_dinode - time_start_dinode
+                # atime call can return empty if the file does not have an atime or atime tracking is disabled
+                atime = attr.get_access_time(fd)
+                if atime:
+                    atime = atime[0]
+                else:
+                    # If atime does not exist, use the last metadata change time as this captures the last time someone
+                    # modified either the data or the inode of the file
+                    atime = fstats["di_ctime"]
+                time_end_atime = time.time()
+                stats["time_access_time"] += time_end_atime - time_end_dinode
+                di_data_blocks = fstats.get("di_data_blocks", fstats["di_physical_blocks"] - fstats["di_protection_blocks"])
+                logical_blocks = fstats["di_logical_size"] // phys_block_size
+                comp_blocks = logical_blocks - fstats["di_shadow_refs"]
+                compressed_file = True if (di_data_blocks and comp_blocks) else False
+                stubbed_file = (fstats["di_flags"] & IFLAG_COMBO_STUBBED) > 0
+                if strip_dot_snapshot:
+                    file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
+                else:
+                    file_path = root
+                file_info = {
+                    # ========== Timestamps ==========
+                    "atime": atime,
+                    "atime_date": datetime.date.fromtimestamp(atime).isoformat(),
+                    "btime": fstats["di_create_time"],
+                    "btime_date": datetime.date.fromtimestamp(fstats["di_create_time"]).isoformat(),
+                    "ctime": fstats["di_ctime"],
+                    "ctime_date": datetime.date.fromtimestamp(fstats["di_ctime"]).isoformat(),
+                    "mtime": fstats["di_mtime"],
+                    "mtime_date": datetime.date.fromtimestamp(fstats["di_mtime"]).isoformat(),
+                    # ========== File and path strings ==========
+                    "file_path": file_path,
+                    "file_name": filename,
+                    "file_ext": os.path.splitext(filename)[1],
+                    # ========== File attributes ==========
+                    "file_access_pattern": ACCESS_PATTERN[fstats["di_la_pattern"]],
+                    "file_compression_ratio": (float(comp_blocks) / float(di_data_blocks)) if compressed_file else 1,
+                    "file_hard_links": fstats["di_nlink"],
+                    "file_is_ads": ((fstats["di_flags"] & IFLAGS_UF_HASADS) != 0),
+                    "file_is_compressed": (comp_blocks > di_data_blocks) if compressed_file else False,
+                    "file_is_dedupe_disabled": not not fstats["di_no_dedupe"],
+                    "file_is_deduped": (fstats["di_shadow_refs"] > 0),
+                    "file_is_inlined": (
+                        (fstats["di_physical_blocks"] == 0)
+                        and (fstats["di_shadow_refs"] == 0)
+                        and (fstats["di_logical_size"] > 0)
+                    ),
+                    "file_is_packed": not not fstats["di_packing_policy"],
+                    "file_is_smartlinked": stubbed_file,
+                    "file_is_sparse": ((fstats["di_logical_size"] < fstats["di_size"]) and not stubbed_file),
+                    "file_type": FILE_TYPE[fstats["di_mode"] & FILE_TYPE_MASK],
+                    "inode": fstats["di_lin"],
+                    "inode_mirror_count": fstats["di_inode_mc"],
+                    "inode_parent": fstats["di_parent_lin"],
+                    "inode_revision": fstats["di_rev"],
+                    # ========== Storage pool targets ==========
+                    "pool_target_data": fstats["di_data_pool_target"],
+                    "pool_target_data_name": pool_translate.get(
+                        int(fstats["di_data_pool_target"]), str(fstats["di_data_pool_target"])
+                    ),
+                    "pool_target_metadata": fstats["di_metadata_pool_target"],
+                    "pool_target_metadata_name": pool_translate.get(
+                        int(fstats["di_metadata_pool_target"]), str(fstats["di_metadata_pool_target"])
+                    ),
+                    # ========== Permissions ==========
+                    "perms_unix_bitmask": stat.S_IMODE(fstats["di_mode"]),
+                    "perms_unix_gid": fstats["di_gid"],
+                    "perms_unix_uid": fstats["di_uid"],
+                    # ========== File protection level ==========
+                    "protection_current": fstats["di_current_protection"],
+                    "protection_target": fstats["di_protection_policy"],
+                    # ========== File allocation size and blocks ==========
+                    # The apparent size of the file. Sparse files include the sparse area
+                    "size": fstats["di_size"],
+                    # Logical size in 8K blocks. Sparse files only show the real data portion
+                    "size_logical": fstats["di_logical_size"],
+                    # Physical size on disk including protection overhead, including extension blocks and excluding metadata
+                    "size_physical": fstats["di_physical_blocks"] * phys_block_size,
+                    # Physical size on disk excluding protection overhead and excluding metadata
+                    "size_physical_data": di_data_blocks * phys_block_size,
+                    # Physical size on disk of the protection overhead
+                    "size_protection": fstats["di_protection_blocks"] * phys_block_size,
+                    # ========== SSD usage ==========
+                    "ssd_strategy": fstats["di_la_ssd_strategy"],
+                    "ssd_strategy_name": SSD_STRATEGY[fstats["di_la_ssd_strategy"]],
+                    "ssd_status": fstats["di_la_ssd_status"],
+                    "ssd_status_name": SSD_STATUS[fstats["di_la_ssd_status"]],
+                }
+                stats["time_data_save"] += time.time() - time_end_atime
+                if not no_acl:
+                    time_start = time.time()
+                    acl = onefs_acl.get_acl_dict(fd)
+                    file_info["perms_acl_aces"] = misc.ace_list_to_str_list(acl.get("aces"))
+                    file_info["perms_acl_group"] = misc.acl_group_to_str(acl)
+                    file_info["perms_acl_user"] = misc.acl_user_to_str(acl)
+                    stats["time_acl"] += time.time() - time_start
+                if extra_attr:
+                    # di_flags may have other bits we need to translate
+                    #     Coalescer setting (on|off|endurant all|coalescer only)
+                    #     IFLAGS_UF_WRITECACHE and IFLAGS_UF_WC_ENDURANT flags
+                    # Do we want inode locations? how many on SSD and spinning disk?
+                    #   - Get data from estats["ge_iaddrs"], e.g. ge_iaddrs: [(1, 13, 1098752, 512)]
+                    # Extended attributes/custom attributes?
+                    time_start = time.time()
+                    estats = attr.get_expattr(fd)
+                    # Add up all the inode sizes
+                    metadata_size = 0
+                    for inode in estats["ge_iaddrs"]:
+                        metadata_size += inode[3]
+                    # Sum of the size of all the inodes. This includes inodes that mix both 512 byte and 8192 byte inodes
+                    file_info["size_metadata"] = metadata_size
+                    file_info["file_is_manual_access"] = not not estats["ge_manually_manage_access"]
+                    file_info["file_is_manual_packing"] = not not estats["ge_manually_manage_packing"]
+                    file_info["file_is_manual_protection"] = not not estats["ge_manually_manage_protection"]
+                    if estats["ge_coalescing_ec"] & estats["ge_coalescing_on"]:
+                        file_info["file_coalescer"] = "coalescer on, ec off"
+                    elif estats["ge_coalescing_on"]:
+                        file_info["file_coalescer"] = "coalescer on, ec on"
+                    elif estats["ge_coalescing_ec"]:
+                        file_info["file_coalescer"] = "coalescer off, ec on"
+                    else:
+                        file_info["file_coalescer"] = "coalescer off, ec off"
+                    stats["time_extra_attr"] += time.time() - time_start
+                if user_attr:
+                    time_start = time.time()
+                    extended_attr = {}
+                    keys = uattr.userattr_list(fd)
+                    for key in keys:
+                        extended_attr[key] = uattr.userattr_get(fd, key)
+                    file_info["user_attributes"] = extended_attr
+                    stats["time_user_attr"] += time.time() - time_start
+            else: # Use a standard os.lstat call
+                stats["lstat_required"] += 1
+                LOG.debug({"msg": "Unable to call os.open. Using os.lstat instead", "file_path": full_path})
                 time_start = time.time()
-                extended_attr = {}
-                keys = uattr.userattr_list(fd)
-                for key in keys:
-                    extended_attr[key] = uattr.userattr_get(fd, key)
-                file_info["user_attributes"] = extended_attr
-                stats["time_user_attr"] += time.time() - time_start
+                file_info = get_file_stat(root, filename, phys_block_size, strip_dot_snapshot=strip_dot_snapshot)
+                stats["time_lstat"] += time.time() - time_start
             if custom_tagging:
                 time_start = time.time()
                 file_info["user_tags"] = custom_tagging(file_info)
@@ -507,6 +494,11 @@ def file_handler_pscale(root, filename_list, args={}):
             except:
                 pass
     stats["time_scan_dir"] = time.time() - start_scanner
+    if custom_state:
+        custom_stats = custom_state.get("stats")
+        if custom_stats:
+            for field in STATS_FIELDS:
+                custom_stats[field] += stats[field]
     results = {
         "dirs": result_dir_list,
         "files": result_list,
@@ -517,7 +509,11 @@ def file_handler_pscale(root, filename_list, args={}):
 
 def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE, strip_dot_snapshot=True):
     full_path = os.path.join(root, filename)
-    fstats = os.lstat(full_path)
+    try:
+        fstats = os.lstat(full_path)
+    except Exception as e:
+        LOG.exception("Exception in os.lstat")
+        return None
     if strip_dot_snapshot:
         file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
     else:
