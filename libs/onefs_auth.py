@@ -64,6 +64,9 @@ class GetPrincipalName:
         self.zone_path_depths = sorted(self.zone_name_cache.keys(), reverse=True)
 
     def get_group_name(self, principal, path, strict=False):
+        principal = str(principal).upper()
+        if "GID" not in principal and "SID" not in principal:
+            principal = "GID:" + principal
         return self.get_principal_name(principal, path, GET_AUTH_TYPE_GROUP, strict)
 
     def get_principal_name(self, principal, path, principal_type=GET_AUTH_TYPE_AUTO, strict=False):
@@ -87,6 +90,8 @@ class GetPrincipalName:
         path_base_end = os.path.split(path)
         path_parts = path_base_end[0].split("/")
         len_path_parts = len(path_parts) - 1
+        # TODO: Check logic because when walking toward the System zone, it is possible for another thread to get the
+        # lock before the one that is adding the cache entry finishes
         for path_depth in self.zone_path_depths:
             if path_depth > len_path_parts:
                 continue
@@ -96,14 +101,14 @@ class GetPrincipalName:
                 continue
             name_cache = self.zone_auth_cache[zone_name]
             principal_entry = name_cache.get(principal)
-            add_entry_to_name_cache.append(name_cache)
             if not principal_entry:
                 try:
                     self.lock.acquire()
                     # Double check if another thread has already added this entry
                     principal_entry = name_cache.get(principal)
                     if principal_entry:
-                        continue
+                        return principal_entry["name"]
+                    add_entry_to_name_cache.append(name_cache)
                     principal_data = self.papi_handle.rest_call(
                         base_uri + "/" + principal, "GET", query_args={"query_member_of": "false", "zone": zone_name}
                     )
@@ -118,14 +123,22 @@ class GetPrincipalName:
                     principal_entry = {"ts": time.time(), "name": principal_data[2][base_type][0]["name"]}
                     for cache in add_entry_to_name_cache:
                         cache[principal] = principal_entry
+                    add_entry_to_name_cache = None
+                    break
                 except:
                     raise
                 finally:
                     self.lock.release()
             return principal_entry["name"]
+        if add_entry_to_name_cache:
+            for cache in add_entry_to_name_cache:
+                cache[principal] = {"ts": time.time(), "name": principal}
         return principal
 
     def get_user_name(self, principal, path, strict=False):
+        principal = str(principal).upper()
+        if "UID" not in principal and "SID" not in principal:
+            principal = "UID:" + principal
         return self.get_principal_name(principal, path, GET_AUTH_TYPE_USER, strict)
 
 
@@ -147,18 +160,16 @@ def translate_user_group_perms(full_path, file_info, fd=None, name_lookup=True):
             except:
                 LOG.warning({"msg": "Unable to get file descriptor to translate user/group", "path": full_path})
                 raise
-        file_info["perms_user"] = iattr.get_ifs_sec_group(fd)
-        file_info["perms_group"] = iattr.get_ifs_sec_owner(fd)
+        file_info["perms_user"] = iattr.get_ifs_sec_owner(fd)
+        file_info["perms_group"] = iattr.get_ifs_sec_group(fd)
     if "perms_acl_user" in file_info:
         file_info["perms_user"] = file_info["perms_acl_user"]
-        file_info["perms_user"].replace("uid:", "")
     elif "perms_user" not in file_info:
-        file_info["perms_user"] = file_info["perms_unix_uid"]
+        file_info["perms_user"] = "UID:" + str(file_info["perms_unix_uid"])
     if "perms_acl_group" in file_info:
         file_info["perms_group"] = file_info["perms_acl_group"]
-        file_info["perms_group"].replace("gid:", "")
     elif "perms_group" not in file_info:
-        file_info["perms_group"] = file_info["perms_unix_gid"]
+        file_info["perms_group"] = "GID:" + str(file_info["perms_unix_gid"])
     if name_lookup:
         file_info["perms_user"] = auth_cache.get_user_name(file_info["perms_user"], full_path)
         file_info["perms_group"] = auth_cache.get_group_name(file_info["perms_group"], full_path)
