@@ -383,7 +383,8 @@ def es_data_sender(
     password,
     es_cmd_idx,
     poll_interval=scanit.DEFAULT_POLL_INTERVAL,
-    bulk_count=50,
+    bulk_count=DEFAULT_ES_BULK_COUNT,
+    compresslevel=DEFAULT_COMPRESSION_LEVEL,
 ):
     # TODO: Change the bulk_count and max_wait time to variables
     es_client = es_lite.ElasticsearchLite()
@@ -447,7 +448,7 @@ def es_data_sender(
                             "tid": threading.current_thread().name,
                         }
                     )
-                    es_data_flush(bulk_data, es_client, es_cmd_idx)
+                    es_data_flush(bulk_data, es_client, es_cmd_idx, compresslevel)
                 except Exception as e:
                     LOG.exception("Elastic search send failed.")
                     break
@@ -468,7 +469,7 @@ def es_data_sender(
             break
 
 
-def es_data_flush(bulk_data, es_client, es_cmd_idx):
+def es_data_flush(bulk_data, es_client, es_cmd_idx, compresslevel=DEFAULT_COMPRESSION_LEVEL):
     for chunk in bulk_data:
         bulk_file = []
         bulk_dir = []
@@ -525,7 +526,7 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx):
             if not bulk_list:
                 continue
             bulk_str = "\n".join(bulk_list)
-            resp = es_client.bulk(bulk_str, index_name=idx, compress=6)
+            resp = es_client.bulk(bulk_str, index_name=idx, compresslevel=compresslevel)
             if resp.get("error", False):
                 LOG.error(resp["error"])
             if resp.get("errors", False):
@@ -563,7 +564,7 @@ def es_init_index(es_client, es_cmd_idx, settings={}, options={}):
         )
         LOG.debug("Create index response: %s" % resp)
         if resp.get("status", 200) not in [200]:
-            if resp["error"].get("type") == "resource_already_exists_exception":
+            if isinstance(resp["error"], dict) and resp["error"].get("type") == "resource_already_exists_exception":
                 LOG.debug("Index {idx} already exists".format(idx=idx))
             else:
                 LOG.error(json.dumps(resp.get("error", {})))

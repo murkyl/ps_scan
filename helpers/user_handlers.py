@@ -182,6 +182,10 @@ def update_config(custom_state, new_config):
                         es_options["password"],
                         client_config["es_cmd_idx"],
                     ),
+                    kwargs={
+                        "bulk_count": cli_config.get("es_bulk_count", DEFAULT_ES_BULK_COUNT),
+                        "compresslevel": int(cli_config.get("compression", DEFAULT_COMPRESSION_LEVEL)),
+                    },
                 )
                 es_thread_instance.daemon = True
                 es_thread_instance.start()
