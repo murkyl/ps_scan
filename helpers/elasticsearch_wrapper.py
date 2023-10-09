@@ -525,7 +525,7 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx):
             if not bulk_list:
                 continue
             bulk_str = "\n".join(bulk_list)
-            resp = es_client.bulk(bulk_str, index_name=idx)
+            resp = es_client.bulk(bulk_str, index_name=idx, compress=6)
             if resp.get("error", False):
                 LOG.error(resp["error"])
             if resp.get("errors", False):
