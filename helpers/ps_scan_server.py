@@ -27,6 +27,7 @@ import time
 from helpers.constants import *
 import helpers.misc as misc
 import libs.hydra as Hydra
+from libs.onefs_become_user import become_user
 import libs.remote_run as rr
 import libs.sliding_window_stats as sliding_window_stats
 
@@ -401,7 +402,6 @@ class PSScanServer(Hydra.HydraServer):
                             "command": data_type,
                         }
                     )
-                LOG.critical("DEBUG: CLIENT STATS: %s" % data["data"])
                 cur_client["stats"] = data["data"]
                 cur_client["stats_time"] = now
             elif data_type == MSG_TYPE_CLIENT_REQ_DIR_LIST:
@@ -558,6 +558,14 @@ class PSScanServer(Hydra.HydraServer):
         start_wall = time.time()
         self.start()
         self.launch_remote_processes()
+        # If the --user CLI parameter is present, try and change to that user. If that fails, exist immediately.
+        if self.cli_options.get("user"):
+            try:
+                become_user(self.cli_options.get("user"))
+            except Exception as e:
+                LOG.exception(e)
+                self.shutdown()
+                return
 
         # Start main processing loop
         # Wait for clients to connect, request work, and redistribute work as needed.
