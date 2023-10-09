@@ -76,16 +76,17 @@ class ElasticsearchLite:
         self.conn = None
         return {"status": resp.status, "error": resp.reason}
 
-    def bulk(self, body_str, index_name=None, compress=0):
+    def bulk(self, body_str, index_name=None, compresslevel=0):
         new_headers = {}
         if body_str and body_str[-1] != "\n":
             body_str += "\n"
         # 0: No compression, 1: Fastest, 9: Slowest
-        if compress > 9:
-            compress = 9
-        if compress > 0:
+        compresslevel = int(compresslevel)
+        if compresslevel > 9:
+            compresslevel = 9
+        if compresslevel > 0:
             buffer = io.BytesIO()
-            with gzip.GzipFile(mode="wb", compresslevel=compress, fileobj=buffer) as gz_file:
+            with gzip.GzipFile(mode="wb", compresslevel=compresslevel, fileobj=buffer) as gz_file:
                 gz_file.write(body_str)
             body_str = buffer.getvalue()
             new_headers["Content-Encoding"] = "gzip"
