@@ -191,3 +191,4 @@ def update_config(custom_state, new_config):
         custom_state["es_thread_handles"] = es_threads
     custom_state["client_config"] = client_config
     custom_state["no_acl"] = cli_config.get("no_acl", custom_state["no_acl"])
+    custom_state["no_names"] = cli_config.get("no_names", custom_state["no_acl"])
