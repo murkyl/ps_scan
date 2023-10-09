@@ -107,7 +107,7 @@ def signal_handler(signum, frame):
 @APP.after_request
 def compress(response):
     # 0: No compression, 1: Fastest, 9: Slowest
-    compress_level = 9
+    compress_level = 6
     accept_encoding = request.headers.get(HTTP_HDR_ACCEPT_ENCODING, "").lower()
     if (
         response.status_code < 200
