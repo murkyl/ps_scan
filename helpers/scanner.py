@@ -301,7 +301,7 @@ def file_handler_pscale(root, filename_list, args={}):
                 else:
                     LOG.exception({"msg": "Error found when calling os.open", "file_path": full_path, "error": str(e)})
                     continue
-            if fd: # Use OneFS specific calls
+            if fd:  # Use OneFS specific calls
                 time_start_dinode = time.time()
                 fstats = attr.get_dinode(fd)
                 time_end_dinode = time.time()
@@ -316,7 +316,9 @@ def file_handler_pscale(root, filename_list, args={}):
                     atime = fstats["di_ctime"]
                 time_end_atime = time.time()
                 stats["time_access_time"] += time_end_atime - time_end_dinode
-                di_data_blocks = fstats.get("di_data_blocks", fstats["di_physical_blocks"] - fstats["di_protection_blocks"])
+                di_data_blocks = fstats.get(
+                    "di_data_blocks", fstats["di_physical_blocks"] - fstats["di_protection_blocks"]
+                )
                 logical_blocks = fstats["di_logical_size"] // phys_block_size
                 comp_blocks = logical_blocks - fstats["di_shadow_refs"]
                 compressed_file = True if (di_data_blocks and comp_blocks) else False
@@ -371,8 +373,8 @@ def file_handler_pscale(root, filename_list, args={}):
                     ),
                     # ========== Permissions ==========
                     "perms_unix_bitmask": stat.S_IMODE(fstats["di_mode"]),
-                    "perms_unix_gid": fstats["di_gid"],
-                    "perms_unix_uid": fstats["di_uid"],
+                    "perms_unix_gid": int(fstats["di_gid"]),
+                    "perms_unix_uid": int(fstats["di_uid"]),
                     # ========== File protection level ==========
                     "protection_current": fstats["di_current_protection"],
                     "protection_target": fstats["di_protection_policy"],
@@ -436,7 +438,7 @@ def file_handler_pscale(root, filename_list, args={}):
                         extended_attr[key] = uattr.userattr_get(fd, key)
                     file_info["user_attributes"] = extended_attr
                     stats["time_user_attr"] += time.time() - time_start
-            else: # Use a standard os.lstat call
+            else:  # Use a standard os.lstat call
                 stats["lstat_required"] += 1
                 LOG.debug({"msg": "Unable to call os.open. Using os.lstat instead", "file_path": full_path})
                 time_start = time.time()
@@ -538,8 +540,8 @@ def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE, strip_dot_snapshot
         "inode": fstats.st_ino,
         # ========== Permissions ==========
         "perms_unix_bitmask": stat.S_IMODE(fstats.st_mode),
-        "perms_unix_gid": fstats.st_gid,
-        "perms_unix_uid": fstats.st_uid,
+        "perms_unix_gid": int(fstats.st_gid),
+        "perms_unix_uid": int(fstats.st_uid),
         # ========== File allocation size and blocks ==========
         "size": fstats.st_size,
         "size_logical": block_unit * (int(fstats.st_size / block_unit) + 1 * ((fstats.st_size % block_unit) > 0)),
