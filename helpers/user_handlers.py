@@ -116,15 +116,16 @@ def init_thread(tid, custom_state, thread_custom_state):
 
 
 def print_statistics(output_type, log, stats, custom_stats, now, start_time, wall_time, output_interval):
+    total_threads = stats.get("threads", 1)
     consolidated_custom_stats = {}
     for field in CUSTOM_STATS_FIELDS:
         consolidated_custom_stats[field] = 0
         for client in custom_stats:
             consolidated_custom_stats[field] += client[field]
-        if "_time" in field:
-            consolidated_custom_stats[field] = consolidated_custom_stats[field] / stats.get("threads", 1)
+        if "time_" in field:
+            consolidated_custom_stats[field] = consolidated_custom_stats[field] / total_threads
     output_string = (
-        "===== Custom stats (average over all threads) =====\n"
+        "===== Custom stats (average over {tcount} threads) =====\n".format(tcount=total_threads)
         + json.dumps(consolidated_custom_stats, indent=2, sort_keys=True)
         + "\n"
     )
