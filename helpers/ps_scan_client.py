@@ -402,6 +402,8 @@ class PSScanClient(object):
     def parse_config_update_logger(self, cfg):
         try:
             logger_block = cfg.get("logger")
+            if not logger_block:
+                return
             if logger_block["destination"] == "file":
                 format_string_vars = {
                     "hostname": platform.node(),
