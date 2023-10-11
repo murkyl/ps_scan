@@ -21,9 +21,9 @@ __all__ = [
     "trustees_txt_to_aces",
 ]
 # fmt: on
+import functools
 import os
 import re
-import functools
 from cffi import FFI
 
 SD_ACL_REGEX = re.compile(
@@ -219,41 +219,41 @@ ACE_TYPE_ACCESS_DENIED_OBJECT    = 6    # unused by OneFS
 ACE_TYPE_SYSTEM_AUDIT_OBJECT     = 7    # ignored by OneFS
 ACE_TYPE_SYSTEM_ALARM_OBJECT     = 8    # ignored by OneFS
 # fmt: on
-ACE_GROUP_BITS_STR_MAP = [
-    [ACE_PERMS_FILE_GEN_ALL, "gen_all"],
-    [ACE_PERMS_FILE_GEN_WRITE, "gen_write"],
-    [ACE_PERMS_FILE_GEN_READ, "gen_read"],
-    [ACE_PERMS_FILE_GEN_EXECUTE, "execute"],
-    [ACE_PERMS_FILE_MODIFYING, "modify"],
-    [ACE_PERMS_DIR_MODIFYING, "modify"],
-]
-ACE_SINGLE_BITS_STR_MAP = [
-    [ACE_PERMS_STD_DELETE, "std_delete"],
-    [ACE_PERMS_STD_READ_DAC, "std_read_dac"],
-    [ACE_PERMS_STD_WRITE_DAC, "std_write_dac"],
-    [ACE_PERMS_STD_WRITE_OWNER, "std_write_owner"],
-    [ACE_PERMS_STD_SYNCHRONIZE, "std_synchronize"],
-    [ACE_PERMS_STD_REQUIRED, "std_required"],
-    [ACE_PERMS_FILE_WRITE_ATTRIBUTES, "write_attr"],
-    [ACE_PERMS_FILE_READ_ATTRIBUTES, "read_attr"],
-    [ACE_PERMS_FILE_DELETE_CHILD, "delete_child"],
-    [ACE_PERMS_FILE_EXECUTE, "execute"],
-    [ACE_PERMS_FILE_WRITE_EA, "write_ext_attr"],
-    [ACE_PERMS_FILE_READ_EA, "read_ext_attr"],
-    [ACE_PERMS_FILE_APPEND_DATA, "append"],
-    [ACE_PERMS_FILE_WRITE_DATA, "file_write"],
-    [ACE_PERMS_FILE_READ_DATA, "file_read"],
-    [ACE_PERMS_SACL_ACCESS, "sacl_access"],
-]
-ACE_FLAG_STR_MAP = [
-    [ACE_FLAG_OBJECT_INHERIT, "object_inherit"],
-    [ACE_FLAG_CONTAINER_INHERIT, "container_inherit"],
-    [ACE_FLAG_NO_PROPAGATE_INHERIT, "no_prop_inherit"],
-    [ACE_FLAG_INHERIT_ONLY, "inherit_only"],
-    [ACE_FLAG_INHERITED_ACE, "inherited_ace"],
-    [ACE_FLAG_SUCCESSFUL_ACCESS, "successful_access"],
-    [ACE_FLAG_FAILED_ACCESS, "failed_access"],
-]
+ACE_GROUP_BITS_STR_DICT = {
+    ACE_PERMS_FILE_GEN_ALL: "gen_all",
+    ACE_PERMS_FILE_GEN_WRITE: "gen_write",
+    ACE_PERMS_FILE_GEN_READ: "gen_read",
+    ACE_PERMS_FILE_GEN_EXECUTE: "execute",
+    ACE_PERMS_FILE_MODIFYING: "modify",
+    ACE_PERMS_DIR_MODIFYING: "modify",
+}
+ACE_SINGLE_BITS_STR_DICT = {
+    ACE_PERMS_STD_DELETE: "std_delete",
+    ACE_PERMS_STD_READ_DAC: "std_read_dac",
+    ACE_PERMS_STD_WRITE_DAC: "std_write_dac",
+    ACE_PERMS_STD_WRITE_OWNER: "std_write_owner",
+    ACE_PERMS_STD_SYNCHRONIZE: "std_synchronize",
+    ACE_PERMS_STD_REQUIRED: "std_required",
+    ACE_PERMS_FILE_WRITE_ATTRIBUTES: "write_attr",
+    ACE_PERMS_FILE_READ_ATTRIBUTES: "read_attr",
+    ACE_PERMS_FILE_DELETE_CHILD: "delete_child",
+    ACE_PERMS_FILE_EXECUTE: "execute",
+    ACE_PERMS_FILE_WRITE_EA: "write_ext_attr",
+    ACE_PERMS_FILE_READ_EA: "read_ext_attr",
+    ACE_PERMS_FILE_APPEND_DATA: "append",
+    ACE_PERMS_FILE_WRITE_DATA: "file_write",
+    ACE_PERMS_FILE_READ_DATA: "file_read",
+    ACE_PERMS_SACL_ACCESS: "sacl_access",
+}
+ACE_FLAG_STR_DICT = {
+    ACE_FLAG_OBJECT_INHERIT: "object_inherit",
+    ACE_FLAG_CONTAINER_INHERIT: "container_inherit",
+    ACE_FLAG_NO_PROPAGATE_INHERIT: "no_prop_inherit",
+    ACE_FLAG_INHERIT_ONLY: "inherit_only",
+    ACE_FLAG_INHERITED_ACE: "inherited_ace",
+    ACE_FLAG_SUCCESSFUL_ACCESS: "successful_access",
+    ACE_FLAG_FAILED_ACCESS: "failed_access",
+}
 ACE_TYPE_FLAG_STR_MAP = {
     "0": "allow",
     "1": "deny",
@@ -267,29 +267,26 @@ ACE_TYPE_FLAG_STR_MAP = {
     "254": "posix_mask",
 }
 
-ACE_GROUP_BITS_STR_DICT = {bitmask[0]: bitmask[1] for bitmask in ACE_GROUP_BITS_STR_MAP}
-ACE_SINGLE_BITS_STR_DICT = {bitmask[0]: bitmask[1] for bitmask in ACE_SINGLE_BITS_STR_MAP}
-ACE_FLAG_STR_DICT = {bitmask[0]: bitmask[1] for bitmask in ACE_FLAG_STR_MAP}
+CDEF = """
+char * get_dir_acl(int fd);
+char * get_file_acl(int fd);
+char * get_sd_text(int fd);
+void free(void *);
+"""
 
 try:
     ffi = FFI()
-    ffi.cdef(
-        """
-        char * get_dir_acl(int fd);
-        char * get_file_acl(int fd);
-        char * get_sd_text(int fd);
-        void free(void *);
-    """
-    )
+    ffi.cdef(CDEF)
     C_LIB = ffi.dlopen(None)
     ISI_ACL_LIB = ffi.dlopen("libisi_acl.so")
-except:
-    pass
+except Exception as e:
+    raise
 
 
 def simple_cache(maxsize):
     def decorator(func):
         cache = {}
+
         @functools.wraps(func)
         def wrapper(*args):
             if args not in cache:
@@ -297,7 +294,9 @@ def simple_cache(maxsize):
                     cache.popitem()
                 cache[args] = func(*args)
             return cache[args]
+
         return wrapper
+
     return decorator
 
 

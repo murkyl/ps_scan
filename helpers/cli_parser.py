@@ -16,7 +16,7 @@ __all__ = [
 # fmt: on
 import optparse
 
-import libs.scanit as scanit
+import helpers.scanit as scanit
 from helpers.constants import *
 
 USAGE = "usage: %prog [OPTION...] PATH... [PATH..]"
@@ -156,10 +156,22 @@ Examples:
         help="Port number for client/server connection",
     )
     parser.add_option(
+        "--user",
+        action="store",
+        default=None,
+        help="User in the current zone that the server will run as",
+    )
+    parser.add_option(
         "--no-acl",
         action="store_true",
         default=DEFAULT_PARSE_SKIP_ACLS,
         help="Skip parsing ACL file permissions on OneFS systems",
+    )
+    parser.add_option(
+        "--no-names",
+        action="store_true",
+        default=DEFAULT_PARSE_SKIP_NAMES,
+        help="Skip translation of UID/GID/SID into names on OneFS systems",
     )
     parser.add_option(
         "--extra",
@@ -303,8 +315,19 @@ def add_parser_options_advanced(parser, hide_options=False):
         action="store",
         type="float",
         default=DEFAULT_CMD_POLL_INTERVAL,
-        help="""Number of fractional seconds to wait for commands in  
-the client command loop.                              
+        help="""Number of whole seconds between directory queue size  
+updates from a subprocess to the coordinator.         
+Default: %default
+""",
+    )
+    group.add_option(
+        "--compression",
+        type="choice",
+        choices=[str(x) for x in list(range(0, 10))],
+        default=DEFAULT_COMPRESSION_LEVEL,
+        help="""Compression level used when sending results to the    
+ElasticSearch instance. Valid values are 0-9 with 0   
+being no compression and 9 being maximum compression  
 Default: %default
 """,
     )
@@ -443,6 +466,16 @@ Default: %default
 """,
     )
     group.add_option(
+        "--max-work-items",
+        action="store",
+        type="int",
+        default=DEFAULT_MAX_WORK_ITEMS_PER_REQUEST,
+        help="""Maximum number of messages to include in a single work
+item request call between the client and server.      
+Default: %default
+""",
+    )
+    group.add_option(
         "--request-work-interval",
         action="store",
         type="int",
@@ -491,4 +524,6 @@ def parse_cli(argv, prog_ver, prog_date):
     add_parser_options(parser)
     add_parser_options_advanced(parser, ("--advanced" not in argv))
     (raw_options, args) = parser.parse_args(argv[1:])
+    # Fix up compression option
+    raw_options.compression = int(raw_options.compression)
     return (parser, raw_options.__dict__, args)

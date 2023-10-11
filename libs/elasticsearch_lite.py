@@ -13,6 +13,8 @@ __all__ = [
 ]
 # fmt: on
 import base64
+import io
+import gzip
 import json
 import logging
 import ssl
@@ -52,7 +54,7 @@ class ElasticsearchLite:
         self.use_https = True
         self.username = None
 
-    def _simple_es_request(self, url_base, op="GET", body_str=None, index_name=None, query=None):
+    def _simple_es_request(self, url_base, op="GET", body_str=None, index_name=None, query=None, headers={}):
         if not self.conn:
             self.connect()
         if index_name:
@@ -65,17 +67,33 @@ class ElasticsearchLite:
                 url_base += "?" + urlencode(query)
             else:
                 url_base += "?" + query
-        self.conn.request(op, url_base, body_str, self.headers)
+        request_headers = dict(self.headers)
+        request_headers.update(headers)
+        self.conn.request(op, url_base, body_str, request_headers)
         resp = self.conn.getresponse()
         if resp.status >= 200 and resp.status < 300:
             return json.loads(resp.read())
         self.conn = None
         return {"status": resp.status, "error": resp.reason}
 
-    def bulk(self, body_str, index_name=None):
+    def bulk(self, body_str, index_name=None, compresslevel=0):
+        new_headers = {}
         if body_str and body_str[-1] != "\n":
             body_str += "\n"
-        return self._simple_es_request("_bulk", op="POST", body_str=body_str, index_name=index_name)
+        # 0: No compression, 1: Fastest, 9: Slowest
+        compresslevel = int(compresslevel)
+        if compresslevel > 9:
+            compresslevel = 9
+        if compresslevel > 0:
+            buffer = io.BytesIO()
+            with gzip.GzipFile(mode="wb", compresslevel=compresslevel, fileobj=buffer) as gz_file:
+                gz_file.write(body_str)
+            body_str = buffer.getvalue()
+            new_headers["Content-Encoding"] = "gzip"
+        new_headers["Content-Length"] = len(body_str)
+        return self._simple_es_request(
+            "_bulk", op="POST", body_str=body_str, index_name=index_name, headers=new_headers
+        )
 
     def connect(self):
         self.validate_options()

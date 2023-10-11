@@ -31,7 +31,7 @@ import time
 import zlib
 
 import libs.elasticsearch_lite as es_lite
-import libs.scanit as scanit
+import helpers.scanit as scanit
 from helpers.constants import *
 import helpers.misc as misc
 
@@ -39,7 +39,7 @@ ES_INDEX_MAPPING = {
     "properties": {
         # ========== Timestamps ==========
         # Time when this entry was scanned
-        "_scan_time": {"type": "date", "format": "epoch_second||date_optional_time"},
+        # "_scan_time": {"type": "date", "format": "epoch_second||date_optional_time"},
         # Last access time of the file both in fractional seconds and YYYY-mm-DD format
         "atime": {"type": "date", "format": "epoch_second||date_optional_time"},
         "atime_date": {"type": "date", "format": "date_optional_time||epoch_second"},
@@ -52,6 +52,27 @@ ES_INDEX_MAPPING = {
         # Last data modified time of the file both in fractional seconds and YYYY-mm-DD format
         "mtime": {"type": "date", "format": "epoch_second||date_optional_time"},
         "mtime_date": {"type": "date", "format": "date_optional_time||epoch_second"},
+        # ========== Directory stats values ==========
+        # Number of immediate subdirectories to this directory
+        "dir_count_dirs": {"type": "long"},
+        # Number of all subdirectories to this directory (recursive)
+        "dir_count_dirs_recursive": {"type": "long"},
+        # Number of files in the immediate directory
+        "dir_count_files": {"type": "long"},
+        # Number of files in this directory and all subdirectories (recursive)
+        "dir_count_files_recursive": {"type": "long"},
+        # Directory depth from the root
+        "dir_depth": {"type": "long"},
+        # Total size of all files in the immediate directory
+        "dir_file_size": {"type": "long"},
+        # Total size of all files in this directory (recursive)
+        "dir_file_size_recursive": {"type": "long"},
+        # Total physical size of all files in the immediate directory
+        "dir_file_size_physical": {"type": "long"},
+        # Total size of all files in this directory (recursive)
+        "dir_file_size_physical_recursive": {"type": "long"},
+        # Boolean flag set to true if this directory is a leaf with no subdirectories
+        "dir_leaf": {"type": "boolean"},
         # ========== File and path strings ==========
         # Parent directory of the file
         "file_path": {"type": "keyword"},
@@ -257,7 +278,8 @@ def es_create_connection(url, username, password, index, es_type=ES_TYPE_PS_SCAN
         if not index.startswith("diskover-"):
             index = "diskover-" + index
         # Append the current time if it is not passed in as the index name
-        if not re.match(r"^diskover-(.*?)-[0-9]{14}$", index):
+        # The diskover index format is: diskover-<index_name>-YYYYmmddHHMM
+        if not re.match(r"^diskover-(.*?)-[0-9]{12}$", index):
             index += "-" + time.strftime(DEFAULT_TIME_FORMAT_SIMPLE)
         return [es_client, {CMD_SEND: index, CMD_SEND_DIR: index, CMD_SEND_STATS: index}]
     else:
@@ -361,7 +383,8 @@ def es_data_sender(
     password,
     es_cmd_idx,
     poll_interval=scanit.DEFAULT_POLL_INTERVAL,
-    bulk_count=50,
+    bulk_count=DEFAULT_ES_BULK_COUNT,
+    compresslevel=DEFAULT_COMPRESSION_LEVEL,
 ):
     # TODO: Change the bulk_count and max_wait time to variables
     es_client = es_lite.ElasticsearchLite()
@@ -393,7 +416,7 @@ def es_data_sender(
         try:
             data_item = send_q.get(block=True, timeout=poll_interval)
             data_cmd = data_item[0]
-            if data_cmd & (CMD_SEND | CMD_SEND_DIR | CMD_SEND_STATS):
+            if data_cmd & (CMD_SEND | CMD_SEND_DIR | CMD_SEND_DIR_UPDATE | CMD_SEND_STATS):
                 bulk_data.append([data_cmd, data_item[1]])
             elif data_cmd == CMD_EXIT:
                 cmd = CMD_EXIT
@@ -425,7 +448,7 @@ def es_data_sender(
                             "tid": threading.current_thread().name,
                         }
                     )
-                    es_data_flush(bulk_data, es_client, es_cmd_idx)
+                    es_data_flush(bulk_data, es_client, es_cmd_idx, compresslevel)
                 except Exception as e:
                     LOG.exception("Elastic search send failed.")
                     break
@@ -436,7 +459,7 @@ def es_data_sender(
                     for i in range(bulk_count):
                         data_item = send_q.get(block=False)
                         data_cmd = data_item[0]
-                        if data_cmd & (CMD_SEND | CMD_SEND_DIR | CMD_SEND_STATS):
+                        if data_cmd & (CMD_SEND | CMD_SEND_DIR | CMD_SEND_DIR_UPDATE | CMD_SEND_STATS):
                             bulk_data.append([data_cmd, data_item[1]])
                 except queue.Empty:
                     flush = True
@@ -446,7 +469,7 @@ def es_data_sender(
             break
 
 
-def es_data_flush(bulk_data, es_client, es_cmd_idx):
+def es_data_flush(bulk_data, es_client, es_cmd_idx, compresslevel=DEFAULT_COMPRESSION_LEVEL):
     for chunk in bulk_data:
         bulk_file = []
         bulk_dir = []
@@ -472,18 +495,24 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx):
                 LOG.warn("JSON dumps encountered an exception converting to text")
                 LOG.debug("Work item dump:\n%s" % chunk_data[idx])
             if body_text:
+                bulk_op = "update"
+                body_text = '{"doc":' + body_text + ',"doc_as_upsert":true}'
                 if chunk_type == CMD_SEND:
                     bulk_list = bulk_file
                 elif chunk_type == CMD_SEND_DIR:
                     bulk_list = bulk_dir
                 elif chunk_type == CMD_SEND_STATS:
                     bulk_list = bulk_state
-                # inode has 2 possible key names based on it being a ps_scan or diskover type
+                elif chunk_type == CMD_SEND_DIR_UPDATE:
+                    bulk_list = bulk_dir
+                # The following variables have 2 possible key names based on it being a ps_scan or diskover type
                 inode = chunk_data[idx].get("inode", chunk_data[idx].get("ino"))
+                file_path = chunk_data[idx].get("file_path", chunk_data[idx].get("parent_path"))
+                file_name = chunk_data[idx].get("file_name", chunk_data[idx].get("name"))
                 # The full path of the file including the file name is hashed with CRC32 in order to provide a unique
                 # _id field for ElasticSearch. This is required for files that have identical inode numbers
-                full_path = "%s/%s" % (chunk_data[idx].get("file_path"), chunk_data[idx].get("file_name"))
-                bulk_list.append(json.dumps({"index": {"_id": "%s_%s" % (inode, zlib.crc32(full_path) & 0xFFFFFFFF)}}))
+                full_path = "%s/%s" % (file_path, file_name)
+                bulk_list.append(json.dumps({bulk_op: {"_id": "%s_%s" % (inode, zlib.crc32(full_path) & 0xFFFFFFFF)}}))
                 bulk_list.append(body_text)
         # For each bulk list, take all the entries and join them together with a \n and send them to the ES into the
         # appropriate index
@@ -497,13 +526,15 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx):
             if not bulk_list:
                 continue
             bulk_str = "\n".join(bulk_list)
-            resp = es_client.bulk(bulk_str, index_name=idx)
+            resp = es_client.bulk(bulk_str, index_name=idx, compresslevel=compresslevel)
             if resp.get("error", False):
                 LOG.error(resp["error"])
             if resp.get("errors", False):
                 for item in resp.get("items"):
-                    if item["index"]["status"] < 200 or item["index"]["status"] > 299:
-                        LOG.error(json.dumps(item["index"]["error"]))
+                    op_keys = item.keys()
+                    if op_keys in ["index", "update"]:
+                        if item[op_keys]["status"] < 200 or item[op_keys]["status"] > 299:
+                            LOG.error(json.dumps(item[op_keys]["error"]))
 
 
 def es_delete_index(es_client, es_cmd_idx):
@@ -533,11 +564,33 @@ def es_init_index(es_client, es_cmd_idx, settings={}, options={}):
         )
         LOG.debug("Create index response: %s" % resp)
         if resp.get("status", 200) not in [200]:
-            if resp["error"].get("type") == "resource_already_exists_exception":
+            if isinstance(resp["error"], dict) and resp["error"].get("type") == "resource_already_exists_exception":
                 LOG.debug("Index {idx} already exists".format(idx=idx))
             else:
                 LOG.error(json.dumps(resp.get("error", {})))
                 raise Exception("Unable to create index")
+
+
+def es_query_match(es_client, es_cmd_idx, query_match=None, query_ops=None):
+    query_ops = query_ops or {}
+    if not query_match:
+        return
+    query = {
+        "query": {
+            "match": query_match,
+        },
+    }
+    op_keys = query_ops.keys()
+    for field in ["_source", "fields"]:
+        if field in op_keys:
+            query[field] = query_ops[field]
+    LOG.critical({"msg": "Sending ES match query", "query": query})
+    index_names = []
+    for key in es_cmd_idx.keys():
+        index_names.append(es_cmd_idx[key])
+        index_names = list(set(index_names))
+    for idx in index_names:
+        resp = es_client.search(body_str=query, index_name=idx)
 
 
 def es_start_processing(es_client, es_cmd_idx, start_options={}, options={}):

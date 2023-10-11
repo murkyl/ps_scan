@@ -27,11 +27,12 @@ import time
 from helpers.constants import *
 import helpers.misc as misc
 import libs.hydra as Hydra
+from libs.onefs_become_user import become_user
 import libs.remote_run as rr
 import libs.sliding_window_stats as sliding_window_stats
 
 
-LOG = logging.getLogger()
+LOG = logging.getLogger(__name__)
 
 
 class PSScanServer(Hydra.HydraServer):
@@ -70,6 +71,7 @@ class PSScanServer(Hydra.HydraServer):
         self.client_state = {}
         self.connect_addr = args.get("server_connect_addr", None)
         self.debug_count = self.cli_options.get("debug", 0)
+        self.max_work_items = self.cli_options.get("max_work_items", DEFAULT_MAX_WORK_ITEMS_PER_REQUEST)
         self.msg_q = queue.Queue()
         self.node_list = args.get("node_list", None)
         self.queue_timeout = self.cli_options.get("queue_timeout", DEFAULT_QUEUE_TIMEOUT)
@@ -106,7 +108,7 @@ class PSScanServer(Hydra.HydraServer):
         if self.cli_options.get("log"):
             base, ext = os.path.splitext(self.cli_options.get("log", DEFAULT_LOG_FILE_PREFIX + DEFAULT_LOG_FILE_SUFFIX))
             client_logger = {
-                "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s",
+                "format": "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d][%(threadName)s] - %(message)s",
                 "debug_count": self.cli_options.get("debug", 0),
                 "destination": "file",
                 "filename": self.cli_options.get("log_file_format", DEFAULT_LOG_FILE_FORMAT),
@@ -193,6 +195,7 @@ class PSScanServer(Hydra.HydraServer):
             "client_count",
             "client_state",
             "connect_addr",
+            "max_work_items",
             "node_list",
             "queue_timeout",
             "remote_state",
@@ -248,6 +251,8 @@ class PSScanServer(Hydra.HydraServer):
             self.connect_addr,
             "--threads",
             self.cli_options.get("threads"),
+            "--type",
+            self.cli_options.get("type"),
         ]
         if self.cli_options.get("es_type"):
             run_cmd.append("--es-type")
@@ -553,6 +558,14 @@ class PSScanServer(Hydra.HydraServer):
         start_wall = time.time()
         self.start()
         self.launch_remote_processes()
+        # If the --user CLI parameter is present, try and change to that user. If that fails, exist immediately.
+        if self.cli_options.get("user"):
+            try:
+                become_user(self.cli_options.get("user"))
+            except Exception as e:
+                LOG.exception(e)
+                self.shutdown()
+                return
 
         # Start main processing loop
         # Wait for clients to connect, request work, and redistribute work as needed.
@@ -636,6 +649,9 @@ class PSScanServer(Hydra.HydraServer):
                     increment = (len_dir_list // len_want_work_clients) + (
                         1 * (len_dir_list % len_want_work_clients != 0)
                     )
+                    # Cap the number of directories sent to any client in a single request
+                    if increment > self.max_work_items:
+                        increment = self.max_work_items
                     if self.debug_count > 1:
                         LOG.debug(
                             {
@@ -654,6 +670,7 @@ class PSScanServer(Hydra.HydraServer):
                             {
                                 "msg": "Sending work to client",
                                 "cid": self.client_state[client_key]["id"],
+                                "work_item_count": len(work_dirs),
                             }
                         )
                         self._exec_send_work_items(client_key, work_dirs)

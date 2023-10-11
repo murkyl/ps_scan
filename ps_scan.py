@@ -26,6 +26,7 @@ import helpers.misc as misc
 import helpers.ps_scan_client as psc
 import helpers.ps_scan_server as pss
 import helpers.user_handlers as user_handlers
+import helpers.scanner as scanner
 import libs.hydra as Hydra
 
 
@@ -96,11 +97,9 @@ def main():
             LOG.debug({"msg": "VMEM ulimit value set", "new_value": new_limit})
         else:
             LOG.info({"msg": "VMEM ulimit setting failed"})
-        file_handler = user_handlers.file_handler_pscale
-        if options.get("es_type") == ES_TYPE_DISKOVER:
-            file_handler = user_handlers.file_handler_pscale_diskover
+        file_handler = scanner.file_handler_pscale
     else:
-        file_handler = user_handlers.file_handler_basic
+        file_handler = scanner.file_handler_basic
     LOG.debug({"msg": "Parsed options", "options": json.dumps(options, indent=2, sort_keys=True)})
     LOG.debug({"msg": "Initial scan paths", "paths": ", ".join(args)})
 
@@ -116,6 +115,9 @@ def main():
             LOG.exception({"msg": "Unhandled exception in client", "exception": str(e)})
     elif options["op"] in (OPERATION_TYPE_AUTO, OPERATION_TYPE_SERVER):
         options["scan_path"] = args if not isinstance(args, list) else args[0]
+        connect_addr = options["addr"]
+        if connect_addr in [DEFAULT_SERVER_ADDR, "::", "[::1]"]:
+            connect_addr = misc.get_local_internal_addr() or DEFAULT_LOOPBACK_ADDR
         ps_scan_server_options = {
             "cli_options": options,
             "client_config": {},
@@ -123,7 +125,7 @@ def main():
             "scan_path": args,
             "script_path": os.path.abspath(__file__),
             "server_addr": options["addr"],
-            "server_connect_addr": misc.get_local_internal_addr() or DEFAULT_LOOPBACK_ADDR,
+            "server_connect_addr": connect_addr,
             "server_port": options["port"],
             "stats_handler": user_handlers.print_statistics,
         }

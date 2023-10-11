@@ -25,12 +25,14 @@ import time
 
 from helpers.constants import *
 import helpers.misc as misc
+import helpers.scanit as scanit
+import helpers.scanner as scanner
 import helpers.user_handlers as user_handlers
 import libs.hydra as Hydra
-import libs.scanit as scanit
+from libs.onefs_become_user import become_user
 
 
-LOG = logging.getLogger()
+LOG = logging.getLogger(__name__)
 
 
 class PSScanClient(object):
@@ -72,10 +74,11 @@ class PSScanClient(object):
         self.config_update_count = 0
         self.debug_count = args.get("debug", 0)
         self.dir_output_count = 0
+        self.max_work_items = args.get("max_work_items", DEFAULT_MAX_WORK_ITEMS_PER_REQUEST)
         self.poll_interval = args.get("poll_interval", DEFAULT_CMD_POLL_INTERVAL)
         self.scanner = scanit.ScanIt()
         # TODO: Change how file handler is called
-        self.scanner_file_handler = args.get("scanner_file_handler", user_handlers.file_handler_basic)
+        self.scanner_file_handler = args.get("scanner_file_handler", scanner.file_handler_basic)
         self.sent_data = 0
         self.server_addr = args.get("server_addr", Hydra.DEFAULT_SERVER_ADDR)
         self.server_port = args.get("server_port", Hydra.DEFAULT_SERVER_PORT)
@@ -170,10 +173,10 @@ class PSScanClient(object):
             "file_q_cutoff",
             "file_q_min_cutoff",
             "num_threads",
+            "max_work_items",
         ]:
             setattr(s, attrib, getattr(self, "scanner_" + attrib))
         s.exit_on_idle = False
-        s.processing_type = scanit.PROCESS_TYPE_ADVANCED
         # TODO: Change how custom states, init and file handler work
         s.handler_custom_stats = user_handlers.custom_stats_handler
         s.handler_init_thread = user_handlers.init_thread
@@ -195,6 +198,7 @@ class PSScanClient(object):
             # TODO: Changing the number of threads does not work dynamically at this time. The thread count is configured
             #     currently as a CLI option when ps_scan_server launches the client
             ["scanner_num_threads", "threads", DEFAULT_THREAD_COUNT],
+            ["scanner_max_work_items", "max_work_items", DEFAULT_MAX_WORK_ITEMS_PER_REQUEST],
             ["stats_output_interval", "stats_interval", DEFAULT_STATS_OUTPUT_INTERVAL],
         ]
         for field in cfg_fields:
@@ -314,7 +318,7 @@ class PSScanClient(object):
                     # Send a stats update whenever we go idle
                     self._exec_send_status_stats(now)
             except Exception as e:
-                LOG.critical({"msg": "Unhandled exception", "exception": str(e)})
+                LOG.exception({"msg": "Unhandled exception", "exception": str(e)})
                 self.disconnect()
 
     def disconnect(self):
@@ -339,6 +343,7 @@ class PSScanClient(object):
             "dir_output_interval",
             "dir_q_count",
             "dir_request_interval",
+            "max_work_items",
             "poll_interval",
             "scanner_dir_chunk",
             "scanner_dir_priority_count",
@@ -378,6 +383,13 @@ class PSScanClient(object):
             )
         self.client_config = cfg
         self._process_args(cfg.get("cli_options", {}), use_default=False)
+        # If the --user CLI parameter is passed in, try and change to that user. If that fails, exist immediately.
+        if cfg.get("cli_options", {}).get("user"):
+            try:
+                become_user(cfg["cli_options"]["user"])
+            except Exception as e:
+                LOG.exception(e)
+                # TODO: Add code to terminate client
         self.config_update_count += 1
 
     def parse_config_update_log_level(self, cfg):
@@ -390,6 +402,8 @@ class PSScanClient(object):
     def parse_config_update_logger(self, cfg):
         try:
             logger_block = cfg.get("logger")
+            if not logger_block:
+                return
             if logger_block["destination"] == "file":
                 format_string_vars = {
                     "hostname": platform.node(),
@@ -402,9 +416,10 @@ class PSScanClient(object):
             else:
                 log_handler = logging.StreamHandler()
             log_handler.setFormatter(logging.Formatter(logger_block["format"]))
-            LOG.handlers[:] = []
-            LOG.addHandler(log_handler)
-            LOG.setLevel(logger_block["level"])
+            rootlogger = logging.getLogger("")
+            rootlogger.handlers[:] = []
+            rootlogger.addHandler(log_handler)
+            rootlogger.setLevel(logger_block["level"])
             self.debug_count = logger_block.get("debug_count", 0)
             LOG.debug(
                 {
@@ -509,6 +524,7 @@ class PSScanClient(object):
         scanner_stats = {}
         try:
             scanner_stats = self.scanner.get_stats()
+            scanner_stats["threads"] = self.scanner.num_threads
         except Exception as e:
             LOG.exception({"msg": "Unable to get scanner stats", "exception": str(e)})
         return scanner_stats
