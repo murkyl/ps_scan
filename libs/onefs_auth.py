@@ -15,6 +15,7 @@ __all__ = [
 # fmt: on
 import logging
 import os
+import re
 import threading
 import time
 
@@ -47,6 +48,7 @@ class GetPrincipalName:
         self.zone_path_depths = []
         self.zone_auth_cache = {}
         self._init_access_zone_list()
+        self.principal_check = re.compile(r"(GID|SID|UID)")
 
     def _init_access_zone_list(self):
         data = self.papi_handle.rest_call(URI_ACCESS_ZONES, "GET")
@@ -137,7 +139,7 @@ class GetPrincipalName:
 
     def get_user_name(self, principal, path, strict=False):
         principal = str(principal).upper()
-        if "UID" not in principal and "SID" not in principal:
+        if not self.principal_check.match(principal):
             principal = "UID:" + principal
         return self.get_principal_name(principal, path, GET_AUTH_TYPE_USER, strict)
 
@@ -173,3 +175,8 @@ def translate_user_group_perms(full_path, file_info, fd=None, name_lookup=True):
     if name_lookup:
         file_info["perms_user"] = auth_cache.get_user_name(file_info["perms_user"], full_path)
         file_info["perms_group"] = auth_cache.get_group_name(file_info["perms_group"], full_path)
+        aces = file_info.get("perms_acl_aces", [])
+        for i in range(len(aces)):
+            principal_perms = aces[i].split(" ", 1)
+            name = auth_cache.get_user_name(principal_perms[0], full_path)
+            aces[i] = name + " " + principal_perms[1]
