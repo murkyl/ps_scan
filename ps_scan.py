@@ -115,6 +115,9 @@ def main():
             LOG.exception({"msg": "Unhandled exception in client", "exception": str(e)})
     elif options["op"] in (OPERATION_TYPE_AUTO, OPERATION_TYPE_SERVER):
         options["scan_path"] = args if not isinstance(args, list) else args[0]
+        connect_addr = options["addr"]
+        if connect_addr in [DEFAULT_SERVER_ADDR, "::", "[::1]"]:
+            connect_addr = misc.get_local_internal_addr() or DEFAULT_LOOPBACK_ADDR
         ps_scan_server_options = {
             "cli_options": options,
             "client_config": {},
@@ -122,7 +125,7 @@ def main():
             "scan_path": args,
             "script_path": os.path.abspath(__file__),
             "server_addr": options["addr"],
-            "server_connect_addr": misc.get_local_internal_addr() or DEFAULT_LOOPBACK_ADDR,
+            "server_connect_addr": connect_addr,
             "server_port": options["port"],
             "stats_handler": user_handlers.print_statistics,
         }
