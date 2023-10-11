@@ -23,15 +23,17 @@ __all__ = [
 # fmt: on
 import os
 import re
+import functools
 from cffi import FFI
 
-SD_ACL_REGEX = (
+SD_ACL_REGEX = re.compile(
     r"header:(revision:\d+)::(control:\d+)"
     r"::(owner:(?P<utype>UID|SID):(?P<user>\d+|S(-\d+)+))"
     r"::(group:(?P<gtype>GID|SID):(?P<group>\d+|S(-\d+)+))"
     r"::->dacl<-:(rev:(?P<daclrev>\d+)::)?(?P<dacltrustees>::trustee.*)?"
     r"::->sacl<-:(rev:(?P<saclrev>\d+)::)?(?P<sacltrustees>::trustee.*)?"
 )
+
 # fmt: off
 """ Mask bits for the trustee fields"""
 # ===== ACE 'perms' mask bits
@@ -271,6 +273,9 @@ char * get_file_acl(int fd);
 char * get_sd_text(int fd);
 void free(void *);
 """
+ACE_GROUP_BITS_STR_DICT = {bitmask[0]: bitmask[1] for bitmask in ACE_GROUP_BITS_STR_MAP}
+ACE_SINGLE_BITS_STR_DICT = {bitmask[0]: bitmask[1] for bitmask in ACE_SINGLE_BITS_STR_MAP}
+ACE_FLAG_STR_DICT = {bitmask[0]: bitmask[1] for bitmask in ACE_FLAG_STR_MAP}
 
 try:
     ffi = FFI()
@@ -281,12 +286,27 @@ except Exception as e:
     raise
 
 
+def simple_cache(maxsize):
+    def decorator(func):
+        cache = {}
+        @functools.wraps(func)
+        def wrapper(*args):
+            if args not in cache:
+                if len(cache) >= maxsize:
+                    cache.popitem()
+                cache[args] = func(*args)
+            return cache[args]
+        return wrapper
+    return decorator
+
+
+@simple_cache(maxsize=1024)
 def flags_to_text_list(flags):
     cur_bits = flags
     text_labels = []
-    for bitmask in ACE_FLAG_STR_MAP:
-        if cur_bits & bitmask[0] == bitmask[0]:
-            text_labels.append(bitmask[1])
+    for bitmask, label in ACE_FLAG_STR_DICT.items():
+        if cur_bits & bitmask == bitmask:
+            text_labels.append(label)
     return sorted(set(text_labels))
 
 
@@ -294,7 +314,7 @@ def get_acl_dict(fd, detailed=True):
     sd_str = get_sd_text(fd)
     if sd_str is None:
         return {}
-    match = re.match(SD_ACL_REGEX, sd_str)
+    match = SD_ACL_REGEX.match(sd_str)
     if not match:
         return {}
     acl_dict = {
@@ -340,19 +360,20 @@ def get_sd_text(fd):
     return retval
 
 
+@simple_cache(maxsize=1024)
 def perms_to_text_list(perms, detailed=True):
     cur_bits = perms
     group_mask = 0
     text_labels = []
-    for bitmask in ACE_GROUP_BITS_STR_MAP:
-        if cur_bits & bitmask[0] == bitmask[0]:
-            group_mask |= bitmask[0]
-            text_labels.append(bitmask[1])
+    for bitmask, label in ACE_GROUP_BITS_STR_DICT.items():
+        if cur_bits & bitmask == bitmask:
+            group_mask |= bitmask
+            text_labels.append(label)
     if group_mask and not detailed:
         cur_bits = cur_bits & ~group_mask
-    for bitmask in ACE_SINGLE_BITS_STR_MAP:
-        if cur_bits & bitmask[0] == bitmask[0]:
-            text_labels.append(bitmask[1])
+    for bitmask, label in ACE_SINGLE_BITS_STR_DICT.items():
+        if cur_bits & bitmask == bitmask:
+            text_labels.append(label)
     return sorted(set(text_labels))
 
 
