@@ -65,9 +65,11 @@ class RemoteRun(object):
             cmd[i] = str(cmd[i])
         # TODO: Add additional command validation routines
         if not valid:
-            self.callback_function(client, thread_id, {"state": "invalid_params"})
+            if self.callback_function:
+                self.callback_function(client, thread_id, {"state": "invalid_params"})
             return
-        self.callback_function(client, thread_id, {"state": "start"})
+        if self.callback_function:
+            self.callback_function(client, thread_id, {"state": "start"})
         # Execute command based on endpoint
         if client["type"] == "onefs":
             subproc = subprocess.Popen(
