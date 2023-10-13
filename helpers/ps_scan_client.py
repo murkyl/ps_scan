@@ -425,7 +425,7 @@ class PSScanClient(object):
         except KeyError as ke:
             sys.stderr.write("ERROR: Logger filename string is invalid: {txt}\n".format(txt=str(ke)))
         except Exception as e:
-            sys.stderr.write("ERROR: Unhandled exception while trying to configure logger: {txt}\n".format(txt=str(ke)))
+            sys.stderr.write("ERROR: Unhandled exception while trying to configure logger: {txt}\n".format(txt=str(e)))
 
     def parse_message(self, msg, now):
         msg_type = msg.get("type")

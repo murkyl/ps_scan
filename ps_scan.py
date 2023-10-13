@@ -48,8 +48,6 @@ def main():
         sys.stderr.write("\n" + "\n".join(cmd_line_errors) + "\n")
         sys.exit(1)
 
-    setup_logger(options)
-
     es_options = {}
     if options["es_options_file"]:
         es_options = misc.read_es_options_file(options["es_options_file"])
@@ -117,6 +115,7 @@ def main():
             except Exception as e:
                 LOG.critical({"msg": "Unable to setuid to user", "user": options["user"]})
                 sys.exit(5)
+        setup_logger(options)
         client = psc.PSScanClient(options)
         try:
             client.connect()
@@ -138,6 +137,7 @@ def main():
             "server_port": options["port"],
             "stats_handler": user_handlers.print_statistics,
         }
+        setup_logger(options)
         if options["op"] == "auto":
             if options["type"] == SCAN_TYPE_ONEFS:
                 local_lnn = misc.get_local_node_number()
