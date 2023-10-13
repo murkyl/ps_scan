@@ -101,10 +101,6 @@ def main():
         file_handler = scanner.file_handler_basic
 
     if options["op"] == OPERATION_TYPE_CLIENT:
-        options["scanner_file_handler"] = file_handler
-        options["server_addr"] = options["addr"]
-        options["server_port"] = options["port"]
-        options["nodepool_translation"] = misc.get_nodepool_translation()
         # If the --user CLI parameter is passed in, try and change to that user. If that fails, exist immediately.
         if options.get("user"):
             try:
@@ -115,6 +111,10 @@ def main():
         setup_logger(options)
         LOG.info({"msg": "Starting client"})
         LOG.debug({"msg": "Parsed options", "options": json.dumps(options, indent=2, sort_keys=True)})
+        options["scanner_file_handler"] = file_handler
+        options["server_addr"] = options["addr"]
+        options["server_port"] = options["port"]
+        options["nodepool_translation"] = misc.get_nodepool_translation()
         client = psc.PSScanClient(options)
         try:
             client.connect()
