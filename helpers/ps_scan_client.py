@@ -24,7 +24,6 @@ import sys
 import time
 
 from helpers.constants import *
-import helpers.misc as misc
 import helpers.scanit as scanit
 import helpers.scanner as scanner
 import helpers.user_handlers as user_handlers
@@ -61,6 +60,7 @@ class PSScanClient(object):
             file_q_min_cutoff: int - The lower of 2 limits on the number of queued files. When the number of queued
                 files falls below this number, all new available threads will process directories to queue up more files
                 for processing
+            nodepool_translation: dict - Dictionary mapping diskpool/nodepool ID numbers to a nodepool name
             num_threads: int - Number of threads the file scanner will use
             poll_interval: int - Time in seconds to wait in the select statement
             scanner_file_handler: function pointer - Pointer to a method that will process a list of files
@@ -68,6 +68,7 @@ class PSScanClient(object):
             server_port: int - Port to connect to the ps_scan server
             stats_interval: int - Time in seconds between each statistics update to the server
         """
+        self.cli_options = args
         self.client_config = {}
         self.client_id = ""
         self.config_update_count = 0
@@ -182,12 +183,13 @@ class PSScanClient(object):
         s.handler_file = self.scanner_file_handler
         # TODO: Change how the user handler is passed in and initialized
         custom_state, custom_threads_state = s.get_custom_state()
-        user_handlers.init_custom_state(custom_state)
+        user_handlers.init_custom_state(custom_state, self.cli_options)
 
     def _process_args(self, args, use_default=True):
         cfg_fields = [
             ["dir_output_interval", "dir_output_interval", DEFAULT_DIR_OUTPUT_INTERVAL],
             ["dir_request_interval", "dir_request_interval", DEFAULT_DIR_REQUEST_INTERVAL],
+            ["nodepool_translation", "nodepool_translation", {}],
             ["scanner_dir_chunk", "dirq_chunk", scanit.DEFAULT_QUEUE_DIR_CHUNK_SIZE],
             ["scanner_dir_priority_count", "dirq_priority", scanit.DEFAULT_DIR_PRIORITY_COUNT],
             ["scanner_dir_request_percent", "dirq_request_percentage", DEFAULT_DIRQ_REQUEST_PERCENTAGE],

@@ -445,7 +445,7 @@ class ScanIt(threading.Thread):
                                 "fields": self.custom_state["fields"],
                                 "no_acl": self.custom_state["no_acl"],
                                 "no_names": self.custom_state["no_names"],
-                                "nodepool_translation": self.custom_state["node_pool_translation"],
+                                "nodepool_translation": self.custom_state["nodepool_translation"],
                                 "phys_block_size": self.custom_state["phys_block_size"],
                                 "strip_do_snapshot": self.custom_state["fields"],
                                 "user_attr": self.custom_state["user_attr"],

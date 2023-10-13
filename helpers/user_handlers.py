@@ -35,7 +35,6 @@ import time
 
 from helpers.constants import *
 import helpers.elasticsearch_wrapper as elasticsearch_wrapper
-import helpers.misc as misc
 import helpers.scanner as scanner
 
 LOG = logging.getLogger(__name__)
@@ -84,7 +83,7 @@ def init_custom_state(custom_state, options={}):
     custom_state["max_send_q_size"] = options.get("es_max_send_q_size", DEFAULT_ES_MAX_Q_SIZE)
     custom_state["no_acl"] = options.get("no_acl", DEFAULT_PARSE_SKIP_ACLS)
     custom_state["no_names"] = options.get("no_names", DEFAULT_PARSE_SKIP_NAMES)
-    custom_state["node_pool_translation"] = misc.get_nodepool_translation()
+    custom_state["nodepool_translation"] = options.get("nodepool_translation", {})
     custom_state["phys_block_size"] = IFS_BLOCK_SIZE
     custom_state["send_q_sleep"] = options.get("es_send_q_sleep", DEFAULT_ES_SEND_Q_SLEEP)
     custom_state["strip_dot_snapshot"] = options.get("strip_dot_snapshot", DEFAULT_STRIP_DOT_SNAPSHOT)

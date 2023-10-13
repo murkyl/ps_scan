@@ -109,6 +109,7 @@ def main():
         options["scanner_file_handler"] = file_handler
         options["server_addr"] = options["addr"]
         options["server_port"] = options["port"]
+        options["nodepool_translation"] = misc.get_nodepool_translation()
         # If the --user CLI parameter is passed in, try and change to that user. If that fails, exist immediately.
         if options.get("user"):
             try:
