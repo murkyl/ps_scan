@@ -5,7 +5,7 @@ PowerScale file scanner
 """
 # fmt: off
 __title__         = "ps_scan"
-__version__       = "0.1.2"
+__version__       = "0.1.3"
 __date__          = "13 October 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
@@ -52,7 +52,7 @@ def main():
     if options["es_options_file"]:
         es_options = misc.read_es_options_file(options["es_options_file"])
         if es_options is None:
-            LOG.critical({"msg": "Unable to open or read the credentials file", "filename": options["es_cred_file"]})
+            sys.stderr.write("Unable to open or read the credentials file: %s\n" % es_cred_file)
             sys.exit(3)
         # Take CLI options over file ones if they are present
         # Since we read in some options from a file, fill in the options dictionary with the file values if needed
@@ -93,17 +93,14 @@ def main():
         # Set resource limits
         old_limit, new_limit = misc.set_resource_limits(options["ulimit_memory"])
         if new_limit:
-            LOG.debug({"msg": "VMEM ulimit value set", "new_value": new_limit})
+            sys.stderr.write("VMEM ulimit value set: %s" % new_limit)
         else:
-            LOG.info({"msg": "VMEM ulimit setting failed"})
+            sys.stderr.write("VMEM ulimit setting failed\n")
         file_handler = scanner.file_handler_pscale
     else:
         file_handler = scanner.file_handler_basic
-    LOG.debug({"msg": "Parsed options", "options": json.dumps(options, indent=2, sort_keys=True)})
-    LOG.debug({"msg": "Initial scan paths", "paths": ", ".join(args)})
 
     if options["op"] == OPERATION_TYPE_CLIENT:
-        LOG.info({"msg": "Starting client"})
         options["scanner_file_handler"] = file_handler
         options["server_addr"] = options["addr"]
         options["server_port"] = options["port"]
@@ -113,9 +110,11 @@ def main():
             try:
                 become_user(options["user"])
             except Exception as e:
-                LOG.critical({"msg": "Unable to setuid to user", "user": options["user"]})
+                sys.stderr.write("Unable to setuid to user: %s" % options["user"])
                 sys.exit(5)
         setup_logger(options)
+        LOG.info({"msg": "Starting client"})
+        LOG.debug({"msg": "Parsed options", "options": json.dumps(options, indent=2, sort_keys=True)})
         client = psc.PSScanClient(options)
         try:
             client.connect()
@@ -138,6 +137,8 @@ def main():
             "stats_handler": user_handlers.print_statistics,
         }
         setup_logger(options)
+        LOG.debug({"msg": "Parsed options", "options": json.dumps(options, indent=2, sort_keys=True)})
+        LOG.debug({"msg": "Initial scan paths", "paths": ", ".join(args)})
         if options["op"] == "auto":
             if options["type"] == SCAN_TYPE_ONEFS:
                 local_lnn = misc.get_local_node_number()

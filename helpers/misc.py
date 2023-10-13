@@ -254,15 +254,15 @@ def get_local_storage_usage_stats():
 
 def get_nodepool_translation():
     """Returns a dictionary that maps between the disk pool DB ID number and the name of the pool
-    
+
     When looking at a file's OneFS inode metadata, the node pool that the file resides in is represented by a number
     in the disk pool database. This function will translate that number into a human readable name when a translation
     is available.
-    
+
     Parameters
     ----------
     None
-    
+
     Returns
     ----------
     dict - A dictionary with the disk pool ID to name mapping
