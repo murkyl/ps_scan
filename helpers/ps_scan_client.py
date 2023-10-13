@@ -40,6 +40,8 @@ class PSScanClient(object):
         Parameters
         ----------
         args: dictionary
+            connect_retry: int - Number of times the client should try and connect to the server
+            connect_retry_timeout: int - Seconds between connect retry attempts
             debug: int - Debug flag count from the CLI. The higher this number, the more debug may be logged
             dir_output_interval: int - Time in seconds between each directory queue size update to the server
             dir_request_interval: int - Limit how often a client can request more work directories, in seconds
@@ -72,6 +74,8 @@ class PSScanClient(object):
         self.client_config = {}
         self.client_id = ""
         self.config_update_count = 0
+        self.connect_retry_count = args.get("connect_retry_count", DEFAULT_CONNECT_RETRY_COUNT)
+        self.connect_retry_timeout = args.get("connect_retry_timeout", DEFAULT_CONNECT_RETRY_TIMEOUT)
         self.debug_count = args.get("debug", 0)
         self.dir_output_count = 0
         self.max_work_items = args.get("max_work_items", DEFAULT_MAX_WORK_ITEMS_PER_REQUEST)
@@ -214,10 +218,19 @@ class PSScanClient(object):
                 "port": self.server_port,
             }
         )
-        connected = self.socket.connect()
-        if not connected:
+        retry = self.connect_retry_count
+        while retry > 0:
+            connected = self.socket.connect()
+            if connected:
+                break
+            retry -= 1
+            if retry:
+                LOG.info({"msg": "Retrying server connection", "retry_count": retry})
+                time.sleep(self.connect_retry_timeout)
+        if retry == 0:
             LOG.info({"msg": "Unable to connect to server"})
             return
+        LOG.info({"msg": "Connected to server"})
         continue_running = True
         start_wall = time.time()
         self.scanner.start()
