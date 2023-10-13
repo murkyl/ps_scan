@@ -29,10 +29,48 @@ import helpers.user_handlers as user_handlers
 import helpers.scanner as scanner
 import libs.hydra as Hydra
 from libs.onefs_become_user import become_user
+# TODO: import libs.remote_run as rr
 
 
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s"
 LOG = logging.getLogger()
+
+
+""" TODO: Possible code for handling become_user for server
+def remote_callback(client, client_id, msg=None):
+        print({"type": MSG_TYPE_REMOTE_CALLBACK, "data": msg, "client_id": client_id, "client": client})
+def launch_remote_processes(args, callback=None, node_list=None):
+    run_cmd = [
+        "python",
+        str(args.get("script_path")),
+        "--op",
+        "client",
+        "--port",
+        str(args["server_port"]),
+        "--addr",
+        str(args["connect_addr"]),
+        "--type",
+        str(args["type"]),
+    ]
+    if args.get("threads"):
+        run_cmd.append("--threads")
+        run_cmd.append(str(args["threads"]))
+    if args.get("es_type"):
+        run_cmd.append("--es-type")
+        run_cmd.append(str(args["es_type"]))
+    if args.get("log"):
+        run_cmd.append("--log")
+        run_cmd.append(DEFAULT_LOG_FILE_CLIENT_PREFIX + str(args["log"]))
+    if node_list:
+        for node in node_list:
+            if node.get("type") != "default":
+                node["cmd"] = run_cmd
+        LOG.debug({"msg": "Launching remote process", "shell_command": run_cmd})
+        remote_state = rr.RemoteRun({"callback": callback})
+        remote_state.connect(node_list)
+    LOG.debug({"msg": "All remote processes launched"})
+    return remote_state
+"""
 
 
 def main():
@@ -93,9 +131,11 @@ def main():
         # Set resource limits
         old_limit, new_limit = misc.set_resource_limits(options["ulimit_memory"])
         if new_limit:
-            sys.stderr.write("VMEM ulimit value set: %s" % new_limit)
+            if options["debug"] > 0:
+                sys.stderr.write("VMEM ulimit value set: %s\n" % new_limit)
         else:
-            sys.stderr.write("VMEM ulimit setting failed\n")
+            if options["debug"] > 0:
+                sys.stderr.write("VMEM ulimit setting failed\n")
         file_handler = scanner.file_handler_pscale
     else:
         file_handler = scanner.file_handler_basic
@@ -141,9 +181,6 @@ def main():
             "server_port": options["port"],
             "stats_handler": user_handlers.print_statistics,
         }
-        setup_logger(options)
-        LOG.debug({"msg": "Parsed options", "options": json.dumps(options, indent=2, sort_keys=True)})
-        LOG.debug({"msg": "Initial scan paths", "paths": ", ".join(args)})
         if options["op"] == "auto":
             if options["type"] == SCAN_TYPE_ONEFS:
                 local_lnn = misc.get_local_node_number()
@@ -153,6 +190,32 @@ def main():
                 node_list = misc.parse_node_list(options["nodes"], min_node_list=[local_lnn])
                 # Setting the node list will cause the server to automatically launch clients
                 ps_scan_server_options["node_list"] = node_list
+        """
+        remote_state = launch_remote_processes(
+            {
+            "connect_addr": ps_scan_server_options["server_connect_addr"],
+            "script_path": ps_scan_server_options["script_path"],
+            "server_port": ps_scan_server_options["server_port"],
+            "type": options.get("type"),
+            "threads": options.get("threads"),
+            "es_type": options.get("es_type"),
+            "log": options.get("log"),
+            },
+            callback=remote_callback,
+            node_list = ps_scan_server_options["node_list"],
+        )
+
+        if options.get("user"):
+           try:
+               become_user(options.get("user"))
+           except Exception as e:
+               LOG.exception(e)
+               self.shutdown()
+               return
+        """
+        setup_logger(options)
+        LOG.debug({"msg": "Parsed options", "options": json.dumps(options, indent=2, sort_keys=True)})
+        LOG.debug({"msg": "Initial scan paths", "paths": ", ".join(args)})
         try:
             es_client = None
             es_cmd_idx = {}

@@ -556,16 +556,9 @@ class PSScanServer(Hydra.HydraServer):
     def serve(self):
         LOG.info({"msg": "Starting server"})
         start_wall = time.time()
-        self.start()
+        # TODO: Next line should move to ps_scan to fully support become_user
         self.launch_remote_processes()
-        # If the --user CLI parameter is present, try and change to that user. If that fails, exist immediately.
-        if self.cli_options.get("user"):
-            try:
-                become_user(self.cli_options.get("user"))
-            except Exception as e:
-                LOG.exception(e)
-                self.shutdown()
-                return
+        self.start()
 
         # Start main processing loop
         # Wait for clients to connect, request work, and redistribute work as needed.
