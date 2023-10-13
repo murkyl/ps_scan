@@ -215,7 +215,7 @@ def get_local_node_number():
     Returns
     ----------
     int|None - The logical node number of the node running the script
-        If the platform the script is running on is not OneFS
+        If the platform the script is running on is not OneFS, return None
     """
     if not is_onefs_os():
         return None
@@ -253,7 +253,26 @@ def get_local_storage_usage_stats():
 
 
 def get_nodepool_translation():
-    node_pool_translation = {}
+    """Returns a dictionary that maps between the disk pool DB ID number and the name of the pool
+    
+    When looking at a file's OneFS inode metadata, the node pool that the file resides in is represented by a number
+    in the disk pool database. This function will translate that number into a human readable name when a translation
+    is available.
+    
+    Parameters
+    ----------
+    None
+    
+    Returns
+    ----------
+    dict - A dictionary with the disk pool ID to name mapping
+        {
+          <disk_pool_id_1>: str,
+          <disk_pool_id_2>: str,
+          <disk_pool_id_...>: str,
+        }
+    """
+    nodepool_translation = {}
     if is_onefs_os():
         try:
             dpdb = dp.DiskPoolDB()
@@ -261,12 +280,12 @@ def get_nodepool_translation():
             for g in groups:
                 children = g.get_children()
                 for child in children:
-                    node_pool_translation[int(child.entryid)] = g.name
+                    nodepool_translation[int(child.entryid)] = g.name
         except Exception as e:
             LOG.exception("Unable to get the ID to name translation for node pools")
     else:
         LOG.info({"msg": "Cannot get nodepool translation table. Not running on a OneFS system"})
-    return node_pool_translation
+    return nodepool_translation
 
 
 def get_path_from_urlencoded(urlencoded_path):
