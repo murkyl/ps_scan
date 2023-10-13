@@ -5,8 +5,8 @@ PowerScale file scanner
 """
 # fmt: off
 __title__         = "ps_scan"
-__version__       = "0.1.0"
-__date__          = "12 August 2023"
+__version__       = "0.1.2"
+__date__          = "13 October 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -28,6 +28,7 @@ import helpers.ps_scan_server as pss
 import helpers.user_handlers as user_handlers
 import helpers.scanner as scanner
 import libs.hydra as Hydra
+from libs.onefs_become_user import become_user
 
 
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s"
@@ -108,6 +109,13 @@ def main():
         options["scanner_file_handler"] = file_handler
         options["server_addr"] = options["addr"]
         options["server_port"] = options["port"]
+        # If the --user CLI parameter is passed in, try and change to that user. If that fails, exist immediately.
+        if options.get("user"):
+            try:
+                become_user(options["user"])
+            except Exception as e:
+                LOG.critical({"msg": "Unable to setuid to user", "user": options["user"]})
+                sys.exit(5)
         client = psc.PSScanClient(options)
         try:
             client.connect()

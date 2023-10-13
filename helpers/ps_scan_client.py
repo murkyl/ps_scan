@@ -29,7 +29,6 @@ import helpers.scanit as scanit
 import helpers.scanner as scanner
 import helpers.user_handlers as user_handlers
 import libs.hydra as Hydra
-from libs.onefs_become_user import become_user
 
 
 LOG = logging.getLogger(__name__)
@@ -383,13 +382,6 @@ class PSScanClient(object):
             )
         self.client_config = cfg
         self._process_args(cfg.get("cli_options", {}), use_default=False)
-        # If the --user CLI parameter is passed in, try and change to that user. If that fails, exist immediately.
-        if cfg.get("cli_options", {}).get("user"):
-            try:
-                become_user(cfg["cli_options"]["user"])
-            except Exception as e:
-                LOG.exception(e)
-                # TODO: Add code to terminate client
         self.config_update_count += 1
 
     def parse_config_update_log_level(self, cfg):
