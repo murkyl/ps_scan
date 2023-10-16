@@ -28,14 +28,19 @@ __all__           = [
 
 import datetime
 import json
+import os
 import re
 import sys
 import traceback
-import libs.papi_lite as papi_lite
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.realpath(__file__)))))
+import libs.papi_lite as papi
 
-URI_ACCESS_ZONE_LIST = "/zones"
-URI_STORAGEPOOL_NODEPOOLS = "/storagepool/nodepools"
+PAPI = None
+PAPI_VER = 9
+URI_ACCESS_ZONE_LIST = "/{ver}/zones"
+URI_LATEST = "/latest"
+URI_STORAGEPOOL_NODEPOOLS = "/{ver}/storagepool/nodepools"
 
 
 def _get_utc_now():
@@ -240,8 +245,8 @@ def get_dict_value_and_path(dict_obj, path):
 
 def get_ps_access_zone_list():
     zone_list = []
-    papi = papi_lite.papi_lite()
-    data = papi.rest_call(URI_ACCESS_ZONE_LIST, "GET")
+    init_papi()
+    data = PAPI.rest_call(URI_ACCESS_ZONE_LIST.format(ver=PAPI_VER), "GET")
     if data[0] != 200:
         raise Exception("Error in PAPI request to {url}:\n{err}".format(err=str(data), url=URI_ACCESS_ZONE_LIST))
     for zone in data[2].get("zones"):
@@ -252,14 +257,24 @@ def get_ps_access_zone_list():
 
 def get_nodepool_list():
     nodepool_list = []
-    papi = papi_lite.papi_lite()
-    data = papi.rest_call(URI_STORAGEPOOL_NODEPOOLS, "GET")
+    init_papi()
+    data = PAPI.rest_call(URI_STORAGEPOOL_NODEPOOLS.format(ver=PAPI_VER), "GET")
     if data[0] != 200:
         raise Exception("Error in PAPI request to {url}:\n{err}".format(err=str(data), url=URI_STORAGEPOOL_NODEPOOLS))
     for pool in data[2].get("nodepools"):
         nodepool_list.append({"name": pool["name"]})
     nodepool_list = sorted(nodepool_list, key=lambda x: x["name"])
     return nodepool_list
+
+
+def init_papi():
+    global PAPI
+    global PAPI_VER
+    PAPI = papi.papi_lite()
+    data = PAPI.rest_call(URI_LATEST, "GET")
+    if data[0] != 200:
+        raise Exception("Unable to retrieve latest PAPI version automatically")
+    PAPI_VER = data[2].get("latest")
 
 
 def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, sort=True):
@@ -274,14 +289,19 @@ def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, sort=
     all_paths = []
     filters = []
     for az in az_list:
+        az_path_part = az["path"].rstrip("/").replace("/", "\\/")
         entry = {
-            "input": {"language": "kuery", "query": "file_path :{path}/*".format(path=az["path"].rstrip("/"))},
+            "input": {
+                "language": "lucene",
+                "query": "file_path:({path} OR {path}\/*)".format(path=az_path_part),
+            },
             "label": az["name"],
         }
         if add_other and az["name"] == "System":
             continue
         filters.append(entry)
-        all_paths.append(az["path"].rstrip("/") + "/*")
+        all_paths.append(az_path_part)
+        all_paths.append(az_path_part + "\\/*")
     if sort:
         # If sort is set, sort the access zones by their name
         filters = sorted(filters, key=lambda x: x["label"].lower())
@@ -290,8 +310,10 @@ def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, sort=
         all_paths = sorted(list(set([x for x in all_paths if x != "/ifs/*"])))
         entry = {
             "input": {
-                "language": "kuery",
-                "query": "file_path :/ifs/* and not {not_paths}".format(not_paths=" and not ".join(all_paths)),
+                "language": "lucene",
+                "query": "file_path: (\\/ifs OR \/ifs\/*) AND NOT {not_paths}".format(
+                    not_paths=" AND NOT ".join(all_paths)
+                ),
             },
             "label": "System (excluding all other access zones)",
         }
@@ -316,8 +338,8 @@ def update_lens_local_storagepool_usage(visState_dict, nodepool_list, sort=True)
     for pool in nodepool_list:
         entry = {
             "input": {
-                "language": "kuery",
-                "query": 'pool_target_data_name : "{pool}" and file_is_smartlinked : false'.format(pool=pool["name"]),
+                "language": "lucene",
+                "query": 'pool_target_data_name: "{pool}" AND file_is_smartlinked: false'.format(pool=pool["name"]),
             },
             "label": pool["name"],
         }
