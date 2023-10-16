@@ -153,7 +153,6 @@ def translate_user_group_perms(full_path, file_info, fd=None, name_lookup=True):
     # Translate the numeric values into human readable user name and group names if possible
     # TODO: Add translation to names from SID/UID/GID values
     if file_info["perms_unix_uid"] == 0xFFFFFFFF or file_info["perms_unix_gid"] == 0xFFFFFFFF:
-        lstat_required = True
         LOG.debug({"msg": "UID/GID of -1. Using internal security owner call", "file_path": full_path})
         # If the UID/GID is set to 0xFFFFFFFF then on cluster, the UID/GID does not exist and we have a SID owner
         if not fd:
