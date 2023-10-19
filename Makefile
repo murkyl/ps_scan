@@ -6,7 +6,7 @@ OUTFILE = ps_scan-${VER}.zip
 ps_scan: clean
 	mkdir -p build
 	mkdir -p releases
-	zip -r build/${OUTFILE} LICENSE README.md
+	zip -r build/${OUTFILE} LICENSE README.md example_es_credentials.txt
 	zip -r build/${OUTFILE} ps_scan.py ps_cmd.py helpers/* libs/*.py libs/hydra/* visualizations/*
 	cp build/${OUTFILE} releases
 
