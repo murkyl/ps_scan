@@ -372,7 +372,7 @@ def file_handler_pscale(root, filename_list, args={}):
                         int(fstats["di_metadata_pool_target"]), str(fstats["di_metadata_pool_target"])
                     ),
                     # ========== Permissions ==========
-                    "perms_unix_bitmask": stat.S_IMODE(fstats["di_mode"]),
+                    "perms_unix_bitmask": "{0:o}".format(stat.S_IMODE(fstats["di_mode"])),
                     "perms_unix_gid": int(fstats["di_gid"]),
                     "perms_unix_uid": int(fstats["di_uid"]),
                     # ========== File protection level ==========
@@ -539,7 +539,7 @@ def get_file_stat(root, filename, block_unit=STAT_BLOCK_SIZE, strip_dot_snapshot
         "file_type": FILE_TYPE[stat.S_IFMT(fstats.st_mode) & FILE_TYPE_MASK],
         "inode": fstats.st_ino,
         # ========== Permissions ==========
-        "perms_unix_bitmask": stat.S_IMODE(fstats.st_mode),
+        "perms_unix_bitmask": "{0:o}".format(stat.S_IMODE(fstats.st_mode)),
         "perms_unix_gid": int(fstats.st_gid),
         "perms_unix_uid": int(fstats.st_uid),
         # ========== File allocation size and blocks ==========

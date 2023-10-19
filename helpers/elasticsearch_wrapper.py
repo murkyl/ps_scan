@@ -125,7 +125,7 @@ ES_INDEX_MAPPING = {
         "perms_acl_group": {"type": "keyword"},
         "perms_acl_user": {"type": "keyword"},
         "perms_group": {"type": "keyword"},
-        "perms_unix_bitmask": {"type": "short"},
+        "perms_unix_bitmask": {"type": "text"},
         "perms_unix_gid": {"type": "long"},
         "perms_unix_uid": {"type": "long"},
         "perms_user": {"type": "keyword"},
