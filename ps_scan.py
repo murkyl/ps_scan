@@ -5,7 +5,7 @@ PowerScale file scanner
 """
 # fmt: off
 __title__         = "ps_scan"
-__version__       = "0.1.3"
+__version__       = "0.2.0"
 __date__          = "13 October 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
@@ -29,6 +29,7 @@ import helpers.user_handlers as user_handlers
 import helpers.scanner as scanner
 import libs.hydra as Hydra
 from libs.onefs_become_user import become_user
+
 # TODO: import libs.remote_run as rr
 
 

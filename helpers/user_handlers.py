@@ -120,7 +120,10 @@ def print_statistics(output_type, log, stats, custom_stats, now, start_time, wal
     for field in CUSTOM_STATS_FIELDS:
         consolidated_custom_stats[field] = 0
         for client in custom_stats:
-            consolidated_custom_stats[field] += client[field]
+            try:
+                consolidated_custom_stats[field] += client[field]
+            except:
+                LOG.critical("DEBUG: FIELD: %s, CCS: %s, CLIENT: %s"%(field, consolidated_custom_stats.get("field"), client.get("field")))
         if "time_" in field:
             consolidated_custom_stats[field] = consolidated_custom_stats[field] / total_threads
     output_string = (
