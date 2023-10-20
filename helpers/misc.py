@@ -41,6 +41,7 @@ import errno
 import logging
 import os
 import platform
+import re
 import subprocess
 
 try:
@@ -73,6 +74,8 @@ try:
 except:
     USE_SCANDIR = 0
 
+ELASTIC_VALID_INDEX_RE_STR = r'^[^-_+\.][^A-Z\\/\*\?"<>| ,#:]+$'
+ELASTIC_VALID_INDEX_LENGTH = 255
 LOG = logging.getLogger(__name__)
 URI_STATISTICS_KEY = "/statistics/current"
 
@@ -383,21 +386,46 @@ def parse_node_list(node_str, min_node_list=[]):
 def read_es_options_file(filename):
     es_creds = {}
     try:
-        with open(filename) as f:
-            lines = f.readlines()
-            es_creds["user"] = lines[0].strip()
-            es_creds["password"] = lines[1].strip()
-            if len(lines) > 2:
-                es_creds["index"] = lines[2].strip()
-            if len(lines) > 3:
-                es_creds["url"] = lines[3].strip()
-            # Optional 5th parameter, the type of ES index. Normally ps_scan or diskover
-            if len(lines) > 4:
-                es_type = lines[4].strip()
-                if es_type:
-                    es_creds["type"] = es_type
+        with open(filename, "r") as option_file:
+            es_creds = json.load(option_file)
     except Exception as e:
-        return None
+        try:
+            with open(filename) as option_file:
+                lines = option_file.readlines()
+                es_creds["user"] = lines[0].strip()
+                es_creds["password"] = lines[1].strip()
+                if len(lines) > 2:
+                    es_creds["index"] = lines[2].strip()
+                if len(lines) > 3:
+                    es_creds["url"] = lines[3].strip()
+                # Optional 5th parameter, the type of ES index. Normally ps_scan or diskover
+                if len(lines) > 4:
+                    es_type = lines[4].strip()
+                    if es_type:
+                        es_creds["type"] = es_type
+        except Exception as e:
+            raise Exception("Unable to open or read the credentials file: {filename}".format(filename=filename))
+    # Validate options
+    if "user" not in es_creds:
+        es_creds["user"] = ""
+    if "password" not in es_creds:
+        es_creds["password"] = ""
+    if "type" not in es_creds:
+        es_creds["type"] = ES_TYPE_PS_SCAN
+    if "index" not in es_creds:
+        raise Exception("An ElasticSearch index name is required")
+    # Validate the ES index name meets allowed characters
+    valid_index = re.match(ELASTIC_VALID_INDEX_RE_STR, es_creds["index"])
+    if not valid_index:
+        raise Exception("ElasticSearch index name must match this regex: {exp}".format(exp=ELASTIC_VALID_INDEX_RE_STR))
+    # Validate the index name is <= ELASTIC_VALID_INDEX_LENGTH bytes
+    byte_str = es_creds["index"].encode("UTF-8")
+    if len(byte_str) > ELASTIC_VALID_INDEX_LENGTH:
+        raise Exception("ElasticSearch index name exceeds {size} bytes".format(size=ELASTIC_VALID_INDEX_LENGTH))
+    if not es_creds.get("url"):
+        raise Exception("Invalid ElasticSearch URL: {url}".format(url=es_creds.get("url")))
+    if es_creds["type"] not in [ES_TYPE_PS_SCAN, ES_TYPE_DISKOVER]:
+        raise Exception("Invalid type for ElasticSearch index format: {type}".format(type=es_creds["type"]))
     return es_creds
 
 

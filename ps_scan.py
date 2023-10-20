@@ -5,8 +5,8 @@ PowerScale file scanner
 """
 # fmt: off
 __title__         = "ps_scan"
-__version__       = "0.2.0"
-__date__          = "13 October 2023"
+__version__       = "0.3.0"
+__date__          = "20 October 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -89,21 +89,18 @@ def main():
 
     es_options = {}
     if options["es_options_file"]:
-        es_options = misc.read_es_options_file(options["es_options_file"])
-        if es_options is None:
-            sys.stderr.write("Unable to open or read the credentials file: %s\n" % es_cred_file)
+        try:
+            es_options = misc.read_es_options_file(options["es_options_file"])
+        except Exception as e:
+            sys.stderr.write(str(e) + "\n")
             sys.exit(3)
         # Take CLI options over file ones if they are present
         # Since we read in some options from a file, fill in the options dictionary with the file values if needed
         for key in ["es_index", "es_pass", "es_type", "es_url", "es_user"]:
             if options[key]:
                 es_options[key[3:]] = options[key]
-            elif es_options.get(key):
+            elif es_options.get(key[3:]):
                 options[key] = es_options[key[3:]]
-        # Fix default for es_type parameter if neither the file nor CLI has this parameter
-        if not es_options.get("type"):
-            es_options["type"] = ES_TYPE_PS_SCAN
-        options["es_type"] = es_options["type"]
     elif (
         options["es_index"] is not None
         and options["es_user"] is not None
