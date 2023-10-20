@@ -451,7 +451,7 @@ def file_handler_pscale(root, filename_list, args={}):
 
             # Translate UID/GID/SID to names
             time_start_translate = time.time()
-            translate_user_group_perms(full_path, file_info, fd=fd, name_lookup=not no_names)
+            translate_user_group_perms(root, filename, file_info, fd=fd, name_lookup=not no_names)
             time_end_translate = time.time()
             stats["time_name"] += time_end_translate - time_start_translate
 
