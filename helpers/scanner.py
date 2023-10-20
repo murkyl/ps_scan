@@ -316,12 +316,12 @@ def file_handler_pscale(root, filename_list, args={}):
                     atime = fstats["di_ctime"]
                 time_end_atime = time.time()
                 stats["time_access_time"] += time_end_atime - time_end_dinode
-                di_data_blocks = fstats.get(
-                    "di_data_blocks", fstats["di_physical_blocks"] - fstats["di_protection_blocks"]
-                )
                 logical_blocks = fstats["di_logical_size"] // phys_block_size
+                # OneFS < 9.2 does not have di_protection_blocks or di_data_blocks. Estimate these values
+                protection_blocks = fstats.get("di_protection_blocks") or fstats["di_physical_blocks"] - logical_blocks
+                di_data_blocks = fstats.get("di_data_blocks", fstats["di_physical_blocks"] - protection_blocks)
                 comp_blocks = logical_blocks - fstats["di_shadow_refs"]
-                compressed_file = True if (di_data_blocks and comp_blocks) else False
+                compressed_file = di_data_blocks and comp_blocks
                 stubbed_file = (fstats["di_flags"] & IFLAG_COMBO_STUBBED) > 0
                 if strip_dot_snapshot:
                     file_path = re.sub(RE_STRIP_SNAPSHOT, "", root, count=1)
@@ -388,7 +388,7 @@ def file_handler_pscale(root, filename_list, args={}):
                     # Physical size on disk excluding protection overhead and excluding metadata
                     "size_physical_data": di_data_blocks * phys_block_size,
                     # Physical size on disk of the protection overhead
-                    "size_protection": fstats["di_protection_blocks"] * phys_block_size,
+                    "size_protection": protection_blocks * phys_block_size,
                     # ========== SSD usage ==========
                     "ssd_strategy": fstats["di_la_ssd_strategy"],
                     "ssd_strategy_name": SSD_STRATEGY[fstats["di_la_ssd_strategy"]],
