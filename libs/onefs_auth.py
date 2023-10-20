@@ -131,10 +131,10 @@ class GetPrincipalName:
             base_uri = URI_AUTH_GROUP
         else:
             raise Exception({"msg": "Unknown principal type", "type": principal_type})
-        
+
         if not zone_list:
             zone_list = self.get_zones_for_path(path)
-        
+
         add_to_cache = []
         principal_entry = None
         for zone_name in zone_list:
@@ -185,10 +185,10 @@ class GetPrincipalName:
         # If no existing entry exists, get the relevant access zone names, then cache the result
         max_depth = self.zone_path_depths[0]
         path_parts = path.split("/")
-        path_parts = path_parts[0:max_depth + 1]
+        path_parts = path_parts[0 : max_depth + 1]
         path_len = len(path_parts) - 1
         for depth in self.zone_path_depths:
-            test_path = "/".join(path_parts[0:depth + 1])
+            test_path = "/".join(path_parts[0 : depth + 1])
             if test_path in self.path_depth_zone_name_map[depth]:
                 zones.append(self.path_depth_zone_name_map[depth][test_path])
         self.path_zone_cache[path] = zones
