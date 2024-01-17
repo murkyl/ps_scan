@@ -74,6 +74,7 @@ class ElasticsearchLite:
         if resp.status >= 200 and resp.status < 300:
             return json.loads(resp.read())
         self.conn = None
+        LOG.debug({"msg": "Elastic response error", "resp": resp})
         return {"status": resp.status, "error": resp.reason}
 
     def bulk(self, body_str, index_name=None, compresslevel=0):
@@ -87,7 +88,7 @@ class ElasticsearchLite:
         if compresslevel > 0:
             buffer = io.BytesIO()
             with gzip.GzipFile(mode="wb", compresslevel=compresslevel, fileobj=buffer) as gz_file:
-                gz_file.write(body_str)
+                gz_file.write(body_str.encode("utf-8"))
             body_str = buffer.getvalue()
             new_headers["Content-Encoding"] = "gzip"
         new_headers["Content-Length"] = len(body_str)
