@@ -30,10 +30,10 @@ import threading
 import time
 import zlib
 
-import libs.elasticsearch_lite as es_lite
-import helpers.scanit as scanit
 from helpers.constants import *
 import helpers.misc as misc
+import libs.elasticsearch_lite as es_lite
+
 
 ES_INDEX_MAPPING = {
     "properties": {
@@ -75,7 +75,19 @@ ES_INDEX_MAPPING = {
         "dir_leaf": {"type": "boolean"},
         # ========== File and path strings ==========
         # Parent directory of the file
-        "file_path": {"type": "keyword"},
+        "file_path": {
+            "fields": {
+                "reversed_tree": {
+                    "analyzer": "custom_path_tree_reversed",
+                    "type": "text",
+                },
+                "tree": {
+                    "analyzer": "custom_path_tree",
+                    "type": "text",
+                },
+            },
+            "type": "keyword",
+        },
         # Full file name of the file including the extension but without the path
         "file_name": {"type": "keyword"},
         # File name extension portion. This is generally the text after the last . in the file name
@@ -121,14 +133,68 @@ ES_INDEX_MAPPING = {
         "pool_target_metadata": {"type": "keyword"},
         "pool_target_metadata_name": {"type": "keyword"},
         # ========== Permissions ==========
-        "perms_acl_aces": {"type": "keyword"},
-        "perms_acl_group": {"type": "keyword"},
-        "perms_acl_user": {"type": "keyword"},
-        "perms_group": {"type": "keyword"},
-        "perms_unix_bitmask": {"type": "text"},
+        "perms_acl_aces": {
+            "type": "nested",
+            "properties": {
+                "principal": {
+                    "analyzer": "acl",
+                    "type": "text",
+                },
+                "perm_type": {
+                    "type": "text",
+                },
+                "perms": {
+                    "analyzer": "acl",
+                    "type": "text",
+                },
+            },
+        },
+        "perms_acl_group": {
+            "fields": {
+                "text": {
+                    "type": "text",
+                    "analyzer": "principal",
+                },
+            },
+            "type": "keyword",
+        },
+        "perms_acl_user": {
+            "fields": {
+                "text": {
+                    "type": "text",
+                    "analyzer": "principal",
+                },
+            },
+            "type": "keyword",
+        },
+        "perms_group": {
+            "fields": {
+                "text": {
+                    "type": "text",
+                    "analyzer": "principal",
+                },
+            },
+            "type": "keyword",
+        },
+        "perms_unix_bitmask": {
+            "fields": {
+                "text": {
+                    "type": "text",
+                },
+            },
+            "type": "keyword",
+        },
         "perms_unix_gid": {"type": "long"},
         "perms_unix_uid": {"type": "long"},
-        "perms_user": {"type": "keyword"},
+        "perms_user": {
+            "fields": {
+                "text": {
+                    "analyzer": "principal",
+                    "type": "text",
+                },
+            },
+            "type": "keyword",
+        },
         # ========== File protection level ==========
         "protection_current": {"type": "keyword"},
         "protection_target": {"type": "keyword"},
@@ -159,13 +225,19 @@ ES_INDEX_MAPPING_DISKOVER = {
         "name": {
             "type": "keyword",
             "fields": {
-                "text": {"type": "text", "analyzer": "filename_analyzer"},
+                "text": {
+                    "analyzer": "filename_analyzer",
+                    "type": "text",
+                },
             },
         },
         "parent_path": {
             "type": "keyword",
             "fields": {
-                "text": {"type": "text", "analyzer": "path_analyzer"},
+                "text": {
+                    "analyzer": "path_analyzer",
+                    "type": "text",
+                },
             },
         },
         "size": {"type": "long"},
@@ -186,8 +258,8 @@ ES_INDEX_MAPPING_DISKOVER = {
         "ino": {"type": "keyword"},
         "tags": {"type": "keyword"},
         "costpergb": {
-            "type": "scaled_float",
             "scaling_factor": 100,
+            "type": "scaled_float",
         },
         "extension": {"type": "keyword"},
         "path": {"type": "keyword"},
@@ -207,8 +279,8 @@ ES_INDEX_MAPPING_DISKOVER = {
         "diskover_ver": {"type": "keyword"},
         "type": {"type": "keyword"},
         "pscale": {
-            "type": "object",
             "properties": copy.deepcopy(ES_INDEX_MAPPING["properties"]),
+            "type": "object",
         },
     }
 }
@@ -216,43 +288,89 @@ ES_INDEX_SETTINGS = {
     "number_of_shards": 1,
     "max_regex_length": 4096,
     "number_of_replicas": 0,
-}
-ES_INDEX_SETTINGS_DISKOVER = {
-    "index": {
-        "number_of_shards": 1,
-        "number_of_replicas": 0,
-        "codec": "default",
-    },
     "analysis": {
-        "tokenizer": {
-            "filename_tokenizer": {
-                "type": "char_group",
-                "tokenize_on_chars": ["whitespace", "punctuation", "-", "_"],
-            },
-            "path_tokenizer": {
-                "type": "char_group",
-                "tokenize_on_chars": ["whitespace", "punctuation", "/", "-", "_"],
-            },
-        },
         "analyzer": {
-            "filename_analyzer": {
-                "tokenizer": "filename_tokenizer",
-                "filter": ["word_filter", "lowercase"],
+            "acl": {
+                "tokenizer": "custom_acl",
             },
-            "path_analyzer": {
-                "tokenizer": "path_tokenizer",
-                "filter": ["word_filter", "lowercase"],
+            "custom_path_tree": {
+                "filter": ["word_filter"],
+                "tokenizer": "custom_hierarchy",
+            },
+            "custom_path_tree_reversed": {
+                "filter": ["word_filter"],
+                "tokenizer": "custom_hierarchy_reversed",
+            },
+            "principal": {
+                "tokenizer": "custom_principal",
             },
         },
         "filter": {
             "word_filter": {
-                "type": "word_delimiter_graph",
                 "generate_number_parts": "false",
-                "stem_english_possessive": "false",
-                "split_on_numerics": "false",
-                "catenate_all": "true",
                 "preserve_original": "true",
+                "split_on_numerics": "false",
+                "stem_english_possessive": "false",
+                "type": "word_delimiter_graph",
+            },
+        },
+        "tokenizer": {
+            "custom_acl": {
+                "pattern": "[ ,:]",
+                "type": "pattern",
+            },
+            "custom_hierarchy": {
+                "delimiter": "/",
+                "type": "path_hierarchy",
+            },
+            "custom_hierarchy_reversed": {
+                "delimiter": "/",
+                "reverse": "true",
+                "type": "path_hierarchy",
+            },
+            "custom_principal": {
+                "pattern": "[:]",
+                "type": "pattern",
+            },
+        },
+    },
+}
+ES_INDEX_SETTINGS_DISKOVER = {
+    "index": {
+        "codec": "default",
+        "number_of_replicas": 0,
+        "number_of_shards": 1,
+    },
+    "analysis": {
+        "analyzer": {
+            "filename_analyzer": {
+                "filter": ["word_filter", "lowercase"],
+                "tokenizer": "filename_tokenizer",
+            },
+            "path_analyzer": {
+                "filter": ["word_filter", "lowercase"],
+                "tokenizer": "path_tokenizer",
+            },
+        },
+        "filter": {
+            "word_filter": {
+                "catenate_all": "true",
+                "generate_number_parts": "false",
+                "preserve_original": "true",
+                "split_on_numerics": "false",
+                "stem_english_possessive": "false",
+                "type": "word_delimiter_graph",
             }
+        },
+        "tokenizer": {
+            "filename_tokenizer": {
+                "tokenize_on_chars": ["whitespace", "punctuation", "-", "_"],
+                "type": "char_group",
+            },
+            "path_tokenizer": {
+                "tokenize_on_chars": ["whitespace", "punctuation", "/", "-", "_"],
+                "type": "char_group",
+            },
         },
     },
 }
@@ -321,7 +439,7 @@ def es_create_start_options(options={}):
         if misc.is_onefs_os():
             storage_usage_stats = misc.get_local_storage_usage_stats()
         else:
-            # TODO: Add support for querying for usage statistics
+            # TODO: Add support for querying for usage statistics on non OneFS systems
             pass
         ps_scan_ver = options.get("ps_scan_ver_str", "ps_scan v0.0.0")
         root_path = options.get("scan_path", "/ifs")
@@ -382,7 +500,7 @@ def es_data_sender(
     username,
     password,
     es_cmd_idx,
-    poll_interval=scanit.DEFAULT_POLL_INTERVAL,
+    poll_interval=DEFAULT_CMD_POLL_INTERVAL,
     bulk_count=DEFAULT_ES_BULK_COUNT,
     compresslevel=DEFAULT_COMPRESSION_LEVEL,
 ):
@@ -506,12 +624,12 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx, compresslevel=DEFAULT_COMPRE
                 elif chunk_type == CMD_SEND_DIR_UPDATE:
                     bulk_list = bulk_dir
                 # The following variables have 2 possible key names based on it being a ps_scan or diskover type
-                inode = chunk_data[idx].get("inode", chunk_data[idx].get("ino"))
+                inode = str(chunk_data[idx].get("inode", chunk_data[idx].get("ino")))
                 file_path = chunk_data[idx].get("file_path", chunk_data[idx].get("parent_path"))
                 file_name = chunk_data[idx].get("file_name", chunk_data[idx].get("name"))
                 # The full path of the file including the file name is hashed with CRC32 in order to provide a unique
                 # _id field for ElasticSearch. This is required for files that have identical inode numbers
-                full_path = "%s/%s" % (file_path, file_name)
+                full_path = ("%s/%s" % (file_path, file_name)).encode("utf-8")
                 bulk_list.append(json.dumps({bulk_op: {"_id": "%s_%s" % (inode, zlib.crc32(full_path) & 0xFFFFFFFF)}}))
                 bulk_list.append(body_text)
         # For each bulk list, take all the entries and join them together with a \n and send them to the ES into the

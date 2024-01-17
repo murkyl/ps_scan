@@ -5,8 +5,8 @@ PowerScale file scanner
 """
 # fmt: off
 __title__         = "ps_scan"
-__version__       = "0.3.0"
-__date__          = "20 October 2023"
+__version__       = "0.3.1"
+__date__          = "11 January 2024"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -143,7 +143,7 @@ def main():
         options["scanner_file_handler"] = file_handler
         options["server_addr"] = options["addr"]
         options["server_port"] = options["port"]
-        # If the --user CLI parameter is passed in, try and change to that user. If that fails, exist immediately.
+        # If the --user CLI parameter is passed in, try and change to that user. If that fails, exit immediately.
         if options.get("user"):
             try:
                 become_user(options["user"])
@@ -225,9 +225,18 @@ def main():
                     es_options["index"],
                     es_options["type"],
                 )
+                for es_option_name in [
+                    "es_bulk_refresh",
+                    "es_flush_timeout",
+                    "es_max_send_q_size",
+                    "es_replicas",
+                    "es_send_q_sleep",
+                    "es_shards",
+                    "es_threads",
+                ]:
+                    es_options[es_option_name] = options[es_option_name]
                 ps_scan_server_options["client_config"]["es_options"] = es_options
                 ps_scan_server_options["client_config"]["es_cmd_idx"] = es_cmd_idx
-                ps_scan_server_options["client_config"]["es_send_threads"] = options["es_threads"]
             if es_client and (options["es_init_index"] or options["es_reset_index"]):
                 if options["es_reset_index"]:
                     elasticsearch_wrapper.es_delete_index(es_client, es_cmd_idx)

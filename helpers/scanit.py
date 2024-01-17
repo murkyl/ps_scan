@@ -69,8 +69,8 @@ DEFAULT_FILE_QUEUE_CUTOFF = 2000
 #   When there are less than FILE_QUEUE_MIN_CUTOFF files in the file_q, just process directories
 DEFAULT_FILE_QUEUE_MIN_CUTOFF = DEFAULT_FILE_QUEUE_CUTOFF // 10
 #   Maximum number of work items to return in a single call to return work
-DEFAULT_MAX_WORK_ITEMS = 100
-DEFAULT_POLL_INTERVAL = 0.1
+DEFAULT_MAX_WORK_ITEMS = 5000
+DEFAULT_POLL_INTERVAL = DEFAULT_CMD_POLL_INTERVAL
 #   Size of directory or file chunks
 DEFAULT_QUEUE_DIR_CHUNK_SIZE = 5
 DEFAULT_QUEUE_FILE_CHUNK_SIZE = 50
@@ -585,8 +585,12 @@ class ScanIt(threading.Thread):
         custom_threads_state = [x["custom"] for x in self.threads_state]
         return (self.custom_state, custom_threads_state)
 
-    def get_dir_queue_items(self, num_items=0, percentage=0):
+    def get_dir_queue_items(self, num_items=0, percentage=0.5):
         cur_q_size = self.dir_q.qsize()
+        if percentage > 1:
+            percentage = percentage / 100.0
+        if percentage > 1 or percentage < 0:
+            perentage = 0.5
         p_items = int(cur_q_size * percentage)
         num_to_return = p_items if p_items > num_items else num_items
         if num_to_return > self.max_work_items:

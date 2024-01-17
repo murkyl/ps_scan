@@ -454,6 +454,12 @@ def file_handler_pscale(root, filename_list, args={}):
             translate_user_group_perms(root, filename, file_info, fd=fd, name_lookup=not no_names)
             time_end_translate = time.time()
             stats["time_name"] += time_end_translate - time_start_translate
+            # Convert string ACE into an object for Elastic
+            aces = file_info.get("perms_acl_aces", [])
+            if aces:
+                file_info["perms_acl_aces"] = [
+                    {key: value for key, value in zip(["principal", "perm_type", "perms"], ace.split())} for ace in aces
+                ]
 
             # Filter out keys if requested
             if filter_fields:
@@ -495,7 +501,6 @@ def file_handler_pscale(root, filename_list, args={}):
                 os.close(fd)
             except:
                 pass
-    stats["time_scan_dir"] = time.time() - start_scanner
     if custom_state:
         custom_stats = custom_state.get("stats")
         if custom_stats:
@@ -506,6 +511,7 @@ def file_handler_pscale(root, filename_list, args={}):
         "files": result_list,
         "statistics": stats,
     }
+    stats["time_scan_dir"] = time.time() - start_scanner
     return results
 
 
