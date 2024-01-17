@@ -384,8 +384,18 @@ Default: %default
         "--es-bulk-refresh",
         action="store",
         default=DEFAULT_ES_BULK_REFRESH_INTERVAL,
-        help="""ElasticSearch time string the specifies how much time 
+        help="""ElasticSearch time string that specifies how much time 
 between indexing data and when it will be available.  
+Default: %default
+""",
+    )
+    group.add_option(
+        "--es-flush-timeout",
+        action="store",
+        type="int",
+        default=DEFAULT_ES_FLUSH_TIMEOUT,
+        help="""Number of seconds allowed to flush any remaining data  
+at the end of a scan to ElasticSearch.                
 Default: %default
 """,
     )

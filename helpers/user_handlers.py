@@ -123,7 +123,10 @@ def print_statistics(output_type, log, stats, custom_stats, now, start_time, wal
             try:
                 consolidated_custom_stats[field] += client[field]
             except:
-                LOG.critical("DEBUG: FIELD: %s, CCS: %s, CLIENT: %s"%(field, consolidated_custom_stats.get("field"), client.get("field")))
+                LOG.critical(
+                    "DEBUG: FIELD: %s, CCS: %s, CLIENT: %s"
+                    % (field, consolidated_custom_stats.get("field"), client.get("field"))
+                )
         if "time_" in field:
             consolidated_custom_stats[field] = consolidated_custom_stats[field] / total_threads
     output_string = (
@@ -142,8 +145,7 @@ def shutdown(custom_state, custom_threads_state):
             custom_state.get("es_send_cmd_q").put([CMD_EXIT, {"flush": True}])
         # Wait for up to 120 seconds for all the ES threads to terminate after sending an exit command
         wait_for_threads = list(custom_state.get("es_thread_handles"))
-        # TODO: Change this to a variable time
-        flush_time = 120
+        flush_time = custom_state.get("es_flush_timeout")
         for i in range(flush_time):
             for thread in wait_for_threads[::-1]:
                 if not thread.is_alive():
@@ -168,11 +170,11 @@ def update_config(custom_state, new_config):
     es_options = client_config.get("es_options")
     # TODO: Add code to shutdown existing threads or adjust running threads based on new config
     if es_options:
-        if client_config.get("es_thread_handles") is not None:
+        if custom_state.get("es_thread_handles") is not None:
             # TODO: Add support for closing and reconnecting to a new ES instance
             pass
         es_threads = []
-        threads_to_start = client_config.get("es_send_threads", DEFAULT_ES_THREADS)
+        threads_to_start = es_options.get("es_send_threads", DEFAULT_ES_THREADS)
         try:
             for i in range(threads_to_start):
                 es_thread_instance = threading.Thread(
@@ -195,6 +197,7 @@ def update_config(custom_state, new_config):
                 es_threads.append(es_thread_instance)
         except Exception as e:
             LOG.exception("Error encountered starting up ES sender threads")
+        custom_state["es_flush_timeout"] = es_options.get("es_flush_timeout", DEFAULT_ES_FLUSH_TIMEOUT)
         custom_state["es_thread_handles"] = es_threads
     custom_state["client_config"] = client_config
     custom_state["no_acl"] = cli_config.get("no_acl", custom_state["no_acl"])
