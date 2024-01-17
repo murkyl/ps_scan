@@ -38,6 +38,7 @@ __all__ = [
 # fmt: on
 import copy
 import errno
+import json
 import logging
 import os
 import platform
@@ -74,7 +75,7 @@ try:
 except:
     USE_SCANDIR = 0
 
-ELASTIC_VALID_INDEX_RE_STR = r'^[^-_+\.][^A-Z\\/\*\?"<>| ,#:]+$'
+ELASTIC_VALID_INDEX_RE_STR = r'^[^-_+\.][^A-Z\\\/\*\?"<>| ,#:]+$'
 ELASTIC_VALID_INDEX_LENGTH = 255
 LOG = logging.getLogger(__name__)
 URI_STATISTICS_KEY = "/statistics/current"
