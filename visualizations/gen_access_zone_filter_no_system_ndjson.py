@@ -27,7 +27,7 @@ def main():
     outfile = sys.stdout if num_args == 2 else open(sys.argv[2], "w")
     template_array = infile.readlines()
     infile.close()
-    ndjson_array = generate_access_zone_filter_ndjson(template_array)
+    ndjson_array = generate_access_zone_filter_ndjson(template_array, skip_system=True)
     for line in ndjson_array:
         outfile.write(line + "\n")
     outfile.close()

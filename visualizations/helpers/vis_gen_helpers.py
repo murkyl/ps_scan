@@ -5,8 +5,8 @@ Methods to help with parsing and generating ndjson files for Kibana visualizatio
 """
 # fmt: off
 __title__         = "vis_gen_helpers"
-__version__       = "1.0.0"
-__date__          = "08 June 2023"
+__version__       = "1.1.0"
+__date__          = "17 January 2024"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -15,11 +15,13 @@ __all__           = [
     "clear_access_zone_filter",
     "clear_local_storagepool_usage",
     "clear_vis_file_categories",
+    "create_file_path_filter",
     "generate_access_zone_filter_ndjson",
     "generate_file_category_ndjson",
     "generate_local_storagepool_usage_ndjson",
     "get_dict_value_and_path",
     "get_ps_access_zone_list",
+    "update_panel_path_filter",
     "update_lens_access_zone_filter",
     "update_vis_add_file_categories",
 ]
@@ -105,7 +107,23 @@ def clear_vis_file_categories_ndjson(template_array):
     return ndjson
 
 
-def generate_access_zone_filter_ndjson(template_array):
+def create_file_path_filter(file_paths):
+    filters = []
+    for path in file_paths:
+        bare_path = path.strip().rstrip("/")
+        escaped_path = bare_path.replace("/", "\\/")
+        entry = {
+            "input": {
+                "language": "lucene",
+                "query": "file_path: ({path} OR {path}\/*)".format(path=escaped_path),
+            },
+            "label": bare_path,
+        }
+        filters.append(entry)
+    return filters
+
+
+def generate_access_zone_filter_ndjson(template_array, add_other=True, skip_system=False, sort=True):
     ndjson = []
     az_list = get_ps_access_zone_list()
     for line in template_array:
@@ -116,7 +134,9 @@ def generate_access_zone_filter_ndjson(template_array):
                 continue
             # Update the lens state with a new set of filters
             visState_dict = json_data["attributes"]["state"]
-            update_lens_access_zone_filter(visState_dict, az_list)
+            update_lens_access_zone_filter(
+                visState_dict, az_list, add_other=add_other, skip_system=skip_system, sort=sort
+            )
             # Encode the updated dictionary into JSON
             ndjson.append(json.dumps(json_data, sort_keys=True))
         except Exception as e:
@@ -277,7 +297,7 @@ def init_papi():
     PAPI_VER = data[2].get("latest")
 
 
-def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, sort=True):
+def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, skip_system=False, sort=True):
     value, path = get_dict_value_and_path(
         visState_dict, "datasourceStates/formBased/layers/*/columns/*/operationType/=filters"
     )
@@ -289,31 +309,31 @@ def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, sort=
     all_paths = []
     filters = []
     for az in az_list:
+        if (add_other or skip_system) and az["name"] == "System":
+            continue
         az_path_part = az["path"].rstrip("/").replace("/", "\\/")
         entry = {
             "input": {
                 "language": "lucene",
-                "query": "file_path:({path} OR {path}\/*)".format(path=az_path_part),
+                "query": "file_path: ({path} OR {path}\/*)".format(path=az_path_part),
             },
             "label": az["name"],
         }
-        if add_other and az["name"] == "System":
-            continue
         filters.append(entry)
         all_paths.append(az_path_part)
         all_paths.append(az_path_part + "\\/*")
     if sort:
         # If sort is set, sort the access zones by their name
         filters = sorted(filters, key=lambda x: x["label"].lower())
-    if add_other:
+    if add_other and not skip_system:
         # Remove any duplicate entries in all_paths and sort them afterward
-        all_paths = sorted(list(set([x for x in all_paths if x != "/ifs/*"])))
+        all_paths = sorted(list(set(all_paths)))
+        if not all_paths:
+            all_paths.append('""')
         entry = {
             "input": {
                 "language": "lucene",
-                "query": "file_path: (\\/ifs OR \/ifs\/*) AND NOT {not_paths}".format(
-                    not_paths=" AND NOT ".join(all_paths)
-                ),
+                "query": "NOT file_path: ({not_paths})".format(not_paths=" OR ".join(all_paths)),
             },
             "label": "System (excluding all other access zones)",
         }
@@ -323,6 +343,26 @@ def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, sort=
         cur_obj = cur_obj[key]
     cur_obj["filters"] = filters
     return visState_dict
+
+
+def update_panel_path_filter(template_array, panel_search_path, data):
+    ndjson = []
+    for line in template_array:
+        try:
+            json_data = json.loads(line)
+            if json_data.get("type") != "lens":
+                ndjson.append(line)
+                continue
+            value, path = get_dict_value_and_path(json_data, panel_search_path)
+            optype = value.get("operationType")
+            if optype != "filters":
+                raise Exception("Invalid operationType found update_panel_path_filter: {err}\n".format(err=optype))
+            value["params"]["filters"] = data
+            # Encode the updated dictionary into JSON
+            ndjson.append(json.dumps(json_data, sort_keys=True))
+        except Exception as e:
+            raise Exception("Exception in update_panel_path_filter: {err}\n".format(err=traceback.format_exc()))
+    return ndjson
 
 
 def update_lens_local_storagepool_usage(visState_dict, nodepool_list, sort=True):
