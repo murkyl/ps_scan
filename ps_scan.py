@@ -30,48 +30,9 @@ import helpers.scanner as scanner
 import libs.hydra as Hydra
 from libs.onefs_become_user import become_user
 
-# TODO: import libs.remote_run as rr
-
 
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s"
 LOG = logging.getLogger()
-
-
-""" TODO: Possible code for handling become_user for server
-def remote_callback(client, client_id, msg=None):
-        print({"type": MSG_TYPE_REMOTE_CALLBACK, "data": msg, "client_id": client_id, "client": client})
-def launch_remote_processes(args, callback=None, node_list=None):
-    run_cmd = [
-        "python",
-        str(args.get("script_path")),
-        "--op",
-        "client",
-        "--port",
-        str(args["server_port"]),
-        "--addr",
-        str(args["connect_addr"]),
-        "--type",
-        str(args["type"]),
-    ]
-    if args.get("threads"):
-        run_cmd.append("--threads")
-        run_cmd.append(str(args["threads"]))
-    if args.get("es_type"):
-        run_cmd.append("--es-type")
-        run_cmd.append(str(args["es_type"]))
-    if args.get("log"):
-        run_cmd.append("--log")
-        run_cmd.append(DEFAULT_LOG_FILE_CLIENT_PREFIX + str(args["log"]))
-    if node_list:
-        for node in node_list:
-            if node.get("type") != "default":
-                node["cmd"] = run_cmd
-        LOG.debug({"msg": "Launching remote process", "shell_command": run_cmd})
-        remote_state = rr.RemoteRun({"callback": callback})
-        remote_state.connect(node_list)
-    LOG.debug({"msg": "All remote processes launched"})
-    return remote_state
-"""
 
 
 def main():
