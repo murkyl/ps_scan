@@ -25,7 +25,9 @@ def main():
 
     num_args = len(sys.argv)
     if num_args < 2 or num_args > 4:
-        sys.stderr.write("Usage: {prog} <input_template> <path_file> [<output_file_defaults_to_stdout>]\n".format(prog=sys.argv[0]))
+        sys.stderr.write(
+            "Usage: {prog} <input_template> <path_file> [<output_file_defaults_to_stdout>]\n".format(prog=sys.argv[0])
+        )
         sys.exit(1)
     infile = open(sys.argv[1], "r")
     path_file = open(sys.argv[2], "r")
@@ -34,11 +36,11 @@ def main():
     filter_paths = path_file.readlines()
     infile.close()
     panel_uuid = PANEL_UUID
-    
+
     filter_entries = create_file_path_filter(filter_paths)
     ndjson_array = update_panel_path_filter(
         template_array,
-        "attributes/state/datasourceStates/formBased/layers/*/columns/%s"%panel_uuid,
+        "attributes/state/datasourceStates/formBased/layers/*/columns/%s" % panel_uuid,
         filter_entries,
     )
     if not ndjson_array:
