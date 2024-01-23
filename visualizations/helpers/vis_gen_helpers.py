@@ -16,11 +16,14 @@ __all__           = [
     "clear_local_storagepool_usage",
     "clear_vis_file_categories",
     "create_file_path_filter",
+    "create_nodepool_count_and_size_columns",
     "generate_access_zone_filter_ndjson",
     "generate_file_category_ndjson",
     "generate_local_storagepool_usage_ndjson",
     "get_dict_value_and_path",
     "get_ps_access_zone_list",
+    "update_by_path_and_key",
+    "update_panel_columns",
     "update_panel_path_filter",
     "update_lens_access_zone_filter",
     "update_vis_add_file_categories",
@@ -28,6 +31,7 @@ __all__           = [
 # fmt: on
 
 
+import copy
 import datetime
 import json
 import os
@@ -43,6 +47,70 @@ PAPI_VER = 9
 URI_ACCESS_ZONE_LIST = "/{ver}/zones"
 URI_LATEST = "/latest"
 URI_STORAGEPOOL_NODEPOOLS = "/{ver}/storagepool/nodepools"
+CLOUD_COUNT_TEMPLATE = {
+    "customLabel": True,
+    "dataType": "number",
+    "filter": {
+        "language": "lucene",
+        "query": "file_is_smartlinked: true",
+    },
+    "isBucketed": False,
+    "label": "Files tiered to cloud",
+    "operationType": "count",
+    "params": {
+        "emptyAsNull": True,
+    },
+    "scale": "ratio",
+    "sourceField": "___records___",
+}
+CLOUD_SIZE_TEMPLATE = {
+    "customLabel": True,
+    "dataType": "number",
+    "filter": {
+        "language": "lucene",
+        "query": "file_is_smartlinked: true",
+    },
+    "isBucketed": False,
+    "label": "Size tiered to cloud",
+    "operationType": "sum",
+    "params": {
+        "emptyAsNull": True,
+    },
+    "scale": "ratio",
+    "sourceField": "size",
+}
+FILE_COUNT_TEMPLATE = {
+    "customLabel": True,
+    "dataType": "number",
+    "filter": {
+        "language": "lucene",
+        "query": "",
+    },
+    "isBucketed": False,
+    "label": "",
+    "operationType": "count",
+    "params": {
+        "emptyAsNull": True,
+    },
+    "scale": "ratio",
+    "sourceField": "___records___",
+}
+FILE_SIZE_TEMPLATE = {
+    "customLabel": True,
+    "dataType": "number",
+    "filter": {
+        "language": "lucene",
+        "query": "",
+    },
+    "isBucketed": False,
+    "label": "",
+    "operationType": "sum",
+    "params": {
+        "emptyAsNull": True,
+    },
+    "scale": "ratio",
+    "sourceField": "size",
+}
 
 
 def _get_utc_now():
@@ -121,6 +189,33 @@ def create_file_path_filter(file_paths):
         }
         filters.append(entry)
     return filters
+
+
+def create_nodepool_count_and_size_columns(include_cloud=True, sortByTier=True, sumTier=True):
+    data = {"columns": [], "sum_columns": []}
+    columns = data["columns"]
+    sum_columns = data["sum_columns"]
+    nodepool_list = get_nodepool_list()
+    if sortByTier:
+        nodepool_list = sorted(
+            nodepool_list, key=lambda x: str({"f": 0, "h": 1, "a": 2}.get(x["name"][0], "")) + x["name"]
+        )
+    for nodepool in nodepool_list:
+        query = 'pool_target_data_name: "%s" AND file_is_smartlinked: false' % nodepool["name"]
+        file_count = copy.deepcopy(FILE_COUNT_TEMPLATE)
+        file_count["filter"]["query"] = query
+        file_count["label"] = "Files in %s" % nodepool["name"]
+        columns.append(file_count)
+        
+        file_size = copy.deepcopy(FILE_SIZE_TEMPLATE)
+        file_size["filter"]["query"] = query
+        file_size["label"] = "Size in %s" % nodepool["name"]
+        columns.append(file_size)
+        
+        if sumTier:
+            sum_columns.append({"columnId": "", "isTransposed": False, "summaryLabel": "Total files", "summaryRow": "sum"})
+            sum_columns.append({"columnId": "", "isTransposed": False, "summaryLabel": "Total size", "summaryRow": "sum"})
+    return data
 
 
 def generate_access_zone_filter_ndjson(template_array, add_other=True, skip_system=False, sort=True):
@@ -343,6 +438,58 @@ def update_lens_access_zone_filter(visState_dict, az_list, add_other=True, skip_
         cur_obj = cur_obj[key]
     cur_obj["filters"] = filters
     return visState_dict
+
+
+def update_by_path_and_key(template_array, panel_search_path, key, data):
+    ndjson = []
+    for line in template_array:
+        try:
+            json_data = json.loads(line)
+            if json_data.get("type") != "lens":
+                ndjson.append(line)
+                continue
+            value, path = get_dict_value_and_path(json_data, panel_search_path)
+            value[key] = data
+            # Encode the updated dictionary into JSON
+            ndjson.append(json.dumps(json_data, sort_keys=True))
+        except Exception as e:
+            raise Exception("Exception in update_by_path_and_key: {err}\n".format(err=traceback.format_exc()))
+    return ndjson
+
+
+def update_panel_columns(template_array, panel_search_path, data, preserve_uuid=[]):
+    ndjson = []
+    for line in template_array:
+        try:
+            json_data = json.loads(line)
+            if json_data.get("type") != "lens":
+                ndjson.append(line)
+                continue
+            col_data, path = get_dict_value_and_path(json_data, panel_search_path)
+            column_order = col_data.get("columnOrder", [])
+            columns = col_data.get("columns", {})
+            new_columns = data.get("columns", [])
+            num_new_columns = len(new_columns)
+            processed_columns = 0
+            for col_uuid in list(col_data["columnOrder"]):
+                if col_uuid in preserve_uuid:
+                    continue
+                if processed_columns >= num_new_columns:
+                    del columns[col_uuid]
+                    column_order.remove(col_uuid)
+                    continue
+                columns[col_uuid] = new_columns[processed_columns]
+                new_sum_columns[processed_columns]["columnId"] = col_uuid
+                processed_columns += 1
+
+            summary_data, path = get_dict_value_and_path(json_data, "attributes/state/visualization")
+            valid_uuid_keys = columns.keys()
+            # Filter out an unused column IDs
+            summary_data["columns"] = [x for x in summary_data["columns"] if x["columnId"] in valid_uuid_keys]
+        except Exception as e:
+            raise Exception("Exception in update_panel_columns: {err}\n".format(err=traceback.format_exc()))
+    ndjson.append(json.dumps(json_data, sort_keys=True))
+    return ndjson
 
 
 def update_panel_path_filter(template_array, panel_search_path, data):
