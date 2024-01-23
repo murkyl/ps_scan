@@ -479,7 +479,6 @@ def update_panel_columns(template_array, panel_search_path, data, preserve_uuid=
                     column_order.remove(col_uuid)
                     continue
                 columns[col_uuid] = new_columns[processed_columns]
-                new_sum_columns[processed_columns]["columnId"] = col_uuid
                 processed_columns += 1
 
             summary_data, path = get_dict_value_and_path(json_data, "attributes/state/visualization")
