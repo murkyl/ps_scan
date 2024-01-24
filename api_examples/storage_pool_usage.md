@@ -1,5 +1,6 @@
 # Storage pool usage
-GET _search
+### QUERY STRING
+```json
 {
   "size": 0,
   "aggs": {
@@ -125,8 +126,10 @@ GET _search
     }
   }
 }
+```
 
-
+### OUTPUT
+```json
 {
   "took": 3,
   "timed_out": false,
@@ -192,7 +195,7 @@ GET _search
     }
   }
 }
-
+```
 
 
 
