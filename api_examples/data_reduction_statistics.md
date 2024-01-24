@@ -1,5 +1,6 @@
 # Data reduction statistics
-GET _search
+### QUERY STRING
+```json
 {
   "size": 0,
   "aggs": {
@@ -160,7 +161,10 @@ GET _search
     }  
   }
 }
+```
 
+### OUTPUT
+```json
 {
   "took": 3974,
   "timed_out": false,
@@ -241,3 +245,4 @@ GET _search
     }
   }
 }
+```
