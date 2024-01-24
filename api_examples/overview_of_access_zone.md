@@ -1,5 +1,6 @@
 # Overview of access zone
-GET _search
+### QUERY STRING
+```json
 {
   "size": 0,
   "aggs": {
@@ -236,8 +237,10 @@ GET _search
     }
   }
 }
+```
 
-
+### OUTPUT
+```json
 {
   "took": 4,
   "timed_out": false,
@@ -312,3 +315,4 @@ GET _search
     }
   }
 }
+```
