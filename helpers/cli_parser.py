@@ -2,8 +2,8 @@
 # -*- coding: utf8 -*-
 # fmt: off
 __title__         = "ps_scan_cli_parser"
-__version__       = "1.0.0"
-__date__          = "10 April 2023"
+__version__       = "1.1.0"
+__date__          = "14 March 2024"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -200,6 +200,12 @@ Examples:
 Default: %default
 """,
     )
+    parser.add_option(
+        "--advanced",
+        action="store_true",
+        default=False,
+        help="Flag to enable advanced options",
+    )
     group = optparse.OptionGroup(parser, "Performance options")
     group.add_option(
         "--threads",
@@ -211,7 +217,7 @@ Default: %default
 """,
     )
     parser.add_option_group(group)
-    group = optparse.OptionGroup(parser, "Elasticsearch options")
+    group = optparse.OptionGroup(parser, "Elasticsearch output options")
     group.add_option(
         "--es-url",
         action="store",
@@ -280,11 +286,13 @@ before creating a new one. This option implies the
 --es-init-index option is also set                    
 """,
     )
+    parser.add_option_group(group)
+    group = optparse.OptionGroup(parser, "CSV output options")
     group.add_option(
-        "--advanced",
-        action="store_true",
-        default=False,
-        help="Flag to enable advanced options",
+        "--csv_output_path",
+        action="store",
+        default=None,
+        help="Path to output CSV files",
     )
     parser.add_option_group(group)
     group = optparse.OptionGroup(parser, "Logging and debug options")
