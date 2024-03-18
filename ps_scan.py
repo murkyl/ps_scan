@@ -76,6 +76,10 @@ def main():
             "type": options.get("es_type", ES_TYPE_PS_SCAN),
         }
 
+    if options["csv_output_path"]:
+        if not os.path.isdir(options["csv_output_path"]):
+            sys.stderr.write("CSV output path option is not a directory\n")
+            sys.exit(2)
     if options["type"] == SCAN_TYPE_AUTO:
         if misc.is_onefs_os():
             options["type"] = SCAN_TYPE_ONEFS
