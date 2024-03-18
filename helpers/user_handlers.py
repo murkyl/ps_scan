@@ -74,6 +74,7 @@ def custom_stats_handler(common_stats, custom_state, custom_threads_state, threa
 def init_custom_state(custom_state, options={}):
     # Add any common parameters that each processing thread should have access to
     # by adding values to the custom_state dictionary
+    custom_state["csv_output_path"] = None
     custom_state["custom_stats"] = {}
     custom_state["custom_tagging"] = None  # lambda x: None
     custom_state["extra_attr"] = options.get("extra", DEFAULT_PARSE_EXTRA_ATTR)
@@ -168,6 +169,7 @@ def update_config(custom_state, new_config):
     cli_config = new_config.get("cli_options", {})
     client_config = new_config.get("client_config", {})
     es_options = client_config.get("es_options")
+    custom_state["csv_output_path"] = cli_config.get("csv_output_path", None)
     # TODO: Add code to shutdown existing threads or adjust running threads based on new config
     if es_options:
         if custom_state.get("es_thread_handles") is not None:
