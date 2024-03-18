@@ -53,14 +53,19 @@ try:
     import urllib.parse
 
     urlencode = urllib.parse.urlencode
+    urlparse = urllib.parse.urlparse
     urlquote = urllib.parse.quote
     urlunquote = urllib.parse.unquote
+    urlunsplit = urllib.parse.urlunsplit
 except:
     import urllib
+    import urlparse as py27_urlparse
 
     urlencode = urllib.urlencode
+    urlparse = py27_urlparse.urlparse
     urlquote = urllib.quote
     urlunquote = urllib.unquote
+    urlunsplit = py27_urlparse.urlunsplit
 
 from .constants import *
 import libs.papi_lite as papi_lite
@@ -416,8 +421,11 @@ def read_es_options_file(filename):
         es_creds["type"] = ES_TYPE_PS_SCAN
     if "index" not in es_creds:
         raise Exception("An ElasticSearch index name is required")
+    # Validate the ES URL is well formed
     if not es_creds.get("url") or not es_creds["url"].startswith("http"):
         raise Exception("Invalid ElasticSearch URL: {url}".format(url=es_creds.get("url")))
+    parsed_url = urlparse(es_creds["url"])
+    es_creds["url"] = urlunsplit([parsed_url.scheme, parsed_url.netloc, "", "", ""])
     # Validate the ES index name meets allowed characters
     valid_index = re.match(ELASTIC_VALID_INDEX_RE_STR, es_creds["index"])
     if not valid_index:
