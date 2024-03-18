@@ -17,18 +17,21 @@ __all__ = [
 ]
 # fmt: on
 import copy
+import csv
 import errno
 import glob
 import logging
 import math
 import multiprocessing
 import os
+import platform
 import queue
 import re
 import stat
 import threading
 import time
 
+import helpers.scanner as scanner
 from helpers.constants import *
 
 try:
@@ -112,6 +115,7 @@ T_OOM_PROCESS_NEW_DIR = next_int()
 T_Q_FULL_PUT = next_int()
 T_SEND_TERM_THREAD = next_int()
 T_START_THREAD = next_int()
+T_CLOSE_CSV_HANDLE = next_int()
 TXT_STR = {
     T_CMD_EXIT: "({tid}) Thread receieved exit command. Setting run state to idle and breaking out of process loop",
     T_EX_PROCESS_FILE: "({tid}) - Exception in file handler for root: {r}",
@@ -129,6 +133,7 @@ TXT_STR = {
     T_Q_FULL_PUT: "Unable to PUT an item onto the queue: {q}",
     T_SEND_TERM_THREAD: "Sending thread terminate to: {tid}",
     T_START_THREAD: "Starting thread: {tid}",
+    T_CLOSE_CSV_HANDLE: "Closing CSV output file for thread: {tid}",
 }
 # ================================================================================
 LOG = logging.getLogger(__name__)
@@ -224,6 +229,7 @@ class ScanIt(threading.Thread):
     def _create_thread_instance_state(self):
         instance_state = {
             "cmd_q": queue.Queue(),
+            "csv_file_handle": None,
             "custom": {},
             "handle": None,
             "run_state": S_STARTING,
@@ -459,20 +465,45 @@ class ScanIt(threading.Thread):
                         for entry in result_list:
                             stats["file_size_total"] += entry["size"]
                             stats["file_size_physical_total"] += entry["size_physical"]
-                        # Send results to ElasticSearch
-                        if (result_list or result_dir_list) and self.custom_state["client_config"].get("es_cmd_idx"):
-                            time_start = time.time()
-                            if result_list:
-                                self.custom_state["es_send_q"].put([CMD_SEND, result_list])
-                            if result_dir_list:
-                                self.custom_state["es_send_q"].put([CMD_SEND_DIR, result_dir_list])
-                            for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
-                                if self.custom_state["es_send_q"].qsize() > self.custom_state["max_send_q_size"]:
-                                    stats["es_queue_wait_count"] += 1
-                                    time.sleep(self.custom_state["send_q_sleep"])
-                                else:
-                                    break
-                            stats["time_es_queue"] += time.time() - time_start
+                        if (result_list or result_dir_list):
+                            if self.custom_state.get("csv_output_path") and not state.get("csv_file_handle"):
+                                format_string_vars = {
+                                    "hostname": platform.node(),
+                                    "pid": os.getpid(),
+                                    "prefix": "data",
+                                    "suffix": ".csv",
+                                    "tid": state["custom"].get("thread_name"),
+                                }
+                                csv_filename = "{prefix}-{hostname}-{pid}-{tid}{suffix}".format(**format_string_vars)
+                                csv_output_path = self.custom_state.get("csv_output_path")
+                                try:
+                                    # On Python 3 use the newline="" option to avoid incorrect line terminators
+                                    state["csv_file_handle"] = open(os.path.join(csv_output_path, csv_filename), "w", newline="")
+                                except:
+                                    # Fallback to Python 2 method of opening the file in binary mode
+                                    state["csv_file_handle"] = open(os.path.join(csv_output_path, csv_filename), "wb")
+                                state["csv_writer"] = csv.writer(state["csv_file_handle"])
+                                state["csv_writer"].writerow(scanner.convert_response_to_csv({}, headers_only=True))
+                            # Output results to CSV files, 1 per processing thread
+                            if state.get("csv_file_handle"):
+                                for result in result_list:
+                                    state["csv_writer"].writerow(scanner.convert_response_to_csv(result))
+                                for result in result_dir_list:
+                                    state["csv_writer"].writerow(scanner.convert_response_to_csv(result))
+                            # Send results to ElasticSearch
+                            if self.custom_state["client_config"].get("es_cmd_idx"):
+                                time_start = time.time()
+                                if result_list:
+                                    self.custom_state["es_send_q"].put([CMD_SEND, result_list])
+                                if result_dir_list:
+                                    self.custom_state["es_send_q"].put([CMD_SEND_DIR, result_dir_list])
+                                for i in range(DEFAULT_MAX_Q_WAIT_LOOPS):
+                                    if self.custom_state["es_send_q"].qsize() > self.custom_state["max_send_q_size"]:
+                                        stats["es_queue_wait_count"] += 1
+                                        time.sleep(self.custom_state["send_q_sleep"])
+                                    else:
+                                        break
+                                stats["time_es_queue"] += time.time() - time_start
 
                         dirs_to_queue = [x["file_name"] for x in result_dir_list]
                         if dirs_to_queue:
@@ -658,6 +689,9 @@ class ScanIt(threading.Thread):
     def terminate(self, forced=False):
         for thread_state in self.threads_state:
             if thread_state["handle"].is_alive():
+                if thread_state.get("csv_file_handle"):
+                    thread_state.get("csv_file_handle").close()
+                    LOG.debug(TXT_STR[T_CLOSE_CSV_HANDLE].format(tid=thread_state["handle"].name))
                 LOG.debug(TXT_STR[T_SEND_TERM_THREAD].format(tid=thread_state["handle"].name))
                 thread_state["cmd_q"].put([CMD_EXIT, None, None])
         self.process_alive = False
