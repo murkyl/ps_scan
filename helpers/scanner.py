@@ -16,6 +16,7 @@ __all__ = [
   "STATS_FIELDS",
   "add_diskover_fields",
   "convert_response_to_diskover",
+  "convert_response_to_csv",
   "file_handler_basic",
   "file_handler_pscale",
   "get_file_stat",
@@ -118,6 +119,84 @@ def convert_response_to_diskover(resp_data):
     stats["processed"] -= skipped_files
     stats["time_conversion"] = time.time() - now
     return resp_data
+
+
+def convert_response_to_csv(resp_data, headers_only=False):
+    fields = [
+        ["atime", lambda x: str(x)],
+        ["atime_date", lambda x: str(x)],
+        ["btime", lambda x: str(x)],
+        ["btime_date", lambda x: str(x)],
+        ["ctime", lambda x: str(x)],
+        ["ctime_date", lambda x: str(x)],
+        ["mtime", lambda x: str(x)],
+        ["mtime_date", lambda x: str(x)],
+        ["dir_count_dirs", lambda x: str(x)],
+        ["dir_count_dirs_recursive", lambda x: str(x)],
+        ["dir_count_files", lambda x: str(x)],
+        ["dir_count_files_recursive", lambda x: str(x)],
+        ["dir_depth", lambda x: str(x)],
+        ["dir_file_size", lambda x: str(x)],
+        ["dir_file_size_recursive", lambda x: str(x)],
+        ["dir_file_size_physical", lambda x: str(x)],
+        ["dir_file_size_physical_recursive", lambda x: str(x)],
+        ["dir_leaf", lambda x: str(x)],
+        ["file_path", lambda x: str(x)],
+        ["file_name", lambda x: str(x)],
+        ["file_ext", lambda x: str(x)],
+        ["file_access_pattern", lambda x: str(x)],
+        ["file_coalescer", lambda x: str(x)],
+        ["file_compression_ratio", lambda x: str(x)],
+        ["file_hard_links", lambda x: str(x)],
+        ["file_is_ads", lambda x: str(x)],
+        ["file_is_compressed", lambda x: str(x)],
+        ["file_is_dedupe_disabled", lambda x: str(x)],
+        ["file_is_deduped", lambda x: str(x)],
+        ["file_is_inlined", lambda x: str(x)],
+        ["file_is_manual_access", lambda x: str(x)],
+        ["file_is_manual_packing", lambda x: str(x)],
+        ["file_is_manual_protection", lambda x: str(x)],
+        ["file_is_packed", lambda x: str(x)],
+        ["file_is_smartlinked", lambda x: str(x)],
+        ["file_is_sparse", lambda x: str(x)],
+        ["file_type", lambda x: str(x)],
+        ["inode", lambda x: str(x)],
+        ["inode_mirror_count", lambda x: str(x)],
+        ["inode_parent", lambda x: str(x)],
+        ["inode_revision", lambda x: str(x)],
+        ["pool_target_data", lambda x: str(x)],
+        ["pool_target_data_name", lambda x: str(x)],
+        ["pool_target_metadata", lambda x: str(x)],
+        ["pool_target_metadata_name", lambda x: str(x)],
+        ["perms_acl_aces", lambda x: str(x)],
+        ["perms_acl_group", lambda x: str(x)],
+        ["perms_acl_user", lambda x: str(x)],
+        ["perms_group", lambda x: str(x)],
+        ["perms_unix_bitmask", lambda x: str(x)],
+        ["perms_unix_gid", lambda x: str(x)],
+        ["perms_unix_uid", lambda x: str(x)],
+        ["perms_user", lambda x: str(x)],
+        ["protection_current", lambda x: str(x)],
+        ["protection_target", lambda x: str(x)],
+        ["size", lambda x: str(x)],
+        ["size_logical", lambda x: str(x)],
+        ["size_metadata", lambda x: str(x)],
+        ["size_physical", lambda x: str(x)],
+        ["size_physical_data", lambda x: str(x)],
+        ["size_protection", lambda x: str(x)],
+        ["ssd_strategy", lambda x: str(x)],
+        ["ssd_strategy_name", lambda x: str(x)],
+        ["ssd_status", lambda x: str(x)],
+        ["ssd_status_name", lambda x: str(x)],
+        ["user_attributes", lambda x: str(x)],
+        ["user_tags", lambda x: str(x)],
+    ]
+    csv_data = []
+    if headers_only:
+        csv_data = [field[0] for field in fields]
+    else:
+        csv_data = [field[1](resp_data.get(field[0])) for field in fields]
+    return csv_data
 
 
 def file_handler_basic(root, filename_list, args={}):
@@ -300,7 +379,7 @@ def file_handler_pscale(root, filename_list, args={}):
                     fd = 0
                 else:
                     LOG.exception({"msg": "Error found when calling os.open", "file_path": full_path, "error": str(e)})
-                    continue
+                    raise
             if fd:  # Use OneFS specific calls
                 time_start_dinode = time.time()
                 fstats = attr.get_dinode(fd)
