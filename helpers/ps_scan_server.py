@@ -587,8 +587,8 @@ class PSScanServer(Hydra.HydraServer):
 
             try:
                 # Output statistics
-                #   The -1 is for a 1 second offset to allow time for stats to come from processes
-                cur_stats_count = (now - start_wall) // self.stats_output_interval
+                #   The -2 is for a 2 second offset to allow time for stats to come from processes
+                cur_stats_count = (now - start_wall - 2) // self.stats_output_interval
                 if cur_stats_count > self.stats_output_count:
                     if self.debug_count > 1:
                         if cur_stats_count != (self.stats_output_count + 1):
