@@ -260,6 +260,9 @@ class PSScanServer(Hydra.HydraServer):
         if self.cli_options.get("log"):
             run_cmd.append("--log")
             run_cmd.append(DEFAULT_LOG_FILE_CLIENT_PREFIX + self.cli_options["log"])
+        if self.cli_options.get("skip_dir_file"):
+            run_cmd.append("--skip-dir-file")
+            run_cmd.append(self.cli_options.get("skip_dir_file"))
         if self.node_list:
             for node in self.node_list:
                 if node.get("type") != "default":

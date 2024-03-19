@@ -5,8 +5,8 @@ PowerScale file scanner
 """
 # fmt: off
 __title__         = "ps_scan"
-__version__       = "0.3.2"
-__date__          = "24 January 2024"
+__version__       = "0.4.0"
+__date__          = "19 March 2024"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -116,6 +116,12 @@ def main():
                 sys.stderr.write("Unable to setuid to user: %s" % options["user"])
                 sys.exit(5)
         setup_logger(options)
+        if options.get("skip_dir_file"):
+            # Read and parse skip dir file
+            regex_array = misc.parse_regex_file(options.get("skip_dir_file"))
+            if regex_array:
+                # Update the directory skip handler
+                user_handlers.update_dir_skip_handler(regex_array)
         LOG.info({"msg": "Starting client"})
         LOG.debug(
             {

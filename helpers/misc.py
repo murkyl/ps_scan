@@ -29,6 +29,7 @@ __all__ = [
     "parse_arg_bool",
     "parse_arg_int",
     "parse_node_list",
+    "parse_regex_file",
     "read_es_options_file",
     "set_resource_limits",
     "split_numeric_range_list",
@@ -387,6 +388,16 @@ def parse_node_list(node_str, min_node_list=[]):
         lnn_list = min_node_list
     node_list = [{"endpoint": str(lnn), "type": "onefs"} for lnn in lnn_list]
     return node_list
+
+
+def parse_regex_file(filename):
+    regex_array = []
+    with open(filename, "r") as f:
+        lines = f.readlines()
+        for line in lines:
+            if line:
+                regex_array.append(re.compile(line.strip()))
+    return regex_array
 
 
 def read_es_options_file(filename):

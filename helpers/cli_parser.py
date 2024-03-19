@@ -216,6 +216,16 @@ Default: %default
 Default: %default
 """,
     )
+    group.add_option(
+        "--skip-dir-file",
+        action="store",
+        default=None,
+        help="""File holding regular expressions that specify         
+directories to skip processing. Each expression should
+be on a line on its own. Expressions follow Python    
+syntax and matches are made on the full path.         
+""",
+    )
     parser.add_option_group(group)
     group = optparse.OptionGroup(parser, "Elasticsearch output options")
     group.add_option(
@@ -289,7 +299,7 @@ before creating a new one. This option implies the
     parser.add_option_group(group)
     group = optparse.OptionGroup(parser, "CSV output options")
     group.add_option(
-        "--csv_output_path",
+        "--csv-output-path",
         action="store",
         default=None,
         help="Path to output CSV files",

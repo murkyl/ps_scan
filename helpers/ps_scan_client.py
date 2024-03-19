@@ -185,6 +185,8 @@ class PSScanClient(object):
         s.handler_custom_stats = user_handlers.custom_stats_handler
         s.handler_init_thread = user_handlers.init_thread
         s.handler_file = self.scanner_file_handler
+        if hasattr(user_handlers, "handler_dir"):
+            s.handler_dir = user_handlers.handler_dir
         # TODO: Change how the user handler is passed in and initialized
         custom_state, custom_threads_state = s.get_custom_state()
         user_handlers.init_custom_state(custom_state, self.cli_options)

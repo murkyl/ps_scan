@@ -13,11 +13,15 @@ __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 __all__ = [
     "custom_stats_handler",
+    # Placeholder for dynamic function handler_dir
+    #"handler_dir",
+    "handler_dir_skip",
     "init_custom_state",
     "init_thread",
     "print_statistics",
     "shutdown",
     "update_config",
+    "update_dir_skip_handler",
 ]
 # fmt: on
 import datetime
@@ -39,6 +43,7 @@ import helpers.scanner as scanner
 
 LOG = logging.getLogger(__name__)
 CUSTOM_STATS_FIELDS = scanner.STATS_FIELDS
+DIR_SKIP_REGEX_ARRAY = None
 
 
 def custom_stats_handler(common_stats, custom_state, custom_threads_state, thread_state):
@@ -69,6 +74,29 @@ def custom_stats_handler(common_stats, custom_state, custom_threads_state, threa
         for field in CUSTOM_STATS_FIELDS:
             custom_stats[field] += thread_stats.get(field, 0)
     return custom_stats
+
+
+# The handler_dir function can be defined with code to determine if a directory should be skipped or not
+# Defining it statically will cause the code to be executed for every directory processed
+# An alternative method is to define a second method and use a runtime assignment to alter the module if needed
+# e.g. user_handlers.hander_dir = user_handlers.some_other_method
+#def handler_dir(base, dirname):
+    #return True
+
+def handler_dir_skip(base, dirname):
+    global DIR_SKIP_REGEX_ARRAY
+    full_path = os.path.join(base, dirname)
+    for entry in DIR_SKIP_REGEX_ARRAY:
+        if entry.match(full_path):
+            return False
+    return True
+
+
+def update_dir_skip_handler(regex_array):
+    global DIR_SKIP_REGEX_ARRAY
+    global handler_dir
+    DIR_SKIP_REGEX_ARRAY = regex_array
+    handler_dir = handler_dir_skip
 
 
 def init_custom_state(custom_state, options={}):
