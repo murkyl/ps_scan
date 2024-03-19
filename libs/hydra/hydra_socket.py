@@ -27,11 +27,12 @@ from .hydra_const import *
 try:
     dir(ConnectionResetError)
 except:
-    errno.EXFULL = 54
-
     class ConnectionResetError(Exception):
         pass
-
+try:
+    dir(errno.EXFULL)
+except:
+    errno.EXFULL = 54
 
 LOG = logging.getLogger(__name__)
 
