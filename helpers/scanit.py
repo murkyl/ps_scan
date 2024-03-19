@@ -414,19 +414,16 @@ class ScanIt(threading.Thread):
                 if cmd == CMD_PROC_DIR:
                     for dirname in work_item[2]:
                         # If the directory name is in our skip directory list, skip this directory
-                        if dirname in self.default_skip_dirs:
-                            LOG.debug({"msg": "Skipping directory", "filename": dirname})
-                            stats["dirs_skipped"] += 1
-                            continue
-                        # If user supplied handler_dir returns False, we should skip this directory
-                        if self.handler_dir and not self.handler_dir(work_item[1], dirname):
+                        # or ff user supplied handler_dir returns False, we should skip this directory
+                        if dirname in self.default_skip_dirs or
+                            (self.handler_dir and not self.handler_dir(work_item[1], dirname)):
                             LOG.info({"msg": "Skipping directory", "base": work_item[1], "filename": dirname})
                             stats["dirs_skipped"] += 1
                             continue
                         try:
                             handler_stats = self._process_list_dir(os.path.join(work_item[1], dirname))
                             if not handler_stats:
-                                LOG.debug({"msg": "Skipping directory", "filename": dirname})
+                                LOG.info({"msg": "Skipping directory", "base": work_item[1], "filename": dirname})
                                 stats["dirs_skipped"] += 1
                                 continue
                         except MemoryError:
