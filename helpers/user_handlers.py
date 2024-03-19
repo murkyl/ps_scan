@@ -80,8 +80,9 @@ def custom_stats_handler(common_stats, custom_state, custom_threads_state, threa
 # Defining it statically will cause the code to be executed for every directory processed
 # An alternative method is to define a second method and use a runtime assignment to alter the module if needed
 # e.g. user_handlers.hander_dir = user_handlers.some_other_method
-#def handler_dir(base, dirname):
-    #return True
+# def handler_dir(base, dirname):
+# return True
+
 
 def handler_dir_skip(base, dirname):
     global DIR_SKIP_REGEX_ARRAY

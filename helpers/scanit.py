@@ -415,8 +415,9 @@ class ScanIt(threading.Thread):
                     for dirname in work_item[2]:
                         # If the directory name is in our skip directory list, skip this directory
                         # or ff user supplied handler_dir returns False, we should skip this directory
-                        if dirname in self.default_skip_dirs or
-                            (self.handler_dir and not self.handler_dir(work_item[1], dirname)):
+                        if (dirname in self.default_skip_dirs) or (
+                            self.handler_dir and not self.handler_dir(work_item[1], dirname)
+                        ):
                             LOG.info({"msg": "Skipping directory", "base": work_item[1], "filename": dirname})
                             stats["dirs_skipped"] += 1
                             continue
@@ -462,7 +463,7 @@ class ScanIt(threading.Thread):
                         for entry in result_list:
                             stats["file_size_total"] += entry["size"]
                             stats["file_size_physical_total"] += entry["size_physical"]
-                        if (result_list or result_dir_list):
+                        if result_list or result_dir_list:
                             if self.custom_state.get("csv_output_path") and not state.get("csv_file_handle"):
                                 format_string_vars = {
                                     "hostname": platform.node(),
@@ -475,7 +476,9 @@ class ScanIt(threading.Thread):
                                 csv_output_path = self.custom_state.get("csv_output_path")
                                 try:
                                     # On Python 3 use the newline="" option to avoid incorrect line terminators
-                                    state["csv_file_handle"] = open(os.path.join(csv_output_path, csv_filename), "w", newline="")
+                                    state["csv_file_handle"] = open(
+                                        os.path.join(csv_output_path, csv_filename), "w", newline=""
+                                    )
                                 except:
                                     # Fallback to Python 2 method of opening the file in binary mode
                                     state["csv_file_handle"] = open(os.path.join(csv_output_path, csv_filename), "wb")
