@@ -420,7 +420,7 @@ class ScanIt(threading.Thread):
                             continue
                         # If user supplied handler_dir returns False, we should skip this directory
                         if self.handler_dir and not self.handler_dir(work_item[1], dirname):
-                            LOG.debug({"msg": "Skipping directory", "filename": dirname})
+                            LOG.info({"msg": "Skipping directory", "base": work_item[1], "filename": dirname})
                             stats["dirs_skipped"] += 1
                             continue
                         try:
