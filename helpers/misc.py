@@ -28,6 +28,9 @@ __all__ = [
     "merge_process_stats",
     "parse_arg_bool",
     "parse_arg_int",
+    "parse_bool",
+    "parse_float",
+    "parse_int",
     "parse_node_list",
     "parse_regex_file",
     "read_es_options_file",
@@ -379,6 +382,43 @@ def parse_arg_int(arg, field, default, minimum=None, maximum=None):
         val = minimum
     if maximum and val > maximum:
         val = maximum
+    return val
+
+
+def parse_bool(text):
+    if not text:
+        return False
+    ltext = text.lower()
+    if ltext in ["none"]:
+        return None
+    if ltext in ["true", "t", "1"]:
+        return True
+    return False
+
+
+def parse_float(text, minimum=None, maximum=None):
+    if not text:
+        return 0
+    if text.lower() in ["none"]:
+        return None
+    val = float(text)
+    if minimum and val < minimum:
+        return minimum
+    if maximum and val > maximum:
+        return maximum
+    return val
+
+
+def parse_int(text, minimum=None, maximum=None):
+    if not text:
+        return 0
+    if text.lower() in ["none"]:
+        return None
+    val = int(text)
+    if minimum and val < minimum:
+        return minimum
+    if maximum and val > maximum:
+        return maximum
     return val
 
 
