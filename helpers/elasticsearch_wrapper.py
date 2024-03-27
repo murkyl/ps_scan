@@ -9,11 +9,12 @@ __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
 __email__         = "andrew.chung@dell.com"
 __all__ = [
-    "es_data_sender",
     "es_create_connection",
     "es_create_index_settings",
     "es_create_start_options",
     "es_create_stop_options",
+    "es_data_flush",
+    "es_data_sender",
     "es_delete_index",
     "es_init_index",
     "es_start_processing",
