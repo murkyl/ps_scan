@@ -56,6 +56,8 @@ cat access_zone_overview.ndjson \
   storagepool_usage_by_path.ndjson \
   storage_usage_by_path.ndjson \
   > bundle.ndjson
+cp ../templates/dashboard_general.ndjson .
+cp ../templates/dashboard_onefs.ndjson .
 
 echo "=========="
 echo "To build the initial dashboards copy and import the following:"
@@ -64,3 +66,5 @@ echo "  output/dashboard_onefs.ndjson"
 echo ""
 echo "To update your dashboard panels with cluster generated data, copy and import:"
 echo "  output/bundle.ndjson"
+echo ""
+echo "The individual updated panels are also present in the output directory"
