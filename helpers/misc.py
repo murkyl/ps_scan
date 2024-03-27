@@ -33,6 +33,7 @@ __all__ = [
     "parse_int",
     "parse_node_list",
     "parse_regex_file",
+    "parse_str_acl",
     "read_es_options_file",
     "set_resource_limits",
     "split_numeric_range_list",
@@ -438,6 +439,18 @@ def parse_regex_file(filename):
             if line:
                 regex_array.append(re.compile(line.strip()))
     return regex_array
+
+
+def parse_str_acl(text):
+    if not text:
+        return None
+    try:
+        data = json.loads('{"array": %s}'%text.replace("'", "\""))
+        return data["array"]
+    except Exception as e:
+        LOG.debug("JSON load error: %s"%e)
+        return None
+    return None
 
 
 def read_es_options_file(filename):
