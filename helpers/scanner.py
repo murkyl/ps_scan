@@ -39,7 +39,7 @@ try:
     import isi.fs.attr as attr
     import isi.fs.userattr as uattr
     import libs.onefs_acl as onefs_acl
-    from libs.onefs_auth import translate_user_group_perms
+    import libs.onefs_auth as onefs_auth
 except:
     pass
 try:
@@ -88,13 +88,13 @@ STATS_FIELDS = [
     "time_user_attr",  # Seconds spent scanning user attributes
 ]
 CSV_CONVERSION_FIELDS = [
-    ["atime", lambda x: str(x), lambda x: misc.parse_int(x)],
+    ["atime", lambda x: str(x), lambda x: misc.parse_float(x)],
     ["atime_date", lambda x: str(x), lambda x: x],
-    ["btime", lambda x: str(x), lambda x: misc.parse_int(x)],
+    ["btime", lambda x: str(x), lambda x: misc.parse_float(x)],
     ["btime_date", lambda x: str(x), lambda x: x],
-    ["ctime", lambda x: str(x), lambda x: misc.parse_int(x)],
+    ["ctime", lambda x: str(x), lambda x: misc.parse_float(x)],
     ["ctime_date", lambda x: str(x), lambda x: x],
-    ["mtime", lambda x: str(x), lambda x: misc.parse_int(x)],
+    ["mtime", lambda x: str(x), lambda x: misc.parse_float(x)],
     ["mtime_date", lambda x: str(x), lambda x: x],
     ["dir_count_dirs", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["dir_count_dirs_recursive", lambda x: str(x), lambda x: misc.parse_int(x)],
@@ -549,7 +549,7 @@ def file_handler_pscale(root, filename_list, args={}):
 
             # Translate UID/GID/SID to names
             time_start_translate = time.time()
-            translate_user_group_perms(root, filename, file_info, fd=fd, name_lookup=not no_names)
+            onefs_auth.translate_user_group_perms(root, filename, file_info, fd=fd, name_lookup=not no_names)
             time_end_translate = time.time()
             stats["time_name"] += time_end_translate - time_start_translate
             # Convert string ACE into an object for Elastic
