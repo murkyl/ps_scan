@@ -7,7 +7,7 @@ ps_scan: clean
 	mkdir -p build
 	mkdir -p releases
 	zip -r build/${OUTFILE} LICENSE README.md example_es_credentials.*
-	zip -r build/${OUTFILE} ps_scan.py ps_cmd.py helpers/* libs/*.py libs/hydra/* visualizations/* api_examples/*
+	zip -r build/${OUTFILE} ps_scan.py ps_cmd.py csv_upload_to_es.py helpers/* libs/*.py libs/hydra/* visualizations/* api_examples/*
 	cp build/${OUTFILE} releases
 
 .PHONY: clean
