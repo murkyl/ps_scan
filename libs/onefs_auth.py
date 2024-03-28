@@ -29,7 +29,7 @@ LOG = logging.getLogger(__name__)
 MAX_CACHE_SIZE = 16384
 MAX_CACHE_TS_BLOCK_TIME = 60
 MAX_ZONE_CACHE_SIZE = 1024
-URI_ACCESS_ZONES = "/zones"
+URI_ACCESS_ZONES = "/9/zones"
 URI_AUTH_GROUP = "/auth/groups"
 URI_AUTH_USER = "/auth/users"
 WELLKNOWN_SID_TABLE = {
@@ -82,7 +82,7 @@ class GetPrincipalName:
     def _init_access_zone_list(self):
         data = self.papi_handle.rest_call(URI_ACCESS_ZONES, "GET")
         if data[0] != 200:
-            raise ({"msg": "Error occurred while trying to get cluster access zone list", "err": data})
+            raise (Exception("Error occurred while trying to get cluster access zone list: %s"%str(data)))
         for zone in data[2]["zones"]:
             zname = str(zone["name"])
             path_parts = zone["path"].split("/")
