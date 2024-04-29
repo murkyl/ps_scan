@@ -5,8 +5,8 @@ Take the CSV output from the ps_scan script and upload the data into an ElasticS
 """
 # fmt: off
 __title__         = "csv_upload_to_es.py"
-__version__       = "1.0.0"
-__date__          = "27 March 2024"
+__version__       = "1.1.0"
+__date__          = "02 April 2024"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -28,6 +28,7 @@ import helpers.misc as misc
 import helpers.scanner as scanner
 
 
+DEFAULT_CHUNK_SIZE = 500
 DEFAULT_LOG_FORMAT = "%(asctime)s - %(levelname)s - [%(module)s:%(lineno)d] - %(message)s"
 LOG = logging.getLogger()
 USAGE = "usage: %prog [OPTION...] FILE1 [FILE2..]"
@@ -130,7 +131,7 @@ before creating a new one. This option implies the
         action="store",
         type="int",
         default=DEFAULT_ES_SHARDS,
-        help="""Number of threads to send data to Elasticsearch.      
+        help="""Number of CSV entries to send in a single bulk update.
 Default: %default
 """,
     )
@@ -139,6 +140,15 @@ Default: %default
         action="store",
         type="int",
         default=DEFAULT_ES_REPLICAS,
+        help="""Number of replications in Elasticsearch.
+Default: %default
+""",
+    )
+    group.add_option(
+        "--es-bulk-chunk",
+        action="store",
+        type="int",
+        default=DEFAULT_CHUNK_SIZE,
         help="""Number of replications in Elasticsearch.
 Default: %default
 """,
@@ -192,22 +202,24 @@ def setup_logger(options):
 def flush_json_data_to_es(json_array, es_client, es_cmd_idx):
     dir_list = []
     file_list = []
+    uploaded = 0
     for item in json_array:
         if item.get("file_type") == "file":
             file_list.append(item)
         elif item.get("file_type") == "dir":
             dir_list.append(item)
     if file_list:
-        elasticsearch_wrapper.es_data_flush([[CMD_SEND, file_list]], es_client, es_cmd_idx)
+        uploaded += elasticsearch_wrapper.es_data_flush([[CMD_SEND, file_list]], es_client, es_cmd_idx)
     if dir_list:
-        elasticsearch_wrapper.es_data_flush([[CMD_SEND_DIR, dir_list]], es_client, es_cmd_idx)
+        uploaded += elasticsearch_wrapper.es_data_flush([[CMD_SEND_DIR, dir_list]], es_client, es_cmd_idx)
+    return uploaded
 
 
-def upload_csv_files(csv_file_list, es_client, es_cmd_idx):
-    bulk_rows = []
+def upload_csv_files(csv_file_list, es_client, es_cmd_idx, max_bulk_rows = DEFAULT_CHUNK_SIZE):
     total_rows = 0
-    max_bulk_rows = 500
+    uploaded_rows = 0
     for file in csv_file_list:
+        bulk_rows = []
         LOG.info("Starting upload of file: %s"%file)
         skip_header = True
         row_count = 0
@@ -228,15 +240,17 @@ def upload_csv_files(csv_file_list, es_client, es_cmd_idx):
             bulk_rows.append(response)
             row_count += 1
             if row_count >= max_bulk_rows:
-                flush_json_data_to_es(bulk_rows, es_client, es_cmd_idx)
+                uploaded = flush_json_data_to_es(bulk_rows, es_client, es_cmd_idx)
                 total_rows += row_count
+                uploaded_rows += uploaded
                 bulk_rows = []
         if bulk_rows:
-            flush_json_data_to_es(bulk_rows, es_client, es_cmd_idx)
+            uploaded = flush_json_data_to_es(bulk_rows, es_client, es_cmd_idx)
             total_rows += row_count
+            uploaded_rows += uploaded
             bulk_rows = []
         csvfile_handle.close()
-    return total_rows
+    return total_rows, uploaded_rows
 
 
 def main():
@@ -308,8 +322,10 @@ def main():
     if not csv_file_list:
         LOG.error("No CSV files found for input")
         sys.exit(12)
-    total_rows = upload_csv_files(csv_file_list, es_client, es_cmd_idx)
-    LOG.info("Documents uploaded to Elastic: %s"%total_rows)
+    total_rows,uploaded_rows = upload_csv_files(csv_file_list, es_client, es_cmd_idx, options["es_bulk_chunk"])
+    LOG.info("Documents uploaded to Elastic: %s"%uploaded_rows)
+    if uploaded_rows > 0 and uploaded_rows != total_rows:
+        LOG.info("Documents failed to upload Elastic: %s"%(total_rows - uploaded_rows))
     stop_options = elasticsearch_wrapper.es_create_stop_options(options)
     elasticsearch_wrapper.es_stop_processing(es_client, es_cmd_idx, stop_options, options)
 
