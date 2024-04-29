@@ -5,8 +5,6 @@ PowerScale file scanner
 """
 # fmt: off
 __title__         = "scanner"
-__version__       = "0.2.0"
-__date__          = "27 March 2024"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -88,13 +86,13 @@ STATS_FIELDS = [
     "time_user_attr",  # Seconds spent scanning user attributes
 ]
 CSV_CONVERSION_FIELDS = [
-    ["atime", lambda x: str(x), lambda x: misc.parse_float(x)],
+    ["atime", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["atime_date", lambda x: str(x), lambda x: x],
-    ["btime", lambda x: str(x), lambda x: misc.parse_float(x)],
+    ["btime", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["btime_date", lambda x: str(x), lambda x: x],
-    ["ctime", lambda x: str(x), lambda x: misc.parse_float(x)],
+    ["ctime", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["ctime_date", lambda x: str(x), lambda x: x],
-    ["mtime", lambda x: str(x), lambda x: misc.parse_float(x)],
+    ["mtime", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["mtime_date", lambda x: str(x), lambda x: x],
     ["dir_count_dirs", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["dir_count_dirs_recursive", lambda x: str(x), lambda x: misc.parse_int(x)],
