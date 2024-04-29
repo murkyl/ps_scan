@@ -589,6 +589,7 @@ def es_data_sender(
 
 
 def es_data_flush(bulk_data, es_client, es_cmd_idx, compresslevel=DEFAULT_COMPRESSION_LEVEL):
+    data_items = 0
     for chunk in bulk_data:
         bulk_file = []
         bulk_dir = []
@@ -603,8 +604,10 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx, compresslevel=DEFAULT_COMPRE
                 body_text = json.dumps(chunk_data[idx])
             except UnicodeDecodeError as ude:
                 LOG.info("JSON dumps encountered unicode decoding error. Trying latin-1 re-code to UTF-8")
+                LOG.debug("JSON dumps raw data:\n%s\n"%chunk_data[idx])
                 try:
                     temp_text = json.dumps(chunk_data[idx], encoding="latin-1")
+                    LOG.debug("Latin encodeed temporary text:\n%s\n"%temp_text)
                     body_text = temp_text.decode("latin-1").encode("utf-8", errors="backslashreplace")
                 except Exception as e:
                     LOG.warn("latin-1 backup decode failed. Dropping data.")
@@ -630,9 +633,14 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx, compresslevel=DEFAULT_COMPRE
                 file_name = chunk_data[idx].get("file_name", chunk_data[idx].get("name"))
                 # The full path of the file including the file name is hashed with CRC32 in order to provide a unique
                 # _id field for ElasticSearch. This is required for files that have identical inode numbers
-                full_path = ("%s/%s" % (file_path, file_name)).encode("utf-8")
+                try:
+                    full_path = ("%s/%s" % (file_path, file_name)).encode("utf-8")
+                except:
+                    LOG.info("Skipping file. Unable to translate file path and filename to UTF-8: %s/%s"%(file_path, file_name))
+                    continue
                 bulk_list.append(json.dumps({bulk_op: {"_id": "%s_%s" % (inode, zlib.crc32(full_path) & 0xFFFFFFFF)}}))
                 bulk_list.append(body_text)
+                data_items += 1
         # For each bulk list, take all the entries and join them together with a \n and send them to the ES into the
         # appropriate index
         for bulk_list in [bulk_file, bulk_dir, bulk_state]:
@@ -649,11 +657,18 @@ def es_data_flush(bulk_data, es_client, es_cmd_idx, compresslevel=DEFAULT_COMPRE
             if resp.get("error", False):
                 LOG.error(resp["error"])
             if resp.get("errors", False):
+                data_items -= len(resp.get("items"))
                 for item in resp.get("items"):
                     op_keys = item.keys()
-                    if op_keys in ["index", "update"]:
-                        if item[op_keys]["status"] < 200 or item[op_keys]["status"] > 299:
-                            LOG.error(json.dumps(item[op_keys]["error"]))
+                    if op_keys and (list(op_keys))[0] in ["index", "update"]:
+                        key = (list(op_keys))[0]
+                        if item[key]["status"] < 200 or item[key]["status"] > 299:
+                            LOG.error(json.dumps(item[key]["error"]))
+                        else:
+                            LOG.error(item)
+                    else:
+                        LOG.error(item)
+    return data_items
 
 
 def es_delete_index(es_client, es_cmd_idx):
