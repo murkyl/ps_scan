@@ -1,12 +1,10 @@
 #!/usr/bin/env python
 # -*- coding: utf8 -*-
 """
-Misc helper functoons
+Misc helper functions
 """
 # fmt: off
 __title__         = "misc"
-__version__       = "1.0.0"
-__date__          = "10 April 2023"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"
@@ -415,7 +413,10 @@ def parse_int(text, minimum=None, maximum=None):
         return 0
     if text.lower() in ["none"]:
         return None
-    val = int(text)
+    try:
+        val = int(text)
+    except:
+        val = int(float(text))
     if minimum and val < minimum:
         return minimum
     if maximum and val > maximum:
@@ -442,13 +443,15 @@ def parse_regex_file(filename):
 
 
 def parse_str_acl(text):
-    if not text:
+    if not text or text.strip() == "None":
         return None
     try:
-        data = json.loads('{"array": %s}'%text.replace("'", "\""))
+        # Remove any unicode hint characters in front of strings
+        sanitized_text = re.sub(r'u\'(.*?)\'', "'\g<1>'", text)
+        data = json.loads('{"array": %s}'%sanitized_text.replace("'", "\""))
         return data["array"]
     except Exception as e:
-        LOG.debug("JSON load error: %s"%e)
+        LOG.debug("JSON load error: %s, for ACL: %s"%(e, text))
         return None
     return None
 
