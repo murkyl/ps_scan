@@ -149,7 +149,7 @@ CSV_CONVERSION_FIELDS = [
     ["size_protection", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["ssd_strategy", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["ssd_strategy_name", lambda x: str(x), lambda x: x],
-    ["ssd_status", lambda x: str(x), lambda x: x],
+    ["ssd_status", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["ssd_status_name", lambda x: str(x), lambda x: x],
     ["user_attributes", lambda x: str(x), lambda x: None],
     ["user_tags", lambda x: str(x), lambda x: x],
