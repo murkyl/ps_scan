@@ -87,13 +87,13 @@ STATS_FIELDS = [
 ]
 CSV_CONVERSION_FIELDS = [
     ["atime", lambda x: str(x), lambda x: misc.parse_int(x)],
-    ["atime_date", lambda x: str(x), lambda x: x],
+    ["atime_date", lambda x: str(x), lambda x: misc.parse_basic_str(x)],
     ["btime", lambda x: str(x), lambda x: misc.parse_int(x)],
-    ["btime_date", lambda x: str(x), lambda x: x],
+    ["btime_date", lambda x: str(x), lambda x: misc.parse_basic_str(x)],
     ["ctime", lambda x: str(x), lambda x: misc.parse_int(x)],
-    ["ctime_date", lambda x: str(x), lambda x: x],
+    ["ctime_date", lambda x: str(x), lambda x: misc.parse_basic_str(x)],
     ["mtime", lambda x: str(x), lambda x: misc.parse_int(x)],
-    ["mtime_date", lambda x: str(x), lambda x: x],
+    ["mtime_date", lambda x: str(x), lambda x: misc.parse_basic_str(x)],
     ["dir_count_dirs", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["dir_count_dirs_recursive", lambda x: str(x), lambda x: misc.parse_int(x)],
     ["dir_count_files", lambda x: str(x), lambda x: misc.parse_int(x)],
@@ -170,12 +170,11 @@ def convert_csv_to_response(csv_data):
     try:
         for field in CSV_CONVERSION_FIELDS:
             col_data = csv_data[index]
+            index += 1
             data = field[2](col_data)
             if data is None:
-                index += 1
                 continue
             response_data[field[0]] = data
-            index += 1
         # We have a complete record now
     except:
         LOG.error("Unable to convert field: %s, with data: %s for row: %s"%(field[0], csv_data[index], csv_data))

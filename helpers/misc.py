@@ -26,6 +26,7 @@ __all__ = [
     "merge_process_stats",
     "parse_arg_bool",
     "parse_arg_int",
+    "parse_basic_str",
     "parse_bool",
     "parse_float",
     "parse_int",
@@ -384,21 +385,25 @@ def parse_arg_int(arg, field, default, minimum=None, maximum=None):
     return val
 
 
-def parse_bool(text):
-    if not text:
-        return False
-    ltext = text.lower()
-    if ltext in ["none"]:
+def parse_basic_str(text):
+    text = text.strip()
+    if not text or text.lower() in ["none"]:
         return None
-    if ltext in ["true", "t", "1"]:
+    return text
+
+
+def parse_bool(text):
+    text = text.strip()
+    if not text or text.lower() in ["none"]:
+        return None
+    if text in ["true", "t", "1"]:
         return True
     return False
 
 
 def parse_float(text, minimum=None, maximum=None):
-    if not text:
-        return 0
-    if text.lower() in ["none"]:
+    text = text.strip()
+    if not text or text.lower() in ["none"]:
         return None
     val = float(text)
     if minimum and val < minimum:
@@ -409,9 +414,8 @@ def parse_float(text, minimum=None, maximum=None):
 
 
 def parse_int(text, minimum=None, maximum=None):
-    if not text:
-        return 0
-    if text.lower() in ["none"]:
+    text = text.strip()
+    if not text or text.lower() in ["none"]:
         return None
     try:
         val = int(text)
