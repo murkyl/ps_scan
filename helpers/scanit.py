@@ -25,7 +25,10 @@ import math
 import multiprocessing
 import os
 import platform
-import queue
+try:
+    import queue
+except:
+    import Queue as queue
 import re
 import stat
 import threading

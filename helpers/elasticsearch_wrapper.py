@@ -24,7 +24,10 @@ __all__ = [
 import copy
 import json
 import logging
-import queue
+try:
+    import queue
+except:
+    import Queue as queue
 import re
 import socket
 import threading

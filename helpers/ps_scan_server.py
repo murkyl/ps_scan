@@ -19,7 +19,10 @@ import datetime
 import json
 import logging
 import os
-import queue
+try:
+    import queue
+except:
+    import Queue as queue
 import signal
 import sys
 import time

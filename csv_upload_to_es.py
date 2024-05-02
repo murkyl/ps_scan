@@ -19,7 +19,10 @@ import logging
 import optparse
 import os
 import platform
-import queue
+try:
+    import queue
+except:
+    import Queue as queue
 import sys
 
 from helpers.constants import *

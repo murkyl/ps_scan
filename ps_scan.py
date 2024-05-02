@@ -5,8 +5,8 @@ PowerScale file scanner
 """
 # fmt: off
 __title__         = "ps_scan"
-__version__       = "0.5.8"
-__date__          = "30 April 2024"
+__version__       = "0.5.10"
+__date__          = "2 May 2024"
 __license__       = "MIT"
 __author__        = "Andrew Chung <andrew.chung@dell.com>"
 __maintainer__    = "Andrew Chung <andrew.chung@dell.com>"

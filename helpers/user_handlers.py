@@ -30,7 +30,10 @@ import json
 import logging
 import math
 import os
-import queue
+try:
+    import queue
+except:
+    import Queue as queue
 import re
 import stat
 import sys
