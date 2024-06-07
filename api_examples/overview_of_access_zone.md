@@ -10,12 +10,12 @@
           "should": [
             {
               "match": {
-                "file_path": "/ifs/cdh633"
+                "file_path.tree": "/ifs/cdh633"
               }
             },
             {
               "match": {
-                "file_path": "/ifs/cdh633/*"
+                "file_path.tree": "/ifs/cdh633/*"
               }
             }
           ]
@@ -35,12 +35,12 @@
           "should": [
             {
               "match": {
-                "file_path": "/ifs/csc/dds_test_az"
+                "file_path.tree": "/ifs/csc/dds_test_az"
               }
             },
             {
               "match": {
-                "file_path": "/ifs/csc/dds_test_az/*"
+                "file_path.tree": "/ifs/csc/dds_test_az/*"
               }
             }
           ]
@@ -60,12 +60,12 @@
           "should": [
             {
               "match": {
-                "file_path": "/ifs/csc/dell_datascience"
+                "file_path.tree": "/ifs/csc/dell_datascience"
               }
             },
             {
               "match": {
-                "file_path": "/ifs/csc/dell_datascience/*"
+                "file_path.tree": "/ifs/csc/dell_datascience/*"
               }
             }
           ]
@@ -85,12 +85,12 @@
           "should": [
             {
               "match": {
-                "file_path": "/ifs/csc/igls/analyticsdb"
+                "file_path.tree": "/ifs/csc/igls/analyticsdb"
               }
             },
             {
               "match": {
-                "file_path": "/ifs/csc/igls/analyticsdb/*"
+                "file_path.tree": "/ifs/csc/igls/analyticsdb/*"
               }
             }
           ]
@@ -110,12 +110,12 @@
           "should": [
             {
               "match": {
-                "file_path": "/ifs/poc/EyeglassRunbookRobot"
+                "file_path.tree": "/ifs/poc/EyeglassRunbookRobot"
               }
             },
             {
               "match": {
-                "file_path": "/ifs/poc/EyeglassRunbookRobot/*"
+                "file_path.tree": "/ifs/poc/EyeglassRunbookRobot/*"
               }
             }
           ]
@@ -135,12 +135,12 @@
           "should": [
             {
               "match": {
-                "file_path": "/ifs/csc/vdbench"
+                "file_path.tree": "/ifs/csc/vdbench"
               }
             },
             {
               "match": {
-                "file_path": "/ifs/csc/vdbench/*"
+                "file_path.tree": "/ifs/csc/vdbench/*"
               }
             }
           ]
@@ -160,12 +160,12 @@
           "should": [
             {
               "match": {
-                "file_path": "/ifs/demo/noAD"
+                "file_path.tree": "/ifs/demo/noAD"
               }
             },
             {
               "match": {
-                "file_path": "/ifs/demo/noAD/*"
+                "file_path.tree": "/ifs/demo/noAD/*"
               }
             }
           ]
@@ -185,12 +185,12 @@
           "should": [
             {
               "match": {
-                "file_path": "/ifs/csc/vmstore"
+                "file_path.tree": "/ifs/csc/vmstore"
               }
             },
             {
               "match": {
-                "file_path": "/ifs/csc/vmstore/*"
+                "file_path.tree": "/ifs/csc/vmstore/*"
               }
             }
           ]
@@ -208,22 +208,22 @@
       "filter": {
         "bool": {
           "must_not": [
-            { "match": { "file_path": "/ifs/cdh633" } },
-            { "match": { "file_path": "/ifs/cdh633/*" } },
-            { "match": { "file_path": "/ifs/csc/dds_test_az" } },
-            { "match": { "file_path": "/ifs/csc/dds_test_az/*" } },
-            { "match": { "file_path": "/ifs/csc/dell_datascience" } },
-            { "match": { "file_path": "/ifs/csc/dell_datascience/*" } },
-            { "match": { "file_path": "/ifs/csc/igls/analyticsdb" } },
-            { "match": { "file_path": "/ifs/csc/igls/analyticsdb/*" } },
-            { "match": { "file_path": "/ifs/csc/vdbench" } },
-            { "match": { "file_path": "/ifs/csc/vdbench/*" } },
-            { "match": { "file_path": "/ifs/csc/vmstore" } },
-            { "match": { "file_path": "/ifs/csc/vmstore/*" } },
-            { "match": { "file_path": "/ifs/demo/noAD" } },
-            { "match": { "file_path": "/ifs/demo/noAD/*" } },
-            { "match": { "file_path": "/ifs/poc/EyeglassRunbookRobot" } },
-            { "match": { "file_path": "/ifs/poc/EyeglassRunbookRobot/*" } }
+            { "match": { "file_path.tree": "/ifs/cdh633" } },
+            { "match": { "file_path.tree": "/ifs/cdh633/*" } },
+            { "match": { "file_path.tree": "/ifs/csc/dds_test_az" } },
+            { "match": { "file_path.tree": "/ifs/csc/dds_test_az/*" } },
+            { "match": { "file_path.tree": "/ifs/csc/dell_datascience" } },
+            { "match": { "file_path.tree": "/ifs/csc/dell_datascience/*" } },
+            { "match": { "file_path.tree": "/ifs/csc/igls/analyticsdb" } },
+            { "match": { "file_path.tree": "/ifs/csc/igls/analyticsdb/*" } },
+            { "match": { "file_path.tree": "/ifs/csc/vdbench" } },
+            { "match": { "file_path.tree": "/ifs/csc/vdbench/*" } },
+            { "match": { "file_path.tree": "/ifs/csc/vmstore" } },
+            { "match": { "file_path.tree": "/ifs/csc/vmstore/*" } },
+            { "match": { "file_path.tree": "/ifs/demo/noAD" } },
+            { "match": { "file_path.tree": "/ifs/demo/noAD/*" } },
+            { "match": { "file_path.tree": "/ifs/poc/EyeglassRunbookRobot" } },
+            { "match": { "file_path.tree": "/ifs/poc/EyeglassRunbookRobot/*" } }
           ]
         }
       },
