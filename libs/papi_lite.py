@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # -*- coding: utf8 -*-
 # fmt: off
-__copyright__ = """Copyright 2020-2023 Andrew Chung
+__copyright__ = """Copyright 2020-2024 Andrew Chung
 Permission is hereby granted, free of charge, to any person obtaining a copy of 
 this software and associated documentation files (the "Software"), to deal in 
 the Software without restriction, including without limitation the rights to 
@@ -19,8 +19,8 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE 
 SOFTWARE."""
 __title__         = "papi_lite"
-__version__       = "2.2.0"
-__date__          = "21 August 2022"
+__version__       = "2.3.0"
+__date__          = "06 June 2024"
 __license__       = "MIT"
 __author__        = "Andrew Chung"
 __maintainer__    = "Andrew Chung"
@@ -62,6 +62,7 @@ DEFAULT_API_TIMEOUT = 300
 API_PAPI = 1
 API_RAN = 2
 API_SUPPORT = 4
+MAX_SESSION_RETRY = 5
 TIMEOUT = 10
 URL_PAPI_SESSION = "/session/1/session"
 URL_PAPI_PLATFORM_PREFIX = "/platform/%s"
@@ -101,11 +102,12 @@ class papi_lite:
         self.init_http_context()
 
     def init_http_context(self):
-        if not self.oncluster:
-            self.ctx = ssl.create_default_context()
-            if self.ignorecert:
-                self.ctx.check_hostname = False
-                self.ctx.verify_mode = ssl.CERT_NONE
+        if self.oncluster:
+            return
+        self.ctx = ssl.create_default_context()
+        if self.ignorecert:
+            self.ctx.check_hostname = False
+            self.ctx.verify_mode = ssl.CERT_NONE
 
     def create_http_session(self):
         """Connects to a OneFS cluster and gets a PAPI session cookie"""
@@ -117,7 +119,13 @@ class papi_lite:
         headers = {"Content-type": "application/json", "Accept": "application/json"}
         conn = api.HTTPSConnection(self.server, timeout=TIMEOUT, context=self.ctx)
         # Always ask for both platform and namespace access
-        data = json.dumps({"username": self.user, "password": self.password, "services": ["platform", "namespace"]})
+        data = json.dumps(
+            {
+                "username": self.user,
+                "password": self.password,
+                "services": ["platform", "namespace"],
+            }
+        )
         try:
             conn.request("POST", URL_PAPI_SESSION, data, headers)
         except IOError as ioe:
@@ -239,19 +247,28 @@ class papi_lite:
         else:
             LOG.debug("HTTPS query")
             conn = None
+            max_retry = MAX_SESSION_RETRY
             url_prefix = URL_PAPI_PLATFORM_PREFIX * (api_type == API_PAPI) or URL_RAN_PLATFORM_PREFIX
             try:
-                if not self.session:
-                    self.create_http_session()
-                headers["Cookie"] = self.session
-                if self.csrf:
-                    headers["X-CSRF-Token"] = self.csrf
-                    headers["Referer"] = "https://" + self.server
-                headers["Content-type"] = "application/json"
-                headers["Accept"] = "application/json"
-                LOG.debug("Sending headers: %s" % headers)
                 while resume:
-                    url = urlunsplit(["", "", url_prefix % "/".join(remote_url), urlencode(query_args), None])
+                    if not self.session:
+                        self.create_http_session()
+                    headers["Cookie"] = self.session
+                    if self.csrf:
+                        headers["X-CSRF-Token"] = self.csrf
+                        headers["Referer"] = "https://" + self.server
+                    headers["Content-type"] = "application/json"
+                    headers["Accept"] = "application/json"
+                    LOG.debug("Sending headers: %s" % headers)
+                    url = urlunsplit(
+                        [
+                            "",
+                            "",
+                            url_prefix % "/".join(remote_url),
+                            urlencode(query_args),
+                            None,
+                        ]
+                    )
                     LOG.debug("Method: %s" % method)
                     LOG.debug("URL: %s" % url)
                     LOG.debug("Headers: %s" % headers)
@@ -272,6 +289,16 @@ class papi_lite:
                         LOG.debug("Resume key: %s" % resume)
                         query_args = {"resume": str(resume) or ""}
                         response_list.append([resp.status, resp.reason, data])
+                    elif resp.status == 401:
+                        # Our session token has expired so we will re-negotiate a new session
+                        self.session = None
+                        max_retry -= 1
+                        if max_retry:
+                            continue
+                        raise Exception(
+                            "Failed to re-create session token after %d tries. Last try error code: %d"
+                            % (MAX_SESSION_RETRY, resp.status)
+                        )
                     else:
                         resume = False
                         raise Exception("Error occurred getting data from cluster. Error code: %d" % resp.status)
